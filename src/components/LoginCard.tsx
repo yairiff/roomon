@@ -1,0 +1,93 @@
+import { useState, type FormEvent, type RefCallback } from "react";
+import { allowedStudents } from "../data/allowedStudents";
+import type { User } from "../types/auth";
+
+export type LoginCardProps = {
+  user: User | null;
+  authError: string;
+  onSignOut: () => void;
+  onDevLogin: (user: User) => void;
+  setAuthError: (message: string) => void;
+  googleButtonRef: RefCallback<HTMLDivElement>;
+  clientId?: string;
+  devLoginEnabled: boolean;
+};
+
+export default function LoginCard({
+  user,
+  authError,
+  onSignOut,
+  onDevLogin,
+  setAuthError,
+  googleButtonRef,
+  clientId,
+  devLoginEnabled
+}: LoginCardProps) {
+  return (
+    <div className="auth-card" id="auth-card">
+      <h2>כניסת סטודנטים</h2>
+      {user ? (
+        <div className="user-row">
+          <div className="user-info">
+            <p className="user-name">{user.name}</p>
+            <p className="user-email">{user.email}</p>
+          </div>
+          <button className="primary" onClick={onSignOut} type="button">התנתק</button>
+        </div>
+      ) : (
+        <>
+          {!clientId && (
+            <p className="notice">
+              יש להוסיף <code>.env</code> עם <code>VITE_GOOGLE_CLIENT_ID</code> כדי לאפשר התחברות.
+            </p>
+          )}
+          {clientId ? <div ref={googleButtonRef} className="google-button" /> : null}
+          {devLoginEnabled ? <DevLogin onLogin={onDevLogin} setAuthError={setAuthError} /> : null}
+        </>
+      )}
+      {authError ? <p className="error">{authError}</p> : null}
+    </div>
+  );
+}
+
+type DevLoginProps = {
+  onLogin: (user: User) => void;
+  setAuthError: (message: string) => void;
+};
+
+function DevLogin({ onLogin, setAuthError }: DevLoginProps) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!email) return;
+    const allowed = allowedStudents.includes(email.toLowerCase());
+    if (!allowed) {
+      setAuthError("החשבון לא נמצא ברשימת הסטודנטים המאושרת.");
+      return;
+    }
+    setAuthError("");
+    onLogin({ name: name || "סטודנט", email, allowed });
+  };
+
+  return (
+    <form className="dev-login" onSubmit={handleSubmit}>
+      <p className="dev-label">כניסה למפתחים</p>
+      <input
+        type="email"
+        placeholder="student@rimon.ac.il"
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+        required
+      />
+      <input
+        type="text"
+        placeholder="שם"
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+      />
+      <button className="secondary" type="submit">התחבר</button>
+    </form>
+  );
+}
