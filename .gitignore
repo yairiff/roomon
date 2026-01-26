@@ -7,6 +7,10 @@ yarn-error.log*
 firebase-debug.log*
 firebase-debug.*.log*
 
+# Build output
+dist/
+dist-ssr/
+
 # Firebase cache
 .firebase/
 
@@ -64,6 +68,13 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
 
 # dataconnect generated files
 .dataconnect
