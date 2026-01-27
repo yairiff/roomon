@@ -8,6 +8,7 @@ export type Reservation = {
   roomId: string;
   reservedBy: string;
   reservedEmail: string;
+  kind?: "special" | "closed";
 };
 
 export type ReservationMap = Record<string, Reservation[]>;

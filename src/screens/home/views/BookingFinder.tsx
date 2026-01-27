@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { addDays, formatDateKey, formatShortDate, parseDateKey, getDayKeyFromDateKey } from "../lib/date";
-import { formatMinutes } from "../lib/scheduleBuilder";
-import type { Lesson, Room } from "../types/schedule";
-import type { ReservationMap, ReserveRequest } from "../types/reservations";
-import { AddIcon, TuneIcon } from "./Icons";
+import { addDays, formatDateKey, formatShortDate, parseDateKey, getDayKeyFromDateKey } from "../../../lib/date";
+import { formatMinutes } from "../../../lib/scheduleBuilder";
+import type { DayKey, Lesson, Room } from "../../../types/schedule";
+import type { ReservationMap, ReserveRequest } from "../../../types/reservations";
+import type { RoomMeta } from "../../../types/admin";
+import { AddIcon, TuneIcon } from "../../../components/Icons";
 
 export type BookingFinderProps = {
   rooms: Room[];
@@ -11,6 +12,8 @@ export type BookingFinderProps = {
   reservationMap: ReservationMap;
   startHour: number;
   endHour: number;
+  roomMeta?: Record<string, RoomMeta>;
+  getLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
   onReserve: (request: ReserveRequest) => void;
 };
 
@@ -20,6 +23,8 @@ export default function BookingFinder({
   reservationMap,
   startHour,
   endHour,
+  roomMeta,
+  getLessonsForDate,
   onReserve
 }: BookingFinderProps) {
   const [advancedMode, setAdvancedMode] = useState(false);
@@ -71,13 +76,22 @@ export default function BookingFinder({
 
     dates.forEach((dateKey) => {
       const dayKey = getDayKeyFromDateKey(dateKey);
-      const dayLessons = lessons.filter((lesson) => lesson.day === dayKey);
+      const dayLessons = getLessonsForDate
+        ? getLessonsForDate(dateKey, dayKey)
+        : lessons.filter((lesson) => lesson.day === dayKey);
       const reservations = reservationMap[dateKey] || [];
 
       availableRooms.forEach((room) => {
+        const policy = roomMeta?.[room.id];
+        if (policy?.isClosed) return;
+        const roomOpen = policy?.openMinutes ?? startHour * 60;
+        const roomClose = policy?.closeMinutes ?? endHour * 60;
+
         for (let hour = fromHour; hour <= toHour - duration; hour += 1) {
           const startMinutes = hour * 60;
           const endMinutes = startMinutes + duration * 60;
+
+          if (startMinutes < roomOpen || endMinutes > roomClose) continue;
 
           const overlapsLesson = dayLessons.some((lesson) => {
             if (lesson.roomId !== room.id) return false;

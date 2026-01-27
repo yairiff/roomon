@@ -1,20 +1,37 @@
 import { useMemo } from "react";
-import { buildSchedule, getSemesterKeyFromDate, timeSlots, weekDays } from "../data/schedule";
-import { buildLessonIndex } from "../lib/scheduleBuilder";
+import { getSemesterKeyFromDate, timeSlots, weekDays, rimonScheduleConfig } from "../config";
+import { buildLessonIndex, buildRoomsFromLessons } from "../lib/scheduleBuilder";
+import { useLessons } from "./useLessons";
+import { useRooms } from "./useRooms";
+import { useScheduleSettings } from "./useScheduleSettings";
 
 export function useSchedule(dateKey: string) {
-  const semester = useMemo(() => getSemesterKeyFromDate(dateKey), [dateKey]);
-  const schedule = useMemo(() => buildSchedule(semester), [semester]);
+  const { semesterRanges } = useScheduleSettings();
+  const semester = useMemo(
+    () => getSemesterKeyFromDate(dateKey, semesterRanges.length ? semesterRanges : rimonScheduleConfig.semesterRanges),
+    [dateKey, semesterRanges]
+  );
+  const { lessons: lessonRecords } = useLessons(semester);
+  const { rooms: roomsFromDb, roomMeta } = useRooms();
+
+  const lessons = semester ? lessonRecords : [];
+  const rooms = roomsFromDb.length
+    ? roomsFromDb
+    : buildRoomsFromLessons(lessons, { ...rimonScheduleConfig.roomLabelOverrides });
+
   const lessonIndex = useMemo(
-    () => buildLessonIndex({ lessons: schedule.lessons, timeSlots }),
-    [schedule.lessons]
+    () => buildLessonIndex({ lessons, timeSlots }),
+    [lessons]
   );
 
   return {
-    ...schedule,
+    lessons,
+    rooms,
+    config: rimonScheduleConfig,
     weekDays,
     timeSlots,
     lessonIndex,
-    semester
+    semester,
+    roomMeta
   };
 }

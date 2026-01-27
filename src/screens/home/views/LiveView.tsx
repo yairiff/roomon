@@ -1,9 +1,10 @@
-import { formatMinutes } from "../lib/scheduleBuilder";
-import { parseDateKey } from "../lib/date";
-import type { Lesson, Room } from "../types/schedule";
-import type { ReservationMap } from "../types/reservations";
-import type { DayKey } from "../types/schedule";
+import { formatMinutes } from "../../../lib/scheduleBuilder";
+import { parseDateKey } from "../../../lib/date";
+import type { Lesson, Room } from "../../../types/schedule";
+import type { ReservationMap } from "../../../types/reservations";
+import type { DayKey } from "../../../types/schedule";
 import Legend from "./Legend";
+import type { RoomMeta } from "../../../types/admin";
 
 export type LiveViewProps = {
   rooms: Room[];
@@ -14,6 +15,7 @@ export type LiveViewProps = {
   nowMinutes: number;
   startHour: number;
   endHour: number;
+  roomMeta?: Record<string, RoomMeta>;
   onRoomSelect: (roomId: string) => void;
   nowLabel: string;
 };
@@ -27,6 +29,7 @@ export default function LiveView({
   nowMinutes,
   startHour,
   endHour,
+  roomMeta,
   onRoomSelect,
   nowLabel
 }: LiveViewProps) {
@@ -38,7 +41,19 @@ export default function LiveView({
   const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(todayDate);
 
   const getRoomStatus = (roomId: string) => {
-    if (isClosedNow) {
+    const policy = roomMeta?.[roomId];
+    const roomOpen = policy?.openMinutes ?? startHour * 60;
+    const roomClose = policy?.closeMinutes ?? endHour * 60;
+    const isRoomClosed = Boolean(policy?.isClosed);
+
+    if (isRoomClosed) {
+      return {
+        status: "closed" as const,
+        title: "סגור",
+        meta: policy?.note || "סגור זמנית"
+      };
+    }
+    if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) {
       return {
         status: "closed" as const,
         title: "סגור",
@@ -69,9 +84,16 @@ export default function LiveView({
     );
 
     if (activeReservation) {
+      if (activeReservation.kind === "closed") {
+        return {
+          status: "closed" as const,
+          title: "סגור",
+          meta: activeReservation.reservedBy || "סגור זמנית"
+        };
+      }
       return {
         status: "reserved" as const,
-        title: "שמור",
+        title: activeReservation.kind === "special" ? "אירוע" : "שמור",
         meta: activeReservation.reservedBy
       };
     }
@@ -84,7 +106,11 @@ export default function LiveView({
   };
 
   const getBusyUntil = (roomId: string) => {
-    if (isClosedNow) return null;
+    const policy = roomMeta?.[roomId];
+    const roomOpen = policy?.openMinutes ?? startHour * 60;
+    const roomClose = policy?.closeMinutes ?? endHour * 60;
+    const isRoomClosed = Boolean(policy?.isClosed);
+    if (isRoomClosed || isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
     const intervals = [
       ...lessons
         .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
@@ -117,7 +143,11 @@ export default function LiveView({
   };
 
   const getNextEvent = (roomId: string) => {
-    if (isClosedNow) return null;
+    const policy = roomMeta?.[roomId];
+    const roomOpen = policy?.openMinutes ?? startHour * 60;
+    const roomClose = policy?.closeMinutes ?? endHour * 60;
+    const isRoomClosed = Boolean(policy?.isClosed);
+    if (isRoomClosed || isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
     const lessonStarts = lessons
       .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
       .map((lesson) => ({
@@ -129,7 +159,7 @@ export default function LiveView({
       .filter((entry) => entry.roomId === roomId)
       .map((entry) => ({
         start: entry.time,
-        label: "שמור"
+        label: entry.kind === "special" ? "אירוע" : entry.kind === "closed" ? "סגור" : "שמור"
       }));
 
     const upcoming = [...lessonStarts, ...reservationStarts]

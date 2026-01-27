@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import BookingScreen from "./screens/BookingScreen";
+import HomeScreen from "./screens/home/HomeScreen";
 import { useAuth } from "./hooks/useAuth";
 import { useReservations } from "./hooks/useReservations";
 import TopBar from "./components/TopBar";
@@ -7,6 +7,8 @@ import AuthMenu from "./components/AuthMenu";
 import type { TopBarContext } from "./types/ui";
 import LoginOverlay from "./components/LoginOverlay";
 import type { ViewMode } from "./types/ui";
+import AdminScreen from "./screens/admin/AdminScreen";
+import SignupOverlay from "./components/SignupOverlay";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
@@ -20,11 +22,14 @@ export default function App() {
     googleButtonRef,
     signOut
   } = useAuth({ clientId: CLIENT_ID });
-  const { reservationMap, addReservation, releaseReservation } = useReservations();
+  const { reservationMap, addReservation, upsertReservation, releaseReservation } = useReservations();
   const [authOpen, setAuthOpen] = useState(false);
   const [topBar, setTopBar] = useState<TopBarContext>({ title: "עכשיו" });
   const [loginPromptOpen, setLoginPromptOpen] = useState(true);
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
+  const isAdminRoute = window.location.pathname.startsWith("/admin");
+  const needsSignup = Boolean(user && user.role === "pending");
+  const [adminMode, setAdminMode] = useState(false);
 
   const reservationsCount = useMemo(() => {
     if (!user) return 0;
@@ -58,6 +63,38 @@ export default function App() {
     setLoginPromptOpen(true);
   };
 
+  useEffect(() => {
+    const canAdmin = user?.role === "admin" || user?.role === "moderator";
+    if (!canAdmin) {
+      setAdminMode(false);
+    }
+  }, [user?.role]);
+
+  if (isAdminRoute) {
+    return (
+      <div className="page admin-page-shell" dir="rtl">
+        <AdminScreen currentUser={user} onSignOut={handleSignOut} />
+        <LoginOverlay
+          open={!user && loginPromptOpen}
+          onClose={() => setLoginPromptOpen(false)}
+          user={user}
+          authError={authError}
+          onSignOut={signOut}
+          onDevLogin={(nextUser) => setUser(nextUser)}
+          setAuthError={(message) => setAuthError(message)}
+          googleButtonRef={googleButtonRef}
+          clientId={CLIENT_ID}
+          devLoginEnabled={DEV_LOGIN_ENABLED}
+        />
+        <SignupOverlay
+          open={needsSignup}
+          user={user}
+          onSignOut={signOut}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="page" dir="rtl">
       <TopBar
@@ -80,18 +117,22 @@ export default function App() {
         onLoginClick={handleLoginClick}
         reservationsCount={reservationsCount}
         onOpenReservations={() => setRequestedView("reservations")}
+        adminMode={adminMode}
+        onToggleAdminMode={() => setAdminMode((prev) => !prev)}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
-        <BookingScreen
+        <HomeScreen
           currentUser={user}
           setAuthError={(message) => setAuthError(message)}
           onContextChange={setTopBar}
           reservationMap={reservationMap}
           addReservation={addReservation}
+          upsertReservation={upsertReservation}
           releaseReservation={releaseReservation}
           requestedView={requestedView}
           onRequestedViewHandled={() => setRequestedView(null)}
           showNav={Boolean(user)}
+          adminMode={adminMode}
         />
       </main>
       <LoginOverlay
@@ -105,6 +146,11 @@ export default function App() {
         googleButtonRef={googleButtonRef}
         clientId={CLIENT_ID}
         devLoginEnabled={DEV_LOGIN_ENABLED}
+      />
+      <SignupOverlay
+        open={needsSignup}
+        user={user}
+        onSignOut={signOut}
       />
     </div>
   );

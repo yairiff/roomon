@@ -1,0 +1,108 @@
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc
+} from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
+import { db } from "../lib/firebase";
+import type { LessonOverride, LessonOverrideAction } from "../types/admin";
+import type { Lesson } from "../types/schedule";
+
+type OverrideInput = {
+  date: string;
+  action: LessonOverrideAction;
+  targetLessonId?: string;
+  lesson?: Lesson;
+  createdBy?: string;
+};
+
+export function useLessonOverrides() {
+  const [overrides, setOverrides] = useState<LessonOverride[]>([]);
+  const [overridesReady, setOverridesReady] = useState<boolean>(!db);
+  const [overridesError, setOverridesError] = useState<string>("");
+
+  useEffect(() => {
+    if (!db) {
+      setOverridesError("Firestore is not configured.");
+      setOverridesReady(true);
+      return;
+    }
+
+    const ref = collection(db, "lessonOverrides");
+    const unsubscribe = onSnapshot(
+      ref,
+      (snapshot) => {
+        const next: LessonOverride[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as Omit<LessonOverride, "id"> & { createdAt?: { toMillis: () => number } };
+          next.push({
+            id: docSnap.id,
+            date: data.date,
+            action: data.action,
+            targetLessonId: data.targetLessonId,
+            lesson: data.lesson,
+            createdBy: data.createdBy,
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : data.createdAt
+          });
+        });
+        next.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        setOverrides(next);
+        setOverridesError("");
+        setOverridesReady(true);
+      },
+      () => {
+        setOverridesError("Failed to load lesson overrides.");
+        setOverridesReady(true);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const overridesByDate = useMemo(() => {
+    const map: Record<string, LessonOverride[]> = {};
+    overrides.forEach((override) => {
+      if (!override.date) return;
+      if (!map[override.date]) {
+        map[override.date] = [];
+      }
+      map[override.date].push(override);
+    });
+    return map;
+  }, [overrides]);
+
+  const addOverride = async (input: OverrideInput) => {
+    if (!db) return;
+    await addDoc(collection(db, "lessonOverrides"), {
+      ...input,
+      createdAt: serverTimestamp()
+    });
+  };
+
+  const upsertOverride = async (override: LessonOverride) => {
+    if (!db) return;
+    await setDoc(doc(db, "lessonOverrides", override.id), {
+      ...override,
+      createdAt: serverTimestamp()
+    });
+  };
+
+  const removeOverride = async (overrideId: string) => {
+    if (!db) return;
+    await deleteDoc(doc(db, "lessonOverrides", overrideId));
+  };
+
+  return {
+    overrides,
+    overridesByDate,
+    overridesReady,
+    overridesError,
+    addOverride,
+    upsertOverride,
+    removeOverride
+  };
+}

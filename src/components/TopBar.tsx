@@ -1,5 +1,5 @@
 import type { User } from "../types/auth";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, UserIcon } from "./Icons";
 import logoUrl from "../logo.jpg";
 
@@ -35,6 +35,14 @@ export default function TopBar({
   const subtitleNode =
     typeof subtitle === "string" ? <p className="top-bar-subtitle">{subtitle}</p> : subtitle;
   const showSubtitle = Boolean(subtitleNode);
+  const [avatarError, setAvatarError] = useState(false);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [user?.picture]);
+
+  const showAvatarImage = Boolean(user?.picture) && !avatarError;
+  const fallbackInitial = user?.name?.trim().charAt(0) || "?";
   return (
     <header className="top-bar">
       <div className="top-bar-brand">
@@ -77,10 +85,14 @@ export default function TopBar({
         ) : null}
       </div>
       <button className="avatar-button" onClick={onAuthClick} aria-label="User">
-        {user?.picture ? (
-          <img src={user.picture} alt={user.name} />
+        {showAvatarImage ? (
+          <img
+            src={user?.picture}
+            alt={user?.name || "User"}
+            onError={() => setAvatarError(true)}
+          />
         ) : user ? (
-          <span>{user.name.charAt(0)}</span>
+          <span>{fallbackInitial}</span>
         ) : (
           <UserIcon />
         )}

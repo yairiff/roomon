@@ -1,5 +1,4 @@
 import { useState, type FormEvent, type RefCallback } from "react";
-import { allowedStudents } from "../data/allowedStudents";
 import type { User } from "../types/auth";
 
 export type LoginCardProps = {
@@ -62,13 +61,8 @@ function DevLogin({ onLogin, setAuthError }: DevLoginProps) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!email) return;
-    const allowed = allowedStudents.includes(email.toLowerCase());
-    if (!allowed) {
-      setAuthError("החשבון לא נמצא ברשימת הסטודנטים המאושרת.");
-      return;
-    }
     setAuthError("");
-    onLogin({ name: name || "סטודנט", email, allowed });
+    onLogin({ name: name || "סטודנט", email, allowed: true, role: "student" });
   };
 
   return (

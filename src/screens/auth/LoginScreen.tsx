@@ -1,6 +1,6 @@
 import type { RefCallback } from "react";
-import type { User } from "../types/auth";
-import LoginCard from "../components/LoginCard";
+import type { User } from "../../types/auth";
+import LoginCard from "../../components/LoginCard";
 
 export type LoginScreenProps = {
   user: User | null;

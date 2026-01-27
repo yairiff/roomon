@@ -1,5 +1,5 @@
 import type { User } from "../types/auth";
-import { BookmarkIcon } from "./Icons";
+import { BookmarkIcon, AdminIcon } from "./Icons";
 
 export type AuthMenuProps = {
   user: User | null;
@@ -9,6 +9,8 @@ export type AuthMenuProps = {
   onLoginClick: () => void;
   reservationsCount?: number;
   onOpenReservations?: () => void;
+  adminMode?: boolean;
+  onToggleAdminMode?: () => void;
 };
 
 export default function AuthMenu({
@@ -18,7 +20,9 @@ export default function AuthMenu({
   onSignOut,
   onLoginClick,
   reservationsCount = 0,
-  onOpenReservations
+  onOpenReservations,
+  adminMode = false,
+  onToggleAdminMode
 }: AuthMenuProps) {
   if (!open) return null;
   return (
@@ -30,6 +34,80 @@ export default function AuthMenu({
               <p>{user.name}</p>
               <span>{user.email}</span>
             </div>
+            {user.role === "admin" ? (
+              <div className="auth-admin-row">
+                <button
+                  className="secondary auth-admin-button"
+                  type="button"
+                  onClick={() => {
+                    window.location.href = "/admin";
+                  }}
+                >
+                  <span className="auth-admin-label">
+                    <AdminIcon />
+                    <span>לוח ניהול</span>
+                  </span>
+                  <span
+                    className="auth-admin-switch"
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={adminMode}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onToggleAdminMode?.();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onToggleAdminMode?.();
+                      }
+                    }}
+                  >
+                    <span className={`toggle-switch${adminMode ? " on" : ""}`}>
+                      <span className="toggle-dot" />
+                    </span>
+                    <small>מצב עריכה</small>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+            {user.role === "moderator" ? (
+              <div className="auth-admin-row">
+                <button
+                  className="secondary auth-admin-button"
+                  type="button"
+                  onClick={() => onToggleAdminMode?.()}
+                >
+                  <span className="auth-admin-label">
+                    <AdminIcon />
+                    <span>מצב עריכה</span>
+                  </span>
+                  <span
+                    className="auth-admin-switch"
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={adminMode}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onToggleAdminMode?.();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onToggleAdminMode?.();
+                      }
+                    }}
+                  >
+                    <span className={`toggle-switch${adminMode ? " on" : ""}`}>
+                      <span className="toggle-dot" />
+                    </span>
+                    <small>מצב עריכה</small>
+                  </span>
+                </button>
+              </div>
+            ) : null}
             <button
               className="secondary auth-reservations-button"
               type="button"

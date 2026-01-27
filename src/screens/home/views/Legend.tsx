@@ -11,6 +11,9 @@ export default function Legend() {
         <span className="dot empty" /> פנוי
       </div>
       <div>
+        <span className="dot special" /> אירוע
+      </div>
+      <div>
         <span className="dot closed" /> סגור
       </div>
     </section>

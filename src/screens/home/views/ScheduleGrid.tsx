@@ -1,11 +1,13 @@
-import type { DayKey, Lesson, Room, TimeSlot } from "../types/schedule";
-import type { ReservationMap, ReserveRequest } from "../types/reservations";
-type ScheduleView = "daily" | "room";
-import type { User } from "../types/auth";
-import type { WeekDate } from "../lib/date";
-import { formatMinutes } from "../lib/scheduleBuilder";
-import { AddIcon, CloseIcon, ReleaseIcon } from "./Icons";
+import type { DayKey, Lesson, Room, TimeSlot } from "../../../types/schedule";
+import type { ReservationMap, ReserveRequest } from "../../../types/reservations";
+import type { User } from "../../../types/auth";
+import type { WeekDate } from "../../../lib/date";
+import { formatMinutes } from "../../../lib/scheduleBuilder";
+import { AddIcon, CloseIcon, ReleaseIcon } from "../../../components/Icons";
 import { useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import type { RoomMeta } from "../../../types/admin";
+
+type ScheduleView = "daily" | "room";
 
 export type ScheduleGridProps = {
   view: ScheduleView;
@@ -16,10 +18,17 @@ export type ScheduleGridProps = {
   selectedDayKey: DayKey;
   selectedRoom: string;
   lessons: Lesson[];
+  roomMeta?: Record<string, RoomMeta>;
+  getLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
   reservationMap: ReservationMap;
   currentUser: User | null;
   onReserve: (request: ReserveRequest) => void;
   onRelease: (dateKey: string, reservationId: string) => void;
+  onAdminSlotClick?: (request: ReserveRequest) => void;
+  onAdminLessonClick?: (lessonId: string, dateKey: string) => void;
+  onAdminReservationClick?: (reservationId: string, dateKey: string) => void;
+  onReservationClick?: (reservationId: string, dateKey: string) => void;
+  adminMode?: boolean;
   startHour: number;
   endHour: number;
   compact?: boolean;
@@ -46,13 +55,14 @@ type LessonBlock = {
 
 type ReservationBlock = {
   id: string;
-  type: "reserved";
+  type: "reserved" | "special" | "closed";
   title: string;
   meta: string;
   startMinutes: number;
   durationMinutes: number;
   reservationId: string;
   reservedEmail: string;
+  kind?: "special" | "closed";
 };
 
 type Block = LessonBlock | ReservationBlock;
@@ -114,10 +124,17 @@ export default function ScheduleGrid({
   selectedDayKey,
   selectedRoom,
   lessons,
+  roomMeta,
+  getLessonsForDate,
   reservationMap,
   currentUser,
   onReserve,
   onRelease,
+  onAdminSlotClick,
+  onAdminLessonClick,
+  onAdminReservationClick,
+  onReservationClick,
+  adminMode = false,
   startHour,
   endHour,
   compact = false,
@@ -190,9 +207,12 @@ export default function ScheduleGrid({
     [compact, rooms.length, weekDates.length, view]
   );
 
-  const buildLessonBlocks = (dayKey: DayKey, roomId: string): LessonBlock[] =>
-    lessons
-      .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
+  const buildLessonBlocks = (dayKey: DayKey, roomId: string, dateKey: string): LessonBlock[] => {
+    const sourceLessons = getLessonsForDate
+      ? getLessonsForDate(dateKey, dayKey)
+      : lessons.filter((lesson) => lesson.day === dayKey);
+    return sourceLessons
+      .filter((lesson) => lesson.roomId === roomId)
       .map((lesson) => ({
         id: lesson.id,
         type: "lesson" as const,
@@ -201,24 +221,26 @@ export default function ScheduleGrid({
         startMinutes: lesson.startMinutes,
         durationMinutes: lesson.durationMinutes
       }));
+  };
 
   const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlock[] =>
     (reservationMap[dateKey] || [])
       .filter((entry) => entry.roomId === roomId)
       .map((entry) => ({
         id: entry.id,
-        type: "reserved" as const,
-        title: "שמור",
-        meta: entry.reservedBy,
+        type: entry.kind === "special" ? "special" : entry.kind === "closed" ? "closed" : "reserved",
+        title: entry.kind === "special" ? "אירוע" : entry.kind === "closed" ? "סגור" : "שמור",
+        meta: entry.reservedBy || "",
         startMinutes: entry.time,
         durationMinutes: entry.durationMinutes,
         reservationId: entry.id,
-        reservedEmail: entry.reservedEmail
+        reservedEmail: entry.reservedEmail || "",
+        kind: entry.kind
       }));
 
   const renderColumn = ({ dayKey, dateKey, roomId }: { dayKey: DayKey; dateKey: string; roomId: string }) => {
     const blocks: Block[] = [
-      ...buildLessonBlocks(dayKey, roomId),
+      ...buildLessonBlocks(dayKey, roomId, dateKey),
       ...buildReservationBlocks(dateKey, roomId)
     ];
     const positionedBlocks = layoutBlocks(blocks);
@@ -230,12 +252,20 @@ export default function ScheduleGrid({
       group.forEach((block) => columnsById.set(block.id, columns));
     });
 
-    const isSlotBusy = (slotStart: number, slotEnd: number) =>
-      blocks.some((block) => {
+    const roomPolicy = roomMeta?.[roomId];
+    const roomOpen = roomPolicy?.openMinutes ?? baseStartMinutes;
+    const roomClose = roomPolicy?.closeMinutes ?? baseEndMinutes;
+    const isRoomClosed = Boolean(roomPolicy?.isClosed);
+
+    const isSlotBusy = (slotStart: number, slotEnd: number) => {
+      if (isRoomClosed) return true;
+      if (slotStart < roomOpen || slotEnd > roomClose) return true;
+      return blocks.some((block) => {
         const blockStart = block.startMinutes;
         const blockEnd = block.startMinutes + block.durationMinutes;
         return blockStart < slotEnd && blockEnd > slotStart;
       });
+    };
 
     const optionActive = Boolean(
       reserveDraft &&
@@ -266,6 +296,10 @@ export default function ScheduleGrid({
               onClick={(event) => {
                 if (view === "daily" && onRoomSelect) {
                   event.stopPropagation();
+                }
+                if (adminMode) {
+                  onAdminSlotClick?.({ date: dateKey, day: dayKey, time: slotStart, roomId });
+                  return;
                 }
                 if (!currentUser?.allowed) {
                   onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId });
@@ -345,7 +379,13 @@ export default function ScheduleGrid({
           const showDetails = !compact;
           const showCompactDetails = compact;
           const showCompactText = compact && (view !== "daily" || compactLabel === "status");
-          const statusLabel = block.type === "reserved" ? "שמור" : "שיעור";
+          const statusLabel = block.type === "reserved"
+            ? "שמור"
+            : block.type === "special"
+              ? "אירוע"
+              : block.type === "closed"
+                ? "סגור"
+                : "שיעור";
           const compactText = compactLabel === "status" ? statusLabel : block.title;
           const isShortLesson = block.type === "lesson" && block.durationMinutes <= 30;
           const isShortBlock = block.durationMinutes <= 45 || height < rowHeight * 0.6;
@@ -361,6 +401,18 @@ export default function ScheduleGrid({
                 width: `calc(${widthPercent}% - ${gap}px)`
               }}
               onClick={() => {
+                if (adminMode) {
+                  if (block.type === "lesson") {
+                    onAdminLessonClick?.(block.id, dateKey);
+                  } else {
+                    onAdminReservationClick?.(block.reservationId, dateKey);
+                  }
+                  return;
+                }
+                if (block.type === "reserved") {
+                  onReservationClick?.(block.reservationId, dateKey);
+                  return;
+                }
                 if (view === "room" && onDateSelect) {
                   onDateSelect(dateKey);
                 }

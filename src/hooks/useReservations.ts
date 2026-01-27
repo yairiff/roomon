@@ -30,7 +30,8 @@ export function useReservations() {
             durationMinutes: data.durationMinutes ?? 60,
             roomId: data.roomId,
             reservedBy: data.reservedBy ?? "",
-            reservedEmail: data.reservedEmail ?? ""
+            reservedEmail: data.reservedEmail ?? "",
+            kind: data.kind === "special" || data.kind === "closed" ? data.kind : undefined
           };
           if (!nextMap[reservation.date]) {
             nextMap[reservation.date] = [];
@@ -58,6 +59,14 @@ export function useReservations() {
     });
   };
 
+  const upsertReservation = (reservation: Reservation) => {
+    if (!db) return;
+    void setDoc(doc(db, "reservations", reservation.id), {
+      ...reservation,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  };
+
   const releaseReservation = (_dateKey: string, reservationId: string) => {
     if (!db) return;
     void deleteDoc(doc(db, "reservations", reservationId));
@@ -66,6 +75,7 @@ export function useReservations() {
   return {
     reservationMap,
     addReservation,
+    upsertReservation,
     releaseReservation,
     reservationsReady,
     reservationsError
