@@ -1,71 +1,131 @@
-export function parseCsv(text: string, delimiter = ","): string[][] {
-  if (!text) return [];
-  const normalized = normalizeQuoteLines(text);
-  const rows: string[][] = [];
-  let current: string[] = [];
-  let value = "";
+type CsvCell = string;
+
+// Small CSV parser/stringifier for admin import/export.
+// - RFC4180-ish: commas, CRLF/LF, quoted fields with "" escaping.
+// - No fancy type inference; callers map/validate.
+
+export function parseCsv(text: string): CsvCell[][] {
+  const input = text.replace(/^\uFEFF/, ""); // strip UTF-8 BOM
+  const rows: CsvCell[][] = [];
+  let row: CsvCell[] = [];
+  let cell = "";
+  let i = 0;
   let inQuotes = false;
 
-  const pushValue = () => {
-    current.push(value);
-    value = "";
+  const pushCell = () => {
+    row.push(cell);
+    cell = "";
+  };
+  const pushRow = () => {
+    // Avoid trailing empty row from final newline.
+    if (row.length === 1 && row[0] === "" && rows.length === 0) {
+      // allow single empty header to be handled by caller
+    }
+    rows.push(row);
+    row = [];
   };
 
-  for (let i = 0; i < normalized.length; i += 1) {
-    const char = normalized[i];
-    const next = normalized[i + 1];
-
-    if (char === "\uFEFF" && rows.length === 0 && current.length === 0 && value === "") {
-      continue;
-    }
-
-    if (char === '"') {
-      if (inQuotes && next === '"') {
-        value += '"';
+  while (i < input.length) {
+    const ch = input[i];
+    if (inQuotes) {
+      if (ch === "\"") {
+        const next = input[i + 1];
+        if (next === "\"") {
+          cell += "\"";
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
         i += 1;
-      } else {
-        inQuotes = !inQuotes;
+        continue;
       }
+      cell += ch;
+      i += 1;
       continue;
     }
 
-    if (!inQuotes && char === delimiter) {
-      pushValue();
+    if (ch === "\"") {
+      inQuotes = true;
+      i += 1;
       continue;
     }
 
-    if (char === "\n" || char === "\r") {
-      if (char === "\r" && next === "\n") {
-        i += 1;
+    if (ch === ",") {
+      pushCell();
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\n") {
+      pushCell();
+      pushRow();
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\r") {
+      // Handle CRLF and bare CR.
+      if (input[i + 1] === "\n") {
+        pushCell();
+        pushRow();
+        i += 2;
+        continue;
       }
-      pushValue();
-      rows.push(current);
-      current = [];
-      inQuotes = false;
+      pushCell();
+      pushRow();
+      i += 1;
       continue;
     }
 
-    value += char;
+    cell += ch;
+    i += 1;
   }
 
-  if (value.length > 0 || current.length > 0) {
-    pushValue();
-    rows.push(current);
+  // Flush last cell/row (even if empty, but avoid adding a trailing empty row if file ends with newline).
+  if (inQuotes) {
+    // Caller can decide what to do; keep best-effort parse.
+    inQuotes = false;
+  }
+  pushCell();
+  // If the only row is a single empty cell, treat it as no data.
+  if (!(row.length === 1 && row[0] === "" && rows.length === 0)) {
+    pushRow();
   }
 
   return rows;
 }
 
-function normalizeQuoteLines(text: string) {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  return normalized
-    .split("\n")
-    .map((line) => {
-      const quoteCount = (line.match(/"/g) || []).length;
-      if (quoteCount % 2 === 1) {
-        return line.replace(/"/g, "");
-      }
-      return line;
-    })
-    .join("\n");
+export function stringifyCsv(headers: string[], rows: Array<Record<string, unknown>>): string {
+  const escapeCell = (value: unknown) => {
+    const raw = value === null || value === undefined ? "" : String(value);
+    if (/[",\r\n]/.test(raw)) {
+      return `"${raw.replace(/\"/g, "\"\"")}"`;
+    }
+    return raw;
+  };
+
+  const lines: string[] = [];
+  lines.push(headers.map(escapeCell).join(","));
+  rows.forEach((row) => {
+    lines.push(headers.map((h) => escapeCell((row as Record<string, unknown>)[h])).join(","));
+  });
+  return `${lines.join("\n")}\n`;
 }
+
+export function parseCsvAsObjects(text: string): {
+  headers: string[];
+  rows: Array<Record<string, string>>;
+} {
+  const grid = parseCsv(text);
+  if (!grid.length) return { headers: [], rows: [] };
+  const headers = (grid[0] || []).map((h) => h.trim());
+  const rows = grid.slice(1).filter((r) => r.some((c) => c.trim() !== "")).map((r) => {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, idx) => {
+      obj[h] = (r[idx] ?? "").trim();
+    });
+    return obj;
+  });
+  return { headers, rows };
+}
+

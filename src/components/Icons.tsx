@@ -21,6 +21,7 @@ import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
+import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
 
 export function CalendarIcon() {
   return <CalendarMonthRoundedIcon fontSize="small" />;
@@ -114,4 +115,8 @@ export function ApproveIcon() {
 
 export function UploadIcon() {
   return <UploadFileRoundedIcon fontSize="small" />;
+}
+
+export function DownloadIcon() {
+  return <FileDownloadRoundedIcon fontSize="small" />;
 }

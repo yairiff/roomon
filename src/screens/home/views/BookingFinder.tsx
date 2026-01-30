@@ -33,7 +33,7 @@ export default function BookingFinder({
   const [selectedWeekdays, setSelectedWeekdays] = useState<number[]>([]);
   const [fromHour, setFromHour] = useState(startHour);
   const [toHour, setToHour] = useState(endHour);
-  const [duration, setDuration] = useState(1);
+  const [duration, setDuration] = useState("");
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [visibleCount, setVisibleCount] = useState(20);
 
@@ -54,16 +54,27 @@ export default function BookingFinder({
     return `יום ${dayLabel} · ${formatShortDate(dateKey)}`;
   };
 
+  const formatDurationLabel = (minutes: number) => {
+    if (minutes === 60) return "שעה";
+    if (minutes === 120) return "שעתיים";
+    if (minutes === 180) return "שלוש שעות";
+    const hours = minutes / 60;
+    if (Number.isInteger(hours)) return `${hours} שעות`;
+    return `${hours.toFixed(2)} שעות`;
+  };
+
   const hours = useMemo(
     () => Array.from({ length: endHour - startHour + 1 }, (_, i) => i + startHour),
     [startHour, endHour]
   );
 
+  const durationFilterMinutes = duration ? Number(duration) * 60 : 0;
   const results = useMemo(() => {
     const start = parseDateKey(effectiveStartDate);
     const end = parseDateKey(effectiveEndDate);
     if (start > end) return [];
 
+    const minGap = durationFilterMinutes || 0;
     const dates: string[] = [];
     for (let date = start; date <= end; date = addDays(date, 1)) {
       const day = date.getDay();
@@ -72,7 +83,7 @@ export default function BookingFinder({
       dates.push(formatDateKey(date));
     }
 
-    const items: { date: string; room: Room; start: number; end: number }[] = [];
+    const items: { date: string; day: DayKey; room: Room; start: number; end: number }[] = [];
 
     dates.forEach((dateKey) => {
       const dayKey = getDayKeyFromDateKey(dateKey);
@@ -84,53 +95,75 @@ export default function BookingFinder({
       availableRooms.forEach((room) => {
         const policy = roomMeta?.[room.id];
         if (policy?.isClosed) return;
-        const roomOpen = policy?.openMinutes ?? startHour * 60;
-        const roomClose = policy?.closeMinutes ?? endHour * 60;
+        const roomOpen = Math.max(policy?.openMinutes ?? startHour * 60, fromHour * 60);
+        const roomClose = Math.min(policy?.closeMinutes ?? endHour * 60, toHour * 60);
+        if (roomOpen >= roomClose) return;
 
-        for (let hour = fromHour; hour <= toHour - duration; hour += 1) {
-          const startMinutes = hour * 60;
-          const endMinutes = startMinutes + duration * 60;
+        const busyIntervals = [
+          ...dayLessons
+            .filter((lesson) => lesson.roomId === room.id)
+            .map((lesson) => ({
+              start: lesson.startMinutes,
+              end: lesson.startMinutes + lesson.durationMinutes
+            })),
+          ...reservations
+            .filter((entry) => entry.roomId === room.id)
+            .map((entry) => ({
+              start: entry.time,
+              end: entry.time + entry.durationMinutes
+            }))
+        ]
+          .sort((a, b) => a.start - b.start);
 
-          if (startMinutes < roomOpen || endMinutes > roomClose) continue;
+        let cursor = roomOpen;
+        busyIntervals.forEach((interval) => {
+          if (interval.end <= cursor) {
+            cursor = Math.max(cursor, interval.end);
+            return;
+          }
+          const gapStart = cursor;
+          const gapEnd = Math.min(Math.max(interval.start, cursor), roomClose);
+          const alignedStart = Math.ceil(gapStart / 60) * 60;
+          const alignedEnd = Math.floor(gapEnd / 60) * 60;
+          if (alignedEnd - alignedStart >= minGap && alignedEnd > alignedStart) {
+            items.push({ date: dateKey, dayKey, room, start: alignedStart, end: alignedEnd });
+          }
+          cursor = Math.max(cursor, interval.end);
+          if (cursor >= roomClose) return;
+        });
 
-          const overlapsLesson = dayLessons.some((lesson) => {
-            if (lesson.roomId !== room.id) return false;
-            const lessonEnd = lesson.startMinutes + lesson.durationMinutes;
-            return lesson.startMinutes < endMinutes && lessonEnd > startMinutes;
-          });
-
-          if (overlapsLesson) continue;
-
-          const overlapsReservation = reservations.some((reservation) => {
-            if (reservation.roomId !== room.id) return false;
-            const reservationEnd = reservation.time + reservation.durationMinutes;
-            return reservation.time < endMinutes && reservationEnd > startMinutes;
-          });
-
-          if (overlapsReservation) continue;
-
-          items.push({ date: dateKey, room, start: startMinutes, end: endMinutes });
+        if (cursor < roomClose) {
+          const gapStart = cursor;
+          const gapEnd = roomClose;
+          const alignedStart = Math.ceil(gapStart / 60) * 60;
+          const alignedEnd = Math.floor(gapEnd / 60) * 60;
+          if (alignedEnd - alignedStart >= minGap && alignedEnd > alignedStart) {
+            items.push({ date: dateKey, dayKey, room, start: alignedStart, end: alignedEnd });
+          }
         }
       });
     });
 
-    return items
-      .sort((a, b) => {
-        if (a.date !== b.date) return a.date.localeCompare(b.date);
-        if (a.start !== b.start) return a.start - b.start;
-        return a.room.name.localeCompare(b.room.name);
-      });
+    return items.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      if (a.start !== b.start) return a.start - b.start;
+      return a.room.name.localeCompare(b.room.name);
+    });
   }, [
     advancedMode,
-    effectiveStartDate,
-    effectiveEndDate,
-    fromHour,
-    toHour,
-    duration,
     availableRooms,
+    durationFilterMinutes,
+    effectiveEndDate,
+    effectiveStartDate,
+    endHour,
+    fromHour,
+    getLessonsForDate,
     lessons,
     reservationMap,
-    selectedWeekdays
+    roomMeta,
+    selectedWeekdays,
+    startHour,
+    toHour
   ]);
 
   useEffect(() => {
@@ -218,7 +251,8 @@ export default function BookingFinder({
         </div>
         <label>
           משך
-          <select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>
+          <select value={duration} onChange={(event) => setDuration(event.target.value)}>
+            <option value="">משך רצוי (אופציונלי)</option>
             {Array.from({ length: Math.min(6, endHour - startHour) }, (_, index) => index + 1).map((h) => (
               <option key={h} value={h}>{h} שעות</option>
             ))}
@@ -259,7 +293,8 @@ export default function BookingFinder({
                     <span className="dot empty" /> {item.room.name}
                   </p>
                   <p className="finder-result-meta">
-                    {formatDayDate(item.date)} · {formatMinutes(item.start)}–{formatMinutes(item.end)}
+                    {formatDayDate(item.date)} · {formatMinutes(item.start)}–{formatMinutes(item.end)} ·{" "}
+                    {formatDurationLabel(item.end - item.start)}
                   </p>
                 </div>
                 <button
@@ -269,10 +304,10 @@ export default function BookingFinder({
                   onClick={() =>
                     onReserve({
                       date: item.date,
-                      day: getDayKeyFromDateKey(item.date),
+                      day: item.dayKey,
                       time: item.start,
                       roomId: item.room.id,
-                      durationMinutes: duration * 60
+                      durationMinutes: duration ? durationFilterMinutes : undefined
                     })
                   }
                 >

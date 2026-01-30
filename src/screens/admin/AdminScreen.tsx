@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { collection, doc, getDocs, writeBatch } from "firebase/firestore";
-import { buildLessonsFromCsv } from "../../lib/scheduleBuilder";
 import { rimonScheduleConfig } from "../../config";
 import { db } from "../../lib/firebase";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
@@ -9,11 +8,13 @@ import { useReservations } from "../../hooks/useReservations";
 import { useRooms } from "../../hooks/useRooms";
 import { useScheduleSettings } from "../../hooks/useScheduleSettings";
 import type { User } from "../../types/auth";
-import type { LessonRecord, RoomRecord, DirectoryUser } from "../../types/admin";
+import type { LessonRecord, RoomRecord, DirectoryUser, UserRole } from "../../types/admin";
 import type { SemesterKey } from "../../types/ui";
-import { getAcademicYearStartYear } from "../../lib/academics";
+import type { Reservation } from "../../types/reservations";
+import { cohortStartYearFromGrade, getAcademicYearStartYear, gradeValueFromCohort } from "../../lib/academics";
 import type { AdminSection } from "./types";
-import { BookmarkIcon, LessonIcon, RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, ReleaseIcon, CloseIcon, UploadIcon } from "../../components/Icons";
+import { BookmarkIcon, LessonIcon, RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, ReleaseIcon, CloseIcon, UploadIcon, DownloadIcon } from "../../components/Icons";
+import { parseCsvAsObjects, stringifyCsv } from "../../lib/csv";
 import UsersSection from "./sections/UsersSection";
 import LessonsSection from "./sections/LessonsSection";
 import RoomsSection from "./sections/RoomsSection";
@@ -42,15 +43,21 @@ const parseTimeInput = (value: string) => {
 export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps) {
   const isAdmin = currentUser?.role === "admin";
   const [activeSemester, setActiveSemester] = useState<SemesterKey>("A");
-  const [csvText, setCsvText] = useState("");
-  const [csvMessage, setCsvMessage] = useState("");
   const [activeSection, setActiveSection] = useState<AdminSection>("users");
   const [clearRange, setClearRange] = useState({ start: "", end: "" });
   const [clearMessage, setClearMessage] = useState("");
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" } | null>(null);
-  const [lessonsTool, setLessonsTool] = useState<"csv" | "semesters" | null>(null);
-  const [reservationsToolOpen, setReservationsToolOpen] = useState(false);
+  const [activeTool, setActiveTool] = useState<
+    | null
+    | {
+        section: "users" | "lessons" | "reservations";
+        kind: "csv_import" | "csv_export" | "semesters" | "clear_reservations";
+      }
+  >(null);
+  const [importMode, setImportMode] = useState<"override" | "add">("add");
+  const [importText, setImportText] = useState("");
+  const [importMessage, setImportMessage] = useState("");
   const userInitials = currentUser
     ? currentUser.name
         .split(" ")
@@ -73,6 +80,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     upsertLesson,
     removeLesson
   } = useLessons(activeSemester);
+  const { lessons: lessonsAll, lessonsError: lessonsAllError } = useLessons();
   const {
     roomsRaw,
     roomsError,
@@ -86,6 +94,16 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     upsertReservation
   } = useReservations();
   const { semesterRanges, settingsError, saveSemesterRanges } = useScheduleSettings();
+
+  const reservationList = useMemo(() => {
+    const all: Reservation[] = [];
+    Object.values(reservationMap).forEach((reservations) => reservations.forEach((reservation) => all.push(reservation)));
+    return all.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      if (a.time !== b.time) return a.time - b.time;
+      return a.roomId.localeCompare(b.roomId);
+    });
+  }, [reservationMap]);
 
   const [userDraft, setUserDraft] = useState<DirectoryUser>({
     email: "",
@@ -136,15 +154,20 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   }, [toast]);
 
   const closeTools = useCallback(() => {
-    setLessonsTool(null);
-    setReservationsToolOpen(false);
+    setActiveTool(null);
+    setImportText("");
+    setImportMessage("");
+    setImportMode("add");
   }, []);
 
-  const overlayOpen = lessonsTool !== null || reservationsToolOpen;
+  const overlayOpen = activeTool !== null;
 
   useEffect(() => {
-    setLessonsTool(null);
-    setReservationsToolOpen(false);
+    setActiveTool(null);
+    setImportText("");
+    setImportMessage("");
+    setImportMode("add");
+    setClearMessage("");
   }, [activeSection]);
 
   useEffect(() => {
@@ -158,58 +181,231 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     return () => window.removeEventListener("keydown", handleKey);
   }, [closeTools, overlayOpen]);
 
-  const parsedCsv = useMemo(() => {
-    if (!csvText.trim()) return null;
-    const lessonsA = buildLessonsFromCsv(csvText, rimonScheduleConfig, "A").map((lesson, index) => ({
-      ...lesson,
-      id: `A-${index}`,
-      semester: "A" as const
-    }));
-    const lessonsB = buildLessonsFromCsv(csvText, rimonScheduleConfig, "B").map((lesson, index) => ({
-      ...lesson,
-      id: `B-${index}`,
-      semester: "B" as const
-    }));
-    return { lessonsA, lessonsB };
-  }, [csvText]);
-
-  const reservationList = useMemo(() => {
-    const list = Object.values(reservationMap).flat();
-    return list.sort((a, b) => {
-      if (a.date !== b.date) return a.date.localeCompare(b.date);
-      return a.time - b.time;
-    });
-  }, [reservationMap]);
-
   const showToast = (message: string, tone: "success" | "error" = "success") => {
     setToast({ message, tone });
   };
 
-  const handleCsvFile = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    file.text().then((text) => {
-      setCsvText(text);
-      setCsvMessage("");
+  const toolToggle = (tool: NonNullable<typeof activeTool>) => {
+    setActiveTool((prev) => {
+      if (prev && prev.section === tool.section && prev.kind === tool.kind) return null;
+      return tool;
     });
   };
 
-  const handleReplaceSchedule = async () => {
-    if (!db || !parsedCsv) return;
-    try {
-      const allLessons = [...parsedCsv.lessonsA, ...parsedCsv.lessonsB];
-      const batch = writeBatch(db);
-      const existing = await getDocs(collection(db, "lessons"));
-      existing.forEach((docSnap) => batch.delete(docSnap.ref));
-      allLessons.forEach((lesson) => {
-        batch.set(doc(db, "lessons", lesson.id), lesson);
-      });
-      await batch.commit();
-      setCsvMessage(`עודכן: ${allLessons.length} שיעורים נטענו.`);
-      showToast("לוח השיעורים עודכן.");
-    } catch {
-      showToast("החלפת לוח נכשלה.", "error");
+  const parseTimeStrict = (value: string) => {
+    const trimmed = value.trim();
+    if (!/^\d{1,2}:\d{2}$/.test(trimmed)) return null;
+    const minutes = parseTimeInput(trimmed);
+    if (!Number.isFinite(minutes) || minutes < 0) return null;
+    const [h, m] = trimmed.split(":").map((part) => Number(part));
+    if (h > 23 || m > 59) return null;
+    return minutes;
+  };
+
+  const userCsvHeaders = ["email", "name", "role", "phone", "grade"];
+  const lessonCsvHeaders = ["semester", "day", "startTime", "durationMinutes", "roomId", "title", "teacher"];
+  const reservationCsvHeaders = ["date", "roomId", "time", "durationMinutes", "reservedBy", "reservedEmail", "kind"];
+
+  const exportPayload = useMemo(() => {
+    if (!activeTool || activeTool.kind !== "csv_export") return null;
+    if (activeTool.section === "users") {
+      const rows = users.map((u) => ({
+        email: u.email,
+        name: u.name || "",
+        role: u.role || "student",
+        phone: u.phone || "",
+        grade: u.cohortStartYear ? gradeValueFromCohort(u.cohortStartYear) : ""
+      }));
+      return { filename: "users.csv", csv: stringifyCsv(userCsvHeaders, rows) };
     }
+    if (activeTool.section === "lessons") {
+      const rows = lessonsAll.map((l) => ({
+        semester: l.semester,
+        day: l.day,
+        startTime: toTimeInput(l.startMinutes),
+        durationMinutes: l.durationMinutes,
+        roomId: l.roomId,
+        title: l.title || "",
+        teacher: l.teacher || ""
+      }));
+      return { filename: "lessons.csv", csv: stringifyCsv(lessonCsvHeaders, rows) };
+    }
+    const rows = reservationList.map((r) => ({
+      date: r.date,
+      roomId: r.roomId,
+      time: toTimeInput(r.time),
+      durationMinutes: r.durationMinutes || 60,
+      reservedBy: r.reservedBy || "",
+      reservedEmail: r.reservedEmail || "",
+      kind: r.kind || "regular"
+    }));
+    return { filename: "reservations.csv", csv: stringifyCsv(reservationCsvHeaders, rows) };
+  }, [activeTool, lessonsAll, reservationList, users]);
+
+  const downloadTextFile = (filename: string, content: string, mime = "text/csv;charset=utf-8") => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    file.text().then((text) => {
+      setImportText(text);
+      setImportMessage("");
+    });
+  };
+
+  const importUsersFromCsv = (text: string) => {
+    const { rows } = parseCsvAsObjects(text);
+    const errors: string[] = [];
+    const next: DirectoryUser[] = [];
+    const seen = new Set<string>();
+
+    rows.forEach((row, idx) => {
+      const email = (row.email || "").toLowerCase();
+      if (!email) {
+        errors.push(`שורה ${idx + 2}: חסר email`);
+        return;
+      }
+      if (seen.has(email)) return;
+      seen.add(email);
+
+      const roleRaw = (row.role || "student").toLowerCase() as UserRole;
+      const role: UserRole =
+        roleRaw === "admin" || roleRaw === "moderator" || roleRaw === "student" || roleRaw === "pending"
+          ? roleRaw
+          : "student";
+
+      const gradeRaw = (row.grade || "").trim().toUpperCase();
+      const grade = gradeRaw === "A" || gradeRaw === "B" || gradeRaw === "C"
+        ? (gradeRaw as "A" | "B" | "C")
+        : gradeRaw === "א"
+          ? "A"
+          : gradeRaw === "ב"
+            ? "B"
+            : gradeRaw === "ג"
+              ? "C"
+              : null;
+
+      next.push({
+        email,
+        name: row.name || "",
+        role,
+        phone: row.phone || "",
+        cohortStartYear: grade ? cohortStartYearFromGrade(grade) : undefined
+      });
+    });
+
+    return { users: next, errors };
+  };
+
+  const lessonIdFromRow = (semester: SemesterKey, day: LessonRecord["day"], roomId: string, startMinutes: number) =>
+    `lesson_${semester}_${day}_${roomId}_${startMinutes}`;
+
+  const importLessonsFromCsv = (text: string) => {
+    const { rows } = parseCsvAsObjects(text);
+    const errors: string[] = [];
+    const next: LessonRecord[] = [];
+    const seen = new Set<string>();
+
+    rows.forEach((row, idx) => {
+      const semesterRaw = (row.semester || activeSemester).trim().toUpperCase();
+      const semester = semesterRaw === "A" || semesterRaw === "B" ? (semesterRaw as SemesterKey) : activeSemester;
+      const day = (row.day || "").trim() as LessonRecord["day"];
+      if (!day) {
+        errors.push(`שורה ${idx + 2}: חסר day`);
+        return;
+      }
+      const roomId = (row.roomId || "").trim();
+      if (!roomId) {
+        errors.push(`שורה ${idx + 2}: חסר roomId`);
+        return;
+      }
+      const startMinutes = parseTimeStrict(row.startTime || "");
+      if (startMinutes === null) {
+        errors.push(`שורה ${idx + 2}: startTime לא תקין (HH:MM)`);
+        return;
+      }
+      const durationMinutes = row.durationMinutes ? Number(row.durationMinutes) : rimonScheduleConfig.academicHourMinutes;
+      if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+        errors.push(`שורה ${idx + 2}: durationMinutes לא תקין`);
+        return;
+      }
+
+      const id = lessonIdFromRow(semester, day, roomId, startMinutes);
+      if (seen.has(id)) return;
+      seen.add(id);
+      next.push({
+        id,
+        semester,
+        day,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        title: row.title || "",
+        teacher: row.teacher || ""
+      });
+    });
+
+    return { lessons: next, errors };
+  };
+
+  const reservationIdFromRow = (date: string, roomId: string, timeMinutes: number) =>
+    `res_${date}_${roomId}_${timeMinutes}`;
+
+  const importReservationsFromCsv = (text: string) => {
+    const { rows } = parseCsvAsObjects(text);
+    const errors: string[] = [];
+    const next: Reservation[] = [];
+    const seen = new Set<string>();
+
+    rows.forEach((row, idx) => {
+      const date = (row.date || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        errors.push(`שורה ${idx + 2}: date לא תקין (YYYY-MM-DD)`);
+        return;
+      }
+      const roomId = (row.roomId || "").trim();
+      if (!roomId) {
+        errors.push(`שורה ${idx + 2}: חסר roomId`);
+        return;
+      }
+      const timeMinutes = parseTimeStrict(row.time || "");
+      if (timeMinutes === null) {
+        errors.push(`שורה ${idx + 2}: time לא תקין (HH:MM)`);
+        return;
+      }
+      const durationMinutes = row.durationMinutes ? Number(row.durationMinutes) : 60;
+      if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+        errors.push(`שורה ${idx + 2}: durationMinutes לא תקין`);
+        return;
+      }
+      const kindRaw = (row.kind || "").trim().toLowerCase();
+      const kind = kindRaw === "special" || kindRaw === "closed" ? (kindRaw as "special" | "closed") : undefined;
+      const id = reservationIdFromRow(date, roomId, timeMinutes);
+      if (seen.has(id)) return;
+      seen.add(id);
+      next.push({
+        id,
+        date,
+        time: timeMinutes,
+        durationMinutes,
+        roomId,
+        reservedBy: row.reservedBy || "",
+        reservedEmail: row.reservedEmail || "",
+        kind
+      });
+    });
+
+    return { reservations: next, errors };
   };
 
   if (!isAdmin) {
@@ -368,8 +564,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const menuItems: { key: AdminSection; label: string; icon: JSX.Element }[] = [
     { key: "users", label: "משתמשים", icon: <UserIcon /> },
     { key: "lessons", label: "שיעורים", icon: <LessonIcon /> },
-    { key: "rooms", label: "חדרים", icon: <RoomIcon /> },
-    { key: "reservations", label: "שריונים", icon: <BookmarkIcon /> }
+    { key: "reservations", label: "שיעורים ואירועים", icon: <BookmarkIcon /> },
+    { key: "rooms", label: "חדרים", icon: <RoomIcon /> }
   ];
 
   const toolbarTitle =
@@ -379,107 +575,84 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         ? "שיעורים"
         : activeSection === "rooms"
           ? "חדרים"
-          : "שריונים";
+          : "שיעורים ואירועים";
 
-  const lessonsToolContent = lessonsTool ? (
+  const semestersToolContent = (
     <div className="admin-tool-content">
-      {lessonsTool === "csv" ? (
-        <div className="admin-csv">
-          <p className="admin-meta">ייבוא CSV מחליף את כל השיעורים בלוח הקבוע.</p>
-          <input type="file" accept=".csv" onChange={handleCsvFile} />
-          <textarea
-            value={csvText}
-            onChange={(event) => setCsvText(event.target.value)}
-            placeholder="הדבק כאן CSV מלא..."
+      {settingsError ? <p className="admin-error">{settingsError}</p> : null}
+      <p className="admin-meta">
+        אם אין טווחים מוגדרים, המערכת מציגה זמינות חדרים ללא שיעורים (בין סמסטרים).
+      </p>
+      <div className="admin-form-grid">
+        <label>
+          סמסטר א׳ התחלה
+          <input
+            type="date"
+            value={rangeDraft.A.start}
+            onChange={(event) =>
+              setRangeDraft((prev) => ({
+                ...prev,
+                A: { ...prev.A, start: event.target.value }
+              }))
+            }
           />
-          {parsedCsv ? (
-            <p className="admin-meta">
-              נמצאו {parsedCsv.lessonsA.length} שיעורים בסמסטר א׳ ו־{parsedCsv.lessonsB.length} בסמסטר ב׳.
-            </p>
-          ) : null}
-          {csvMessage ? <p className="admin-success">{csvMessage}</p> : null}
-          <button className="primary" type="button" onClick={handleReplaceSchedule}>
-            החלפת לוח קבוע
-          </button>
-        </div>
-      ) : (
-        <div className="admin-csv">
-          {settingsError ? <p className="admin-error">{settingsError}</p> : null}
-          <p className="admin-meta">
-            אם אין טווחים מוגדרים, המערכת מציגה זמינות חדרים ללא שיעורים (בין סמסטרים).
-          </p>
-          <div className="admin-form-grid">
-            <label>
-              סמסטר א׳ התחלה
-              <input
-                type="date"
-                value={rangeDraft.A.start}
-                onChange={(event) =>
-                  setRangeDraft((prev) => ({
-                    ...prev,
-                    A: { ...prev.A, start: event.target.value }
-                  }))
-                }
-              />
-            </label>
-            <label>
-              סמסטר א׳ סיום
-              <input
-                type="date"
-                value={rangeDraft.A.end}
-                onChange={(event) =>
-                  setRangeDraft((prev) => ({
-                    ...prev,
-                    A: { ...prev.A, end: event.target.value }
-                  }))
-                }
-              />
-            </label>
-            <label>
-              סמסטר ב׳ התחלה
-              <input
-                type="date"
-                value={rangeDraft.B.start}
-                onChange={(event) =>
-                  setRangeDraft((prev) => ({
-                    ...prev,
-                    B: { ...prev.B, start: event.target.value }
-                  }))
-                }
-              />
-            </label>
-            <label>
-              סמסטר ב׳ סיום
-              <input
-                type="date"
-                value={rangeDraft.B.end}
-                onChange={(event) =>
-                  setRangeDraft((prev) => ({
-                    ...prev,
-                    B: { ...prev.B, end: event.target.value }
-                  }))
-                }
-              />
-            </label>
-          </div>
-          <div className="admin-actions">
-            <button
-              className="secondary"
-              type="button"
-              onClick={() => setRangeDraft({ A: { start: "", end: "" }, B: { start: "", end: "" } })}
-            >
-              איפוס
-            </button>
-            <button className="primary" type="button" onClick={handleSaveRanges}>
-              שמירה
-            </button>
-          </div>
-        </div>
-      )}
+        </label>
+        <label>
+          סמסטר א׳ סיום
+          <input
+            type="date"
+            value={rangeDraft.A.end}
+            onChange={(event) =>
+              setRangeDraft((prev) => ({
+                ...prev,
+                A: { ...prev.A, end: event.target.value }
+              }))
+            }
+          />
+        </label>
+        <label>
+          סמסטר ב׳ התחלה
+          <input
+            type="date"
+            value={rangeDraft.B.start}
+            onChange={(event) =>
+              setRangeDraft((prev) => ({
+                ...prev,
+                B: { ...prev.B, start: event.target.value }
+              }))
+            }
+          />
+        </label>
+        <label>
+          סמסטר ב׳ סיום
+          <input
+            type="date"
+            value={rangeDraft.B.end}
+            onChange={(event) =>
+              setRangeDraft((prev) => ({
+                ...prev,
+                B: { ...prev.B, end: event.target.value }
+              }))
+            }
+          />
+        </label>
+      </div>
+      <div className="admin-actions">
+        <button
+          className="secondary"
+          type="button"
+          onClick={() => setRangeDraft({ A: { start: "", end: "" }, B: { start: "", end: "" } })}
+        >
+          איפוס
+        </button>
+        <button className="primary" type="button" onClick={handleSaveRanges}>
+          שמירה
+        </button>
+      </div>
     </div>
-  ) : null;
+  );
 
-  const reservationsToolContent = reservationsToolOpen ? (
+  const clearReservationsToolContent = (
     <div className="admin-tool-content">
       <p className="admin-meta">פעולה זו מוחקת שריונים קיימים בין התאריכים שנבחרו (כולל).</p>
       <div className="admin-form-grid">
@@ -517,13 +690,217 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         </button>
       </div>
     </div>
-  ) : null;
+  );
 
-  const overlayTitle = lessonsTool
-    ? lessonsTool === "csv"
-      ? "ייבוא CSV"
-      : "טווחי סמסטר"
-    : "ניקוי שריונים";
+  const importPreview = useMemo(() => {
+    if (!activeTool || activeTool.kind !== "csv_import") return null;
+    if (!importText.trim()) return null;
+    if (activeTool.section === "users") return importUsersFromCsv(importText);
+    if (activeTool.section === "lessons") return importLessonsFromCsv(importText);
+    return importReservationsFromCsv(importText);
+  }, [activeSemester, activeTool, importText]);
+
+  const handleRunCsvImport = async () => {
+    if (!db) {
+      showToast("Firestore לא מוגדר.", "error");
+      return;
+    }
+    if (!activeTool || activeTool.kind !== "csv_import") return;
+    if (!importText.trim()) {
+      setImportMessage("בחר קובץ CSV כדי להמשיך.");
+      return;
+    }
+
+    if (activeTool.section === "users") {
+      const parsed = importUsersFromCsv(importText);
+      if (parsed.errors.length) {
+        setImportMessage(`נמצאו שגיאות: ${parsed.errors.slice(0, 5).join(" | ")}`);
+        showToast("ייבוא נכשל: יש שגיאות בקובץ.", "error");
+        return;
+      }
+      const existingEmails = new Set(users.map((u) => u.email.toLowerCase()));
+      const toWrite = importMode === "add" ? parsed.users.filter((u) => !existingEmails.has(u.email)) : parsed.users;
+      try {
+        if (importMode === "override") {
+          const snapshot = await getDocs(collection(db, "users"));
+          const refs = snapshot.docs.map((d) => d.ref);
+          for (let i = 0; i < refs.length; i += 450) {
+            const batch = writeBatch(db);
+            refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
+            await batch.commit();
+          }
+        }
+        for (let i = 0; i < toWrite.length; i += 450) {
+          const batch = writeBatch(db);
+          toWrite.slice(i, i + 450).forEach((u) => {
+            batch.set(doc(db, "users", u.email.toLowerCase()), {
+              ...u,
+              email: u.email.toLowerCase(),
+              phone: u.phone || "",
+              cohortStartYear: u.cohortStartYear ?? null
+            });
+          });
+          await batch.commit();
+        }
+        setImportMessage(`יובאו ${toWrite.length} משתמשים.`);
+        showToast("ייבוא משתמשים הושלם.");
+      } catch {
+        showToast("ייבוא משתמשים נכשל.", "error");
+      }
+      return;
+    }
+
+    if (activeTool.section === "lessons") {
+      const parsed = importLessonsFromCsv(importText);
+      if (parsed.errors.length) {
+        setImportMessage(`נמצאו שגיאות: ${parsed.errors.slice(0, 5).join(" | ")}`);
+        showToast("ייבוא נכשל: יש שגיאות בקובץ.", "error");
+        return;
+      }
+      const existingIds = new Set(lessonsAll.map((l) => l.id));
+      const toWrite = importMode === "add" ? parsed.lessons.filter((l) => !existingIds.has(l.id)) : parsed.lessons;
+      try {
+        if (importMode === "override") {
+          const snapshot = await getDocs(collection(db, "lessons"));
+          const refs = snapshot.docs.map((d) => d.ref);
+          for (let i = 0; i < refs.length; i += 450) {
+            const batch = writeBatch(db);
+            refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
+            await batch.commit();
+          }
+        }
+        for (let i = 0; i < toWrite.length; i += 450) {
+          const batch = writeBatch(db);
+          toWrite.slice(i, i + 450).forEach((l) => {
+            batch.set(doc(db, "lessons", l.id), l);
+          });
+          await batch.commit();
+        }
+        setImportMessage(`יובאו ${toWrite.length} שיעורים.`);
+        showToast("ייבוא שיעורים הושלם.");
+      } catch {
+        showToast("ייבוא שיעורים נכשל.", "error");
+      }
+      return;
+    }
+
+    const parsed = importReservationsFromCsv(importText);
+    if (parsed.errors.length) {
+      setImportMessage(`נמצאו שגיאות: ${parsed.errors.slice(0, 5).join(" | ")}`);
+      showToast("ייבוא נכשל: יש שגיאות בקובץ.", "error");
+      return;
+    }
+    const existingIds = new Set(reservationList.map((r) => r.id));
+    const toWrite = importMode === "add" ? parsed.reservations.filter((r) => !existingIds.has(r.id)) : parsed.reservations;
+    try {
+      if (importMode === "override") {
+        const snapshot = await getDocs(collection(db, "reservations"));
+        const refs = snapshot.docs.map((d) => d.ref);
+        for (let i = 0; i < refs.length; i += 450) {
+          const batch = writeBatch(db);
+          refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
+          await batch.commit();
+        }
+      }
+      for (let i = 0; i < toWrite.length; i += 450) {
+        const batch = writeBatch(db);
+        toWrite.slice(i, i + 450).forEach((r) => {
+          batch.set(doc(db, "reservations", r.id), r);
+        });
+        await batch.commit();
+      }
+      setImportMessage(`יובאו ${toWrite.length} שריונים.`);
+      showToast("ייבוא שריונים הושלם.");
+    } catch {
+      showToast("ייבוא שריונים נכשל.", "error");
+    }
+  };
+
+  const overlayTitle = !activeTool
+    ? ""
+    : activeTool.kind === "csv_export"
+      ? "ייצוא CSV"
+      : activeTool.kind === "csv_import"
+        ? "ייבוא CSV"
+        : activeTool.kind === "semesters"
+          ? "טווחי סמסטר"
+          : "ניקוי שריונים";
+
+  const distinctHelp =
+    !activeTool || activeTool.kind !== "csv_import"
+      ? ""
+      : activeTool.section === "users"
+        ? "email"
+        : activeTool.section === "lessons"
+          ? "semester, day, roomId, startTime"
+          : "date, roomId, time";
+
+  const overlayContent = !activeTool ? null : activeTool.kind === "csv_export" ? (
+    <div className="admin-tool-content">
+      <p className="admin-meta">הורד קובץ CSV, ערוך אותו והעלה חזרה דרך ייבוא.</p>
+      {activeTool.section === "lessons" && lessonsAllError ? <p className="admin-error">{lessonsAllError}</p> : null}
+      <div className="admin-actions">
+        <button
+          className="primary"
+          type="button"
+          onClick={() => {
+            if (!exportPayload) return;
+            downloadTextFile(exportPayload.filename, exportPayload.csv);
+          }}
+          disabled={!exportPayload}
+        >
+          <DownloadIcon />
+          הורדה
+        </button>
+      </div>
+      {exportPayload ? (
+        <textarea value={exportPayload.csv} readOnly className="admin-csv-preview" />
+      ) : null}
+    </div>
+  ) : activeTool.kind === "csv_import" ? (
+    <div className="admin-tool-content">
+      <input type="file" accept=".csv" onChange={handleImportFile} />
+      <div className="admin-import-modes">
+        <label>
+          <input type="radio" name="importMode" checked={importMode === "add"} onChange={() => setImportMode("add")} />
+          הוספת חדשים בלבד
+          <span className="admin-radio-help">- (בדיקה לפי השדות: {distinctHelp})</span>
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="importMode"
+            checked={importMode === "override"}
+            onChange={() => setImportMode("override")}
+          />
+          דריסה מלאה
+          <span className="admin-radio-help">- החלפת כל המידע במערכת בנתונים מהקובץ</span>
+        </label>
+      </div>
+      {importPreview ? (
+        <p className="admin-meta">
+          נמצאו{" "}
+          {"users" in importPreview
+            ? importPreview.users.length
+            : "lessons" in importPreview
+              ? importPreview.lessons.length
+              : importPreview.reservations.length}{" "}
+          רשומות{importPreview.errors.length ? ` · שגיאות: ${importPreview.errors.length}` : ""}
+        </p>
+      ) : null}
+      {importMessage ? <p className="admin-meta">{importMessage}</p> : null}
+      <div className="admin-actions">
+        <button className="primary" type="button" onClick={handleRunCsvImport}>
+          <UploadIcon />
+          ייבוא
+        </button>
+      </div>
+    </div>
+  ) : activeTool.kind === "semesters" ? (
+    semestersToolContent
+  ) : (
+    clearReservationsToolContent
+  );
 
   return (
     <div className={`admin-shell${sideCollapsed ? " collapsed" : ""}`}>
@@ -532,20 +909,48 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           <div className="admin-top-toolbar-row">
             <div className="admin-toolbar-title">{toolbarTitle}</div>
             <div className="admin-section-tools">
+              {activeSection === "users" ? (
+                <>
+                  <button
+                    type="button"
+                    className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv_export" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "users", kind: "csv_export" })}
+                  >
+                    <DownloadIcon />
+                    ייצוא
+                  </button>
+                  <button
+                    type="button"
+                    className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv_import" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "users", kind: "csv_import" })}
+                  >
+                    <UploadIcon />
+                    ייבוא
+                  </button>
+                </>
+              ) : null}
               {activeSection === "lessons" ? (
                 <>
                   <button
                     type="button"
-                    className={`admin-toolbar-chip${lessonsTool === "csv" ? " active" : ""}`}
-                    onClick={() => setLessonsTool((prev) => (prev === "csv" ? null : "csv"))}
+                    className={`admin-toolbar-chip${activeTool?.section === "lessons" && activeTool.kind === "csv_export" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "lessons", kind: "csv_export" })}
                   >
-                    <UploadIcon />
-                    Import
+                    <DownloadIcon />
+                    ייצוא
                   </button>
                   <button
                     type="button"
-                    className={`admin-toolbar-chip${lessonsTool === "semesters" ? " active" : ""}`}
-                    onClick={() => setLessonsTool((prev) => (prev === "semesters" ? null : "semesters"))}
+                    className={`admin-toolbar-chip${activeTool?.section === "lessons" && activeTool.kind === "csv_import" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "lessons", kind: "csv_import" })}
+                  >
+                    <UploadIcon />
+                    ייבוא
+                  </button>
+                  <button
+                    type="button"
+                    className={`admin-toolbar-chip${activeTool?.section === "lessons" && activeTool.kind === "semesters" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "lessons", kind: "semesters" })}
                   >
                     <CalendarIcon />
                     סמסטרים
@@ -553,14 +958,32 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 </>
               ) : null}
               {activeSection === "reservations" ? (
-                <button
-                  type="button"
-                  className={`admin-toolbar-chip${reservationsToolOpen ? " active" : ""}`}
-                  onClick={() => setReservationsToolOpen((prev) => !prev)}
-                >
-                  <ReleaseIcon />
-                  ניקוי שריונים
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className={`admin-toolbar-chip${activeTool?.section === "reservations" && activeTool.kind === "csv_export" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "reservations", kind: "csv_export" })}
+                  >
+                    <DownloadIcon />
+                    ייצוא
+                  </button>
+                  <button
+                    type="button"
+                    className={`admin-toolbar-chip${activeTool?.section === "reservations" && activeTool.kind === "csv_import" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "reservations", kind: "csv_import" })}
+                  >
+                    <UploadIcon />
+                    ייבוא
+                  </button>
+                  <button
+                    type="button"
+                    className={`admin-toolbar-chip${activeTool?.section === "reservations" && activeTool.kind === "clear_reservations" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "reservations", kind: "clear_reservations" })}
+                  >
+                    <ReleaseIcon />
+                    ניקוי שריונים
+                  </button>
+                </>
               ) : null}
             </div>
           </div>
@@ -672,7 +1095,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             <div className="admin-tool-overlay-heading">
               <h3>{overlayTitle}</h3>
             </div>
-            {lessonsTool ? lessonsToolContent : reservationsToolContent}
+            {overlayContent}
           </div>
         </div>
       ) : null}

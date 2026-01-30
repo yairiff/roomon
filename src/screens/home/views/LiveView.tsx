@@ -49,15 +49,17 @@ export default function LiveView({
     if (isRoomClosed) {
       return {
         status: "closed" as const,
-        title: "סגור",
-        meta: policy?.note || "סגור זמנית"
+        label: "סגור",
+        detailPrimary: policy?.note || "סגור זמנית",
+        detailSecondary: ""
       };
     }
     if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) {
       return {
         status: "closed" as const,
-        title: "סגור",
-        meta: "מחוץ לשעות הפעילות"
+        label: "סגור",
+        detailPrimary: "מחוץ לשעות הפעילות",
+        detailSecondary: ""
       };
     }
     const activeLesson = lessons.find(
@@ -71,8 +73,9 @@ export default function LiveView({
     if (activeLesson) {
       return {
         status: "lesson" as const,
-        title: activeLesson.title,
-        meta: activeLesson.teacher || "ללא מרצה"
+        label: "שיעור",
+        detailPrimary: activeLesson.title,
+        detailSecondary: activeLesson.teacher || ""
       };
     }
 
@@ -87,21 +90,24 @@ export default function LiveView({
       if (activeReservation.kind === "closed") {
         return {
           status: "closed" as const,
-          title: "סגור",
-          meta: activeReservation.reservedBy || "סגור זמנית"
+          label: "סגור",
+          detailPrimary: activeReservation.reservedBy || "סגור זמנית",
+          detailSecondary: ""
         };
       }
       return {
         status: "reserved" as const,
-        title: activeReservation.kind === "special" ? "אירוע" : "שמור",
-        meta: activeReservation.reservedBy
+        label: activeReservation.kind === "special" ? "אירוע" : "שמור",
+        detailPrimary: activeReservation.reservedBy || "",
+        detailSecondary: ""
       };
     }
 
     return {
       status: "empty" as const,
-      title: "פנוי",
-      meta: ""
+      label: "פנוי",
+      detailPrimary: "",
+      detailSecondary: ""
     };
   };
 
@@ -171,14 +177,11 @@ export default function LiveView({
     return upcoming;
   };
 
-  const formatInHours = (targetMinutes: number) => {
-    const diff = targetMinutes - nowMinutes;
+  const formatDiffMinutes = (targetMinutes: number) => {
+    const diff = Math.max(0, Math.round(targetMinutes - nowMinutes));
     if (diff <= 0) return "";
-    const hours = Math.floor(diff / 60);
-    const minutes = diff % 60;
-    if (hours === 0) return "פחות משעה";
-    if (minutes === 0) return `${hours} שעות`;
-    return `${hours}ש׳ ${minutes}ד׳`;
+    if (diff === 1) return "דקה";
+    return `${diff} דקות`;
   };
 
   const roomStates = rooms.map((room) => {
@@ -208,7 +211,8 @@ export default function LiveView({
       </div>
       <div className="live-grid">
         {roomStates.map(({ room, status, busyUntil, nextEvent }) => {
-          const nextLabel = nextEvent ? formatInHours(nextEvent.start) : "";
+          const nextBusyMinutes = busyUntil ? formatDiffMinutes(busyUntil) : "";
+          const nextEventMinutes = nextEvent ? formatDiffMinutes(nextEvent.start) : "";
           return (
             <button
               key={room.id}
@@ -216,24 +220,28 @@ export default function LiveView({
               onClick={() => onRoomSelect(room.id)}
               type="button"
             >
-              <div>
-                <p className="live-room">
+              <div className="live-top">
+                <p className="live-room">{room.name}</p>
+                <p className="live-status">
                   <span className={`status-dot ${status.status}`} />
-                  {room.name}
+                  {status.label}
                 </p>
-                <p className="live-title">{status.title}</p>
-                {status.meta ? <p className="live-meta">{status.meta}</p> : null}
               </div>
               {busyUntil ? (
                 <div className="live-next">
-                  <p className="live-next-label">פנוי ב־{formatMinutes(busyUntil)}</p>
+                  <p className="live-next-label">פנוי בעוד {nextBusyMinutes}</p>
+                  <p className="live-next-time">ב־{formatMinutes(busyUntil)}</p>
                 </div>
               ) : nextEvent ? (
                 <div className="live-next">
-                  <p className="live-next-label">הבא בעוד {nextLabel}</p>
-                  <p className="live-next-time">
-                    {formatMinutes(nextEvent.start)} · {nextEvent.label}
-                  </p>
+                  <p className="live-next-label">הבא בעוד {nextEventMinutes}</p>
+                  <p className="live-next-time">{formatMinutes(nextEvent.start)} · {nextEvent.label}</p>
+                </div>
+              ) : null}
+              {status.detailPrimary || status.detailSecondary ? (
+                <div className="live-details">
+                  {status.detailPrimary ? <p className="live-detail-main">{status.detailPrimary}</p> : null}
+                  {status.detailSecondary ? <p className="live-detail-sub">{status.detailSecondary}</p> : null}
                 </div>
               ) : null}
             </button>

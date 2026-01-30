@@ -81,6 +81,14 @@ type AdminClosedDraft = {
 
 type AdminDraft = AdminLessonDraft | AdminReservationDraft | AdminSpecialDraft | AdminClosedDraft;
 
+type PendingConfirm = {
+  request: ReserveRequest;
+  durationMinutes: number;
+  limitEnd: number;
+  startMinutes: number;
+  userRemainingMinutes: number;
+};
+
 export type HomeScreenProps = {
   currentUser: User | null;
   setAuthError: (message: string) => void;
@@ -126,13 +134,12 @@ export default function HomeScreen({
   const [selectedRoom, setSelectedRoom] = useState(ALL_ROOMS_ID);
   const [roomMode, setRoomMode] = useState<"day" | "week">("day");
   const [now, setNow] = useState(() => new Date());
-  const [reserveDraft, setReserveDraft] = useState<ReserveRequest | null>(null);
-  const [reserveOptions, setReserveOptions] = useState<{ durationMinutes: number; endMinutes: number }[]>([]);
-  const [pendingConfirm, setPendingConfirm] = useState<{ request: ReserveRequest; durationMinutes: number } | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [pendingRelease, setPendingRelease] = useState<{ dateKey: string; reservationId: string } | null>(null);
   const [reservationDetails, setReservationDetails] = useState<{ reservation: Reservation; dateKey: string } | null>(null);
   const [adminError, setAdminError] = useState("");
   const [adminDraft, setAdminDraft] = useState<AdminDraft | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone?: "info" | "error" } | null>(null);
   const prevViewRef = useRef<ViewMode>("live");
   const lastMainViewRef = useRef<ViewMode>("live");
   const dateInputRef = useRef<HTMLInputElement | null>(null);
@@ -151,6 +158,15 @@ export default function HomeScreen({
     }
   };
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const showToast = useCallback((message: string, tone: "info" | "error" = "info") => {
+    setToast({ message, tone });
+  }, []);
 
   const todayDateKey = formatDateKey(now);
   const scheduleDateKey = view === "live" ? todayDateKey : selectedDate;
@@ -179,6 +195,13 @@ export default function HomeScreen({
   const effectiveAdminMode = adminMode && isAdmin;
 
   useEffect(() => {
+    // If permissions (or admin mode) are revoked while an overlay is open, close it instead of silently no-oping.
+    if (effectiveAdminMode) return;
+    setAdminDraft(null);
+    setAdminError("");
+  }, [effectiveAdminMode]);
+
+  useEffect(() => {
     const isDailyView = view === "room" && (selectedRoom === ALL_ROOMS_ID || roomMode === "day");
     if (isDailyView && isWeekend(selectedDate)) {
       setSelectedDate(shiftSchoolDay(selectedDate, 1));
@@ -203,17 +226,6 @@ export default function HomeScreen({
     setView(requestedView);
     onRequestedViewHandled?.();
   }, [onRequestedViewHandled, requestedView]);
-
-  useEffect(() => {
-    if (!reserveDraft) return;
-    const sameDate = reserveDraft.date === selectedDate;
-    const sameRoom = selectedRoom === ALL_ROOMS_ID || reserveDraft.roomId === selectedRoom;
-    const validView = view === "room" && (selectedRoom === ALL_ROOMS_ID || roomMode === "day");
-    if (!sameDate || !sameRoom || !validView) {
-      setReserveDraft(null);
-      setReserveOptions([]);
-    }
-  }, [reserveDraft, selectedDate, selectedRoom, view, roomMode]);
 
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const todayDayKey = getDayKeyFromDateKey(todayDateKey);
@@ -319,25 +331,41 @@ export default function HomeScreen({
     return [...lessonIntervals, ...reservationIntervals];
   };
 
-  const getMaxDurationMinutes = (request: ReserveRequest) => {
+  const getUserReservedMinutes = (dateKey: string, roomId: string) => {
+    if (!currentUser?.email) return 0;
+    return (reservationMap[dateKey] || [])
+      .filter((entry) => entry.roomId === roomId && entry.reservedEmail === currentUser.email)
+      .reduce((sum, entry) => sum + entry.durationMinutes, 0);
+  };
+
+  const getAvailability = (request: ReserveRequest) => {
     const intervals = buildIntervals(request.day, request.date, request.roomId);
     const policy = roomMeta?.[request.roomId];
-    if (policy?.isClosed) return 0;
+    if (policy?.isClosed) return null;
     const minStart = policy?.openMinutes ?? config.startHour * 60;
     const maxEnd = policy?.closeMinutes ?? config.endHour * 60;
-    const start = request.time;
-    if (start < minStart) return 0;
+    const requestStart = Math.max(request.time, minStart);
+    if (requestStart >= maxEnd) return null;
 
-    const overlaps = intervals.some((interval) => interval.start < start && interval.end > start);
-    if (overlaps) return 0;
+    const alignedStart = Math.ceil(requestStart / 60) * 60;
+    const overlaps = intervals.some(
+      (interval) => interval.start < alignedStart + 0.1 && interval.end > alignedStart
+    );
+    if (overlaps || alignedStart >= maxEnd) return null;
 
     const nextStart = intervals
       .map((interval) => interval.start)
-      .filter((value) => value >= start && value < maxEnd)
+      .filter((value) => value >= alignedStart && value < maxEnd)
       .sort((a, b) => a - b)[0];
 
-    const limit = nextStart ?? maxEnd;
-    return Math.max(0, limit - start);
+    const limit = Math.min(nextStart ?? maxEnd, maxEnd);
+    const alignedLimitEnd = Math.floor(limit / 60) * 60;
+    if (alignedLimitEnd <= alignedStart) return null;
+    const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
+    const usedMinutes = getUserReservedMinutes(request.date, request.roomId);
+    const userRemainingMinutes = Math.max(0, 180 - usedMinutes);
+    if (windowDuration <= 0 || userRemainingMinutes <= 0) return null;
+    return { limitEnd: alignedLimitEnd, startMinutes: alignedStart, userRemainingMinutes };
   };
 
   const handleReserve = (request: ReserveRequest) => {
@@ -346,38 +374,29 @@ export default function HomeScreen({
       return;
     }
 
-    const maxDuration = getMaxDurationMinutes(request);
-    if (request.durationMinutes) {
-      if (request.durationMinutes > maxDuration || request.durationMinutes < 60) return;
-      setReserveDraft(null);
-      setReserveOptions([]);
-      setPendingConfirm({ request, durationMinutes: request.durationMinutes });
-      if (view === "finder") {
-        setSelectedRoom(request.roomId);
-        setSelectedDate(request.date);
-        setRoomMode("day");
-        setView("room");
-      }
+    const usedMinutes = getUserReservedMinutes(request.date, request.roomId);
+    if (usedMinutes >= 180) {
+      showToast("מקסימום 3 שעות לחדר ליום. להחרגה יש לפנות למנהל מורשה.");
       return;
     }
-    const maxHours = Math.min(6, Math.floor(maxDuration / 60));
-    if (maxHours < 1) return;
 
-    if (maxHours === 1) {
-      setReserveDraft(null);
-      setReserveOptions([]);
-      setPendingConfirm({ request, durationMinutes: 60 });
-    } else {
-      setReserveDraft(request);
-      setPendingConfirm(null);
-      setReserveOptions(
-        Array.from({ length: maxHours }, (_, index) => {
-          const durationMinutes = (index + 1) * 60;
-          return { durationMinutes, endMinutes: request.time + durationMinutes };
-        })
-      );
-    }
-
+    const availability = getAvailability(request);
+    if (!availability) return;
+    const { limitEnd, startMinutes, userRemainingMinutes } = availability;
+    const windowDuration = limitEnd - startMinutes;
+    const maxDuration = Math.min(windowDuration, userRemainingMinutes, 180);
+    if (maxDuration < 60) return;
+    const baseDuration = request.durationMinutes
+      ? Math.min(Math.floor(request.durationMinutes / 60) * 60 || 60, maxDuration)
+      : 60;
+    const desiredDuration = Math.max(60, Math.min(baseDuration, maxDuration));
+    setPendingConfirm({
+      request,
+      durationMinutes: desiredDuration,
+      limitEnd,
+      startMinutes,
+      userRemainingMinutes
+    });
     if (view === "finder") {
       setSelectedRoom(request.roomId);
       setSelectedDate(request.date);
@@ -385,7 +404,6 @@ export default function HomeScreen({
       setView("room");
       return;
     }
-
     if (view === "room" && (selectedRoom === ALL_ROOMS_ID || roomMode === "week")) {
       setSelectedRoom(request.roomId);
       setSelectedDate(request.date);
@@ -394,20 +412,9 @@ export default function HomeScreen({
     }
   };
 
-  const handleSelectOption = (durationMinutes: number) => {
-    if (!reserveDraft) return;
-    setPendingConfirm({ request: reserveDraft, durationMinutes });
-    setReserveOptions([]);
-  };
-
-  const handleCancelDraft = () => {
-    setReserveDraft(null);
-    setReserveOptions([]);
-  };
-
-  const handleConfirmReserve = (draft: ReserveRequest, durationMinutes: number) => {
+  const handleConfirmReserve = (draft: ReserveRequest, startMinutes: number, durationMinutes: number) => {
     if (!currentUser?.allowed) return;
-    const { date, day, time, roomId } = draft;
+    const { date, day, roomId } = draft;
 
     const policy = roomMeta?.[roomId];
     if (policy?.isClosed) {
@@ -416,7 +423,7 @@ export default function HomeScreen({
     }
     const roomOpen = policy?.openMinutes ?? config.startHour * 60;
     const roomClose = policy?.closeMinutes ?? config.endHour * 60;
-    if (time < roomOpen || time + durationMinutes > roomClose) {
+    if (startMinutes < roomOpen || startMinutes + durationMinutes > roomClose) {
       setAuthError("השעה מחוץ לשעות הפעילות של החדר.");
       return;
     }
@@ -425,18 +432,30 @@ export default function HomeScreen({
     const overlapsLesson = dayLessons.some((lesson) => {
       if (lesson.roomId !== roomId) return false;
       const lessonEnd = lesson.startMinutes + lesson.durationMinutes;
-      return lesson.startMinutes < time + durationMinutes && lessonEnd > time;
+      return lesson.startMinutes < startMinutes + durationMinutes && lessonEnd > startMinutes;
     });
 
-    if (overlapsLesson) return;
+    if (overlapsLesson) {
+      showToast("קיים שיעור חופף.");
+      return;
+    }
 
     const overlapsReservation = (reservationMap[date] || []).some((entry) => {
       if (entry.roomId !== roomId) return false;
       const entryEnd = entry.time + entry.durationMinutes;
-      return entry.time < time + durationMinutes && entryEnd > time;
+      return entry.time < startMinutes + durationMinutes && entryEnd > startMinutes;
     });
 
-    if (overlapsReservation) return;
+    if (overlapsReservation) {
+      showToast("קיים שריון חופף.");
+      return;
+    }
+
+    const remainingMinutes = Math.max(0, 180 - getUserReservedMinutes(date, roomId));
+    if (durationMinutes > remainingMinutes) {
+      showToast("מקסימום 3 שעות לחדר ליום. להחרגה יש לפנות למנהל מורשה.");
+      return;
+    }
 
     const id = typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
@@ -445,14 +464,12 @@ export default function HomeScreen({
     addReservation({
       id,
       date,
-      time,
+      time: startMinutes,
       durationMinutes,
       roomId,
       reservedBy: currentUser.name,
       reservedEmail: currentUser.email
     });
-    setReserveDraft(null);
-    setReserveOptions([]);
     setPendingConfirm(null);
   };
 
@@ -578,7 +595,11 @@ export default function HomeScreen({
   };
 
   const handleAdminSave = async () => {
-    if (!adminDraft || !effectiveAdminMode) return;
+    if (!adminDraft) return;
+    if (!effectiveAdminMode) {
+      setAdminError("אין הרשאת ניהול.");
+      return;
+    }
     setAdminError("");
 
     if (adminDraft.type === "lesson") {
@@ -1006,10 +1027,6 @@ export default function HomeScreen({
           onRoomSelect={selectedRoom === ALL_ROOMS_ID ? handleRoomSelect : undefined}
           onDateSelect={roomMode === "week" ? handleDaySelect : undefined}
           showHeaders={selectedRoom === ALL_ROOMS_ID || roomMode === "week"}
-          reserveDraft={reserveDraft}
-          reserveOptions={reserveOptions}
-          onSelectOption={handleSelectOption}
-          onCancelDraft={handleCancelDraft}
         />
         <Legend />
       </>
@@ -1123,37 +1140,34 @@ export default function HomeScreen({
   return (
     <div className={`booking-shell${scheduleView ? " schedule-view" : ""}`}>
       <div className="view-shell">{renderView()}</div>
-      <ReserveConfirmOverlay
-        open={Boolean(pendingConfirm)}
-        title="שמירת חדר"
-        room={
-          pendingConfirm
-            ? rooms.find((room) => room.id === pendingConfirm.request.roomId)?.name || ""
-            : ""
-        }
-        dateLine={
-          pendingConfirm
-            ? `יום ${weekDays.find((day) => day.key === pendingConfirm.request.day)?.label || ""} ` +
-              `${formatShortDate(pendingConfirm.request.date)}`
-            : ""
-        }
-        timeLine={
-          pendingConfirm
-            ? `בין ${formatMinutes(pendingConfirm.request.time)}-` +
-              `${formatMinutes(pendingConfirm.request.time + pendingConfirm.durationMinutes)} · ` +
-              `${formatDurationLabel(pendingConfirm.durationMinutes)}`
-            : ""
-        }
-        onConfirm={() => {
-          if (!pendingConfirm) return;
-          handleConfirmReserve(pendingConfirm.request, pendingConfirm.durationMinutes);
-        }}
-        onClose={() => {
-          setPendingConfirm(null);
-          setReserveDraft(null);
-          setReserveOptions([]);
-        }}
-      />
+      {toast ? (
+        <div
+          className={`home-toast${toast.tone === "error" ? " error" : ""}`}
+          style={{ bottom: showNav ? "calc(92px + env(safe-area-inset-bottom))" : "calc(18px + env(safe-area-inset-bottom))" }}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.message}
+        </div>
+      ) : null}
+      {pendingConfirm ? (
+        <ReserveConfirmOverlay
+          open
+          title="שמירת חדר"
+          room={rooms.find((room) => room.id === pendingConfirm.request.roomId)?.name || ""}
+          dateLine={`יום ${weekDays.find((day) => day.key === pendingConfirm.request.day)?.label || ""} ` +
+            `${formatShortDate(pendingConfirm.request.date)}`}
+          request={pendingConfirm.request}
+          limitEnd={pendingConfirm.limitEnd}
+          startMinutes={pendingConfirm.startMinutes}
+          initialDuration={pendingConfirm.durationMinutes}
+          userRemainingMinutes={pendingConfirm.userRemainingMinutes}
+          onConfirm={(startMinutes, durationMinutes) => {
+            handleConfirmReserve(pendingConfirm.request, startMinutes, durationMinutes);
+          }}
+          onClose={() => setPendingConfirm(null)}
+        />
+      ) : null}
       <ReservationDetailsOverlay
         open={Boolean(reservationDetails)}
         title="פרטי שריון"
@@ -1441,7 +1455,7 @@ export default function HomeScreen({
               <button type="button" className="secondary" onClick={() => setAdminDraft(null)}>
                 ביטול
               </button>
-              <button type="button" className="primary" onClick={handleAdminSave}>
+              <button type="button" className="primary" onClick={handleAdminSave} disabled={!effectiveAdminMode}>
                 שמירה
               </button>
             </div>

@@ -3,7 +3,7 @@ import type { ReservationMap, ReserveRequest } from "../../../types/reservations
 import type { User } from "../../../types/auth";
 import type { WeekDate } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import { AddIcon, CloseIcon, ReleaseIcon } from "../../../components/Icons";
+import { AddIcon, ReleaseIcon } from "../../../components/Icons";
 import { useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import type { RoomMeta } from "../../../types/admin";
 
@@ -36,10 +36,6 @@ export type ScheduleGridProps = {
   onRoomSelect?: (roomId: string, dateKey: string) => void;
   onDateSelect?: (dateKey: string) => void;
   showHeaders?: boolean;
-  reserveDraft?: ReserveRequest | null;
-  reserveOptions?: { durationMinutes: number; endMinutes: number }[];
-  onSelectOption?: (durationMinutes: number) => void;
-  onCancelDraft?: () => void;
 };
 
 const BASE_ROW_HEIGHT = 40;
@@ -141,11 +137,7 @@ export default function ScheduleGrid({
   compactLabel = "title",
   onRoomSelect,
   onDateSelect,
-  showHeaders = true,
-  reserveDraft,
-  reserveOptions = [],
-  onSelectOption,
-  onCancelDraft
+  showHeaders = true
 }: ScheduleGridProps) {
   const baseStartMinutes = startHour * 60;
   const baseEndMinutes = endHour * 60;
@@ -267,20 +259,9 @@ export default function ScheduleGrid({
       });
     };
 
-    const optionActive = Boolean(
-      reserveDraft &&
-      reserveDraft.roomId === roomId &&
-      reserveDraft.day === dayKey &&
-      reserveDraft.date === dateKey &&
-      reserveOptions.length
-    );
-    const optionHeight = rowHeight / 2;
-    const hideSlots = Boolean(reserveDraft && reserveOptions.length);
-
     return (
       <div className="schedule-column" style={{ height: columnHeight }}>
-        {!optionActive && !hideSlots
-          ? timeSlots.map((slot) => {
+        {timeSlots.map((slot) => {
           const slotStart = slot.startMinutes;
           const slotEnd = slot.endMinutes;
           const top = ((slotStart - baseStartMinutes) / 60) * rowHeight;
@@ -315,52 +296,7 @@ export default function ScheduleGrid({
               </span>
             </button>
           );
-        })
-          : null}
-
-        {optionActive ? (
-          <>
-            <div
-              className="schedule-option"
-              style={{
-                top: ((reserveDraft.time - baseStartMinutes) / 60) * rowHeight,
-                height: rowHeight / 2,
-                ["--first-hour-height" as string]: `${rowHeight / 2}px`
-              }}
-            >
-              <div className="schedule-option-label">
-                <span>מ-{formatMinutes(reserveDraft.time)} עד (בחר שעת סיום):</span>
-              </div>
-              <button
-                type="button"
-                className="option-close"
-                onClick={() => onCancelDraft?.()}
-                aria-label="ביטול"
-              >
-                <CloseIcon />
-              </button>
-            </div>
-            {reserveOptions.map((option) => {
-              const durationHours = option.durationMinutes / 60;
-              const durationLabel =
-                durationHours === 1 ? "שעה" : durationHours === 2 ? "שעתיים" : `${durationHours} שעות`;
-              const endTop = ((option.endMinutes - baseStartMinutes) / 60) * rowHeight;
-              return (
-                <button
-                  key={option.durationMinutes}
-                  type="button"
-                  className="schedule-option-end"
-                  style={{ top: Math.max(0, endTop - optionHeight), height: optionHeight }}
-                  onClick={() => onSelectOption?.(option.durationMinutes)}
-                >
-                  <span className="schedule-option-end-label">
-                    {formatMinutes(option.endMinutes)} · {durationLabel}
-                  </span>
-                </button>
-              );
-            })}
-          </>
-        ) : null}
+        })}
         {positionedBlocks.map((block) => {
           const rawStart = block.startMinutes;
           const rawEnd = block.startMinutes + block.durationMinutes;

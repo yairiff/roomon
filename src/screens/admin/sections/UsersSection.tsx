@@ -22,6 +22,7 @@ type UsersSectionProps = {
 };
 
 type UserFilter = "all" | "pending" | "student" | "moderator" | "admin";
+type GradeFilter = "all" | "A" | "B" | "C";
 
 export default function UsersSection({
   users,
@@ -36,6 +37,7 @@ export default function UsersSection({
   onReset
 }: UsersSectionProps) {
   const [filter, setFilter] = useState<UserFilter>("all");
+  const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNewEntry, setIsNewEntry] = useState(false);
@@ -56,11 +58,31 @@ export default function UsersSection({
     return base;
   }, [users, pendingUsers]);
 
-  const filteredUsers = useMemo(() => {
+  const roleFilteredUsers = useMemo(() => {
     if (filter === "all") return users;
     if (filter === "pending") return users.filter((user) => user.role === "pending");
     return users.filter((user) => user.role === filter);
   }, [filter, users]);
+
+  const gradeCounts = useMemo(() => {
+    const base = { all: roleFilteredUsers.length, A: 0, B: 0, C: 0 };
+    roleFilteredUsers.forEach((user) => {
+      if (!user.cohortStartYear) return;
+      const grade = gradeValueFromCohort(user.cohortStartYear);
+      if (grade === "A") base.A += 1;
+      if (grade === "B") base.B += 1;
+      if (grade === "C") base.C += 1;
+    });
+    return base;
+  }, [roleFilteredUsers]);
+
+  const filteredUsers = useMemo(() => {
+    if (gradeFilter === "all") return roleFilteredUsers;
+    return roleFilteredUsers.filter((user) => {
+      if (!user.cohortStartYear) return false;
+      return gradeValueFromCohort(user.cohortStartYear) === gradeFilter;
+    });
+  }, [gradeFilter, roleFilteredUsers]);
 
   const selectedUser = useMemo(() =>
     (selectedEmail ? users.find((user) => user.email === selectedEmail) || null : null),
@@ -100,42 +122,74 @@ export default function UsersSection({
   return (
     <section className="admin-section">
       <div className="admin-section-toolbar">
-        <div className="admin-filters">
-          <button
-            type="button"
-            className={`chip small${filter === "all" ? " active" : ""}`}
-            onClick={() => setFilter("all")}
-          >
-            הכל ({counts.all})
-          </button>
-          <button
-            type="button"
-            className={`chip small${filter === "pending" ? " active" : ""}`}
-            onClick={() => setFilter("pending")}
-          >
-            ממתינים ({counts.pending})
-          </button>
-          <button
-            type="button"
-            className={`chip small${filter === "student" ? " active" : ""}`}
-            onClick={() => setFilter("student")}
-          >
-            סטודנטים ({counts.student})
-          </button>
-          <button
-            type="button"
-            className={`chip small${filter === "moderator" ? " active" : ""}`}
-            onClick={() => setFilter("moderator")}
-          >
-            מתאמים ({counts.moderator})
-          </button>
-          <button
-            type="button"
-            className={`chip small${filter === "admin" ? " active" : ""}`}
-            onClick={() => setFilter("admin")}
-          >
-            מנהלים ({counts.admin})
-          </button>
+        <div className="admin-filters-stack">
+          <div className="admin-filters">
+            <button
+              type="button"
+              className={`chip small${filter === "all" ? " active" : ""}`}
+              onClick={() => setFilter("all")}
+            >
+              הכל ({counts.all})
+            </button>
+            <button
+              type="button"
+              className={`chip small${filter === "pending" ? " active" : ""}`}
+              onClick={() => setFilter("pending")}
+            >
+              ממתינים ({counts.pending})
+            </button>
+            <button
+              type="button"
+              className={`chip small${filter === "student" ? " active" : ""}`}
+              onClick={() => setFilter("student")}
+            >
+              סטודנטים ({counts.student})
+            </button>
+            <button
+              type="button"
+              className={`chip small${filter === "moderator" ? " active" : ""}`}
+              onClick={() => setFilter("moderator")}
+            >
+              מתאמים ({counts.moderator})
+            </button>
+            <button
+              type="button"
+              className={`chip small${filter === "admin" ? " active" : ""}`}
+              onClick={() => setFilter("admin")}
+            >
+              מנהלים ({counts.admin})
+            </button>
+          </div>
+          <div className="admin-filters">
+            <button
+              type="button"
+              className={`chip small${gradeFilter === "all" ? " active" : ""}`}
+              onClick={() => setGradeFilter("all")}
+            >
+              שנתון: הכל ({gradeCounts.all})
+            </button>
+            <button
+              type="button"
+              className={`chip small${gradeFilter === "A" ? " active" : ""}`}
+              onClick={() => setGradeFilter("A")}
+            >
+              א׳ ({gradeCounts.A})
+            </button>
+            <button
+              type="button"
+              className={`chip small${gradeFilter === "B" ? " active" : ""}`}
+              onClick={() => setGradeFilter("B")}
+            >
+              ב׳ ({gradeCounts.B})
+            </button>
+            <button
+              type="button"
+              className={`chip small${gradeFilter === "C" ? " active" : ""}`}
+              onClick={() => setGradeFilter("C")}
+            >
+              ג׳ ({gradeCounts.C})
+            </button>
+          </div>
         </div>
         {usersError ? <span className="admin-error">{usersError}</span> : null}
       </div>

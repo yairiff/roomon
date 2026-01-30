@@ -59,10 +59,21 @@ export default function ReservationsSection({
     (selectedId ? reservations.find((reservation) => reservation.id === selectedId) || null : null),
   [reservations, selectedId]);
 
+  const parseTimeValue = (value: string) => {
+    const trimmed = value.trim();
+    if (!/^\d{1,2}:\d{2}$/.test(trimmed)) return null;
+    const [hoursText, minutesText] = trimmed.split(":");
+    const hours = Number(hoursText);
+    const mins = Number(minutesText);
+    if (!Number.isFinite(hours) || !Number.isFinite(mins)) return null;
+    if (hours < 0 || hours > 23 || mins < 0 || mins > 59) return null;
+    return hours * 60 + mins;
+  };
+
   const kindLabel = (reservation: Reservation) => {
     if (reservation.kind === "special") return "אירוע";
-    if (reservation.kind === "closed") return "סגור";
-    return "שריון";
+    if (reservation.kind === "closed") return "סגירה";
+    return "שיעור";
   };
 
   const handleSelect = (reservation: Reservation) => {
@@ -101,7 +112,7 @@ export default function ReservationsSection({
             className={`chip small${filter === "regular" ? " active" : ""}`}
             onClick={() => setFilter("regular")}
           >
-            שריונים ({counts.regular})
+            שיעורים ({counts.regular})
           </button>
           <button
             type="button"
@@ -115,7 +126,7 @@ export default function ReservationsSection({
             className={`chip small${filter === "closed" ? " active" : ""}`}
             onClick={() => setFilter("closed")}
           >
-            סגורים ({counts.closed})
+            סגירות ({counts.closed})
           </button>
         </div>
         {reservationsError ? <span className="admin-error">{reservationsError}</span> : null}
@@ -124,12 +135,45 @@ export default function ReservationsSection({
         <aside className="admin-properties">
           <div className="admin-card">
             <div className="admin-card-header">
-              <h3>פרטי שריון</h3>
-              <span className="admin-meta">{draft?.date || "בחר שריון"}</span>
+              <h3>פרטי שיעור/אירוע</h3>
+              {draft ? <span className="admin-meta">{draft.date}</span> : null}
             </div>
             {draft ? (
               <>
                 <div className="admin-form-grid">
+                  <label>
+                    תאריך
+                    <input
+                      type="date"
+                      value={draft.date}
+                      onChange={(event) => setDraft({ ...draft, date: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    התחלה
+                    <input
+                      type="time"
+                      value={toTimeInput(draft.time)}
+                      onChange={(event) => {
+                        const nextStart = parseTimeValue(event.target.value);
+                        if (nextStart === null) return;
+                        setDraft({ ...draft, time: nextStart });
+                      }}
+                    />
+                  </label>
+                  <label>
+                    סיום
+                    <input
+                      type="time"
+                      value={toTimeInput(draft.time + (draft.durationMinutes || 60))}
+                      onChange={(event) => {
+                        const nextEnd = parseTimeValue(event.target.value);
+                        if (nextEnd === null) return;
+                        if (nextEnd < draft.time) return;
+                        setDraft({ ...draft, durationMinutes: Math.max(1, nextEnd - draft.time) });
+                      }}
+                    />
+                  </label>
                   <label>
                     שם
                     <input
@@ -158,20 +202,10 @@ export default function ReservationsSection({
                         });
                       }}
                     >
-                      <option value="regular">שריון</option>
+                      <option value="regular">שיעור</option>
                       <option value="special">אירוע</option>
-                      <option value="closed">סגור</option>
+                      <option value="closed">סגירה</option>
                     </select>
-                  </label>
-                  <label>
-                    משך (דקות)
-                    <input
-                      type="number"
-                      min={15}
-                      step={15}
-                      value={draft.durationMinutes || 60}
-                      onChange={(event) => setDraft({ ...draft, durationMinutes: Number(event.target.value) })}
-                    />
                   </label>
                 </div>
                 <p className="admin-meta">
@@ -196,7 +230,7 @@ export default function ReservationsSection({
         <div className="admin-list">
           <div className="admin-card list-card">
             <div className="admin-card-header">
-              <h3>רשימת שריונים</h3>
+              <h3>רשימת שיעורים ואירועים</h3>
             </div>
             {filteredReservations.length ? (
               <div className="admin-table scroll tall">
@@ -232,7 +266,7 @@ export default function ReservationsSection({
                 ))}
               </div>
             ) : (
-              <p className="admin-meta">אין שריונים במסנן הזה.</p>
+              <p className="admin-meta">אין רשומות במסנן הזה.</p>
             )}
           </div>
         </div>
