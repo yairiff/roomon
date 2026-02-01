@@ -1,7 +1,7 @@
 import type { User } from "../types/auth";
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, UserIcon } from "./Icons";
-import logoUrl from "../logo.jpg";
+import logoUrl from "../logo.png";
 
 export type TopBarProps = {
   user: User | null;
