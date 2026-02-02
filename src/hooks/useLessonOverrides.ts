@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore";
 import { useEffect, useMemo, useState } from "react";
 import { db } from "../lib/firebase";
+import { stripUndefined } from "../lib/stripUndefined";
 import type { LessonOverride, LessonOverrideAction } from "../types/admin";
 import type { Lesson } from "../types/schedule";
 
@@ -76,17 +77,26 @@ export function useLessonOverrides() {
   }, [overrides]);
 
   const addOverride = async (input: OverrideInput) => {
-    if (!db) return;
-    await addDoc(collection(db, "lessonOverrides"), {
-      ...input,
-      createdAt: serverTimestamp()
-    });
+    if (!db) {
+      setOverridesError("Firestore is not configured.");
+      return false;
+    }
+    try {
+      await addDoc(collection(db, "lessonOverrides"), {
+        ...stripUndefined(input as unknown as Record<string, unknown>),
+        createdAt: serverTimestamp()
+      });
+      return true;
+    } catch {
+      setOverridesError("Failed to save lesson override.");
+      return false;
+    }
   };
 
   const upsertOverride = async (override: LessonOverride) => {
     if (!db) return;
     await setDoc(doc(db, "lessonOverrides", override.id), {
-      ...override,
+      ...stripUndefined(override as unknown as Record<string, unknown>),
       createdAt: serverTimestamp()
     });
   };

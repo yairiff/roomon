@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DirectoryUser } from "../../../types/admin";
 import {
   cohortStartYearFromGrade,
@@ -6,7 +6,8 @@ import {
   gradeOptions,
   gradeValueFromCohort
 } from "../../../lib/academics";
-import { AddIcon, ApproveIcon, ReleaseIcon } from "../../../components/Icons";
+import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 type UsersSectionProps = {
   users: DirectoryUser[];
@@ -19,10 +20,15 @@ type UsersSectionProps = {
   onUpsert: (user: DirectoryUser) => void;
   onRemove: (email: string) => void;
   onReset: () => void;
+  onFilteredUsersChange?: (users: DirectoryUser[]) => void;
 };
 
 type UserFilter = "all" | "pending" | "student" | "moderator" | "admin";
-type GradeFilter = "all" | "A" | "B" | "C";
+type GradeFilter = "all" | "A" | "B" | "C" | "STAFF";
+type PhoneFilter = "all" | "has" | "missing";
+type UserSort = "name" | "email" | "role" | "cohort";
+
+const isStaffUser = (user: DirectoryUser) => user.role === "moderator" && !user.cohortStartYear;
 
 export default function UsersSection({
   users,
@@ -34,10 +40,17 @@ export default function UsersSection({
   onApprove,
   onUpsert,
   onRemove,
-  onReset
+  onReset,
+  onFilteredUsersChange
 }: UsersSectionProps) {
   const [filter, setFilter] = useState<UserFilter>("all");
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
+  const [phoneFilter, setPhoneFilter] = useState<PhoneFilter>("all");
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<UserSort>("name");
+  const [selectedEmails, setSelectedEmails] = useState<Set<string>>(() => new Set());
+  const [confirmDeleteEmails, setConfirmDeleteEmails] = useState<string[] | null>(null);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNewEntry, setIsNewEntry] = useState(false);
@@ -65,8 +78,12 @@ export default function UsersSection({
   }, [filter, users]);
 
   const gradeCounts = useMemo(() => {
-    const base = { all: roleFilteredUsers.length, A: 0, B: 0, C: 0 };
+    const base = { all: roleFilteredUsers.length, A: 0, B: 0, C: 0, STAFF: 0 };
     roleFilteredUsers.forEach((user) => {
+      if (isStaffUser(user)) {
+        base.STAFF += 1;
+        return;
+      }
       if (!user.cohortStartYear) return;
       const grade = gradeValueFromCohort(user.cohortStartYear);
       if (grade === "A") base.A += 1;
@@ -77,16 +94,92 @@ export default function UsersSection({
   }, [roleFilteredUsers]);
 
   const filteredUsers = useMemo(() => {
-    if (gradeFilter === "all") return roleFilteredUsers;
-    return roleFilteredUsers.filter((user) => {
-      if (!user.cohortStartYear) return false;
-      return gradeValueFromCohort(user.cohortStartYear) === gradeFilter;
+    let list = roleFilteredUsers;
+    if (gradeFilter === "STAFF") {
+      list = list.filter((user) => isStaffUser(user));
+    } else if (gradeFilter !== "all") {
+      list = list.filter((user) => {
+        if (!user.cohortStartYear) return false;
+        return gradeValueFromCohort(user.cohortStartYear) === gradeFilter;
+      });
+    }
+    if (phoneFilter !== "all") {
+      list = list.filter((user) => {
+        const hasPhone = Boolean(user.phone && user.phone.trim());
+        return phoneFilter === "has" ? hasPhone : !hasPhone;
+      });
+    }
+    const q = query.trim().toLowerCase();
+    if (q) {
+      list = list.filter((user) => {
+        const haystack = [
+          user.name || "",
+          user.email || "",
+          user.phone || "",
+          isStaffUser(user) ? "צוות" : (user.cohortStartYear ? gradeLabelFromCohort(user.cohortStartYear) : "")
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+
+    const sorted = [...list].sort((a, b) => {
+      const aName = (a.name || a.email || "").trim();
+      const bName = (b.name || b.email || "").trim();
+      const aEmail = (a.email || "").trim();
+      const bEmail = (b.email || "").trim();
+      const aRole = (a.role || "").trim();
+      const bRole = (b.role || "").trim();
+      const aCohort = a.cohortStartYear ?? -1;
+      const bCohort = b.cohortStartYear ?? -1;
+      if (sortBy === "email") return aEmail.localeCompare(bEmail, "he");
+      if (sortBy === "role") return aRole.localeCompare(bRole, "he") || aName.localeCompare(bName, "he");
+      if (sortBy === "cohort") return bCohort - aCohort || aName.localeCompare(bName, "he");
+      return aName.localeCompare(bName, "he");
     });
-  }, [gradeFilter, roleFilteredUsers]);
+
+    return sorted;
+  }, [gradeFilter, phoneFilter, query, roleFilteredUsers, sortBy]);
+
+  const filteredUsersCount = filteredUsers.length;
+
+  const filteredByEmail = useMemo(() => {
+    const map = new Map<string, DirectoryUser>();
+    filteredUsers.forEach((user) => map.set(user.email, user));
+    return map;
+  }, [filteredUsers]);
+
+  const selectedInView = useMemo(
+    () => Array.from(selectedEmails).filter((email) => filteredByEmail.has(email)),
+    [filteredByEmail, selectedEmails]
+  );
+
+  useEffect(() => {
+    const el = selectAllRef.current;
+    if (!el) return;
+    const total = filteredUsers.length;
+    const selectedCount = selectedInView.length;
+    el.indeterminate = selectedCount > 0 && selectedCount < total;
+  }, [filteredUsers.length, selectedInView.length]);
+
+  const phoneCounts = useMemo(() => {
+    const base = { all: roleFilteredUsers.length, has: 0, missing: 0 };
+    roleFilteredUsers.forEach((user) => {
+      const hasPhone = Boolean(user.phone && user.phone.trim());
+      if (hasPhone) base.has += 1;
+      else base.missing += 1;
+    });
+    return base;
+  }, [roleFilteredUsers]);
 
   const selectedUser = useMemo(() =>
     (selectedEmail ? users.find((user) => user.email === selectedEmail) || null : null),
   [selectedEmail, users]);
+
+  useEffect(() => {
+    onFilteredUsersChange?.(filteredUsers);
+  }, [filteredUsers, onFilteredUsersChange]);
 
   const handleSelect = (user: DirectoryUser) => {
     setSelectedEmail(user.email);
@@ -94,7 +187,7 @@ export default function UsersSection({
       ...user,
       role: user.role === "pending" ? "student" : user.role,
       phone: user.phone || "",
-      cohortStartYear: user.cohortStartYear ?? currentAcademicYear
+      cohortStartYear: user.cohortStartYear ?? (user.role === "moderator" ? undefined : currentAcademicYear)
     });
     setIsEditing(true);
     setIsNewEntry(false);
@@ -110,17 +203,79 @@ export default function UsersSection({
   const handleDelete = () => {
     const email = selectedEmail || userDraft.email;
     if (!email) return;
-    onRemove(email);
-    setSelectedEmail(null);
-    onReset();
-    setIsEditing(false);
-    setIsNewEntry(false);
+    setConfirmDeleteEmails([email]);
   };
 
   const userStatus = isEditing ? (selectedEmail || "חדש") : "";
 
+  const duplicateUser = (user: DirectoryUser) => {
+    setSelectedEmail(null);
+    setUserDraft({
+      ...user,
+      email: "",
+      name: user.name ? `${user.name} (עותק)` : "",
+      role: user.role === "pending" ? "student" : user.role,
+      phone: user.phone || "",
+      cohortStartYear: user.cohortStartYear
+    });
+    setIsEditing(true);
+    setIsNewEntry(true);
+  };
+
+  const bulkToggleAll = () => {
+    if (selectedInView.length && selectedInView.length === filteredUsers.length) {
+      setSelectedEmails(new Set());
+      return;
+    }
+    setSelectedEmails(new Set(filteredUsers.map((u) => u.email)));
+  };
+
+  const bulkEdit = () => {
+    if (selectedInView.length !== 1) return;
+    const user = filteredByEmail.get(selectedInView[0]);
+    if (user) handleSelect(user);
+  };
+
+  const bulkDuplicate = () => {
+    if (selectedInView.length !== 1) return;
+    const user = filteredByEmail.get(selectedInView[0]);
+    if (user) duplicateUser(user);
+  };
+
+  const bulkDelete = () => {
+    if (!selectedInView.length) return;
+    setConfirmDeleteEmails(selectedInView);
+  };
+
+  const confirmDelete = () => {
+    if (!confirmDeleteEmails?.length) return;
+    confirmDeleteEmails.forEach((email) => onRemove(email));
+    setSelectedEmails((prev) => {
+      const next = new Set(prev);
+      confirmDeleteEmails.forEach((email) => next.delete(email));
+      return next;
+    });
+    if (selectedEmail && confirmDeleteEmails.includes(selectedEmail)) {
+      setSelectedEmail(null);
+      onReset();
+      setIsEditing(false);
+      setIsNewEntry(false);
+    }
+    setConfirmDeleteEmails(null);
+  };
+
   return (
     <section className="admin-section">
+      <ConfirmDialog
+        open={Boolean(confirmDeleteEmails?.length)}
+        title="מחיקת משתמשים"
+        description={`למחוק ${confirmDeleteEmails?.length || 0} משתמשים?`}
+        confirmLabel="מחיקה"
+        cancelLabel="ביטול"
+        tone="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmDeleteEmails(null)}
+      />
       <div className="admin-section-toolbar">
         <div className="admin-filters-stack">
           <div className="admin-filters">
@@ -189,6 +344,59 @@ export default function UsersSection({
             >
               ג׳ ({gradeCounts.C})
             </button>
+            <button
+              type="button"
+              className={`chip small${gradeFilter === "STAFF" ? " active" : ""}`}
+              onClick={() => setGradeFilter("STAFF")}
+            >
+              צוות ({gradeCounts.STAFF})
+            </button>
+          </div>
+          <div className="admin-filters">
+            <button
+              type="button"
+              className={`chip small${phoneFilter === "all" ? " active" : ""}`}
+              onClick={() => setPhoneFilter("all")}
+            >
+              טלפון: הכל ({phoneCounts.all})
+            </button>
+            <button
+              type="button"
+              className={`chip small${phoneFilter === "has" ? " active" : ""}`}
+              onClick={() => setPhoneFilter("has")}
+            >
+              קיים ({phoneCounts.has})
+            </button>
+            <button
+              type="button"
+              className={`chip small${phoneFilter === "missing" ? " active" : ""}`}
+              onClick={() => setPhoneFilter("missing")}
+            >
+              חסר ({phoneCounts.missing})
+            </button>
+          </div>
+          <div className="admin-filter-controls">
+            <label>
+              חיפוש
+              <input
+                type="search"
+                value={query}
+                placeholder="שם / אימייל / טלפון"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <label>
+              מיון
+              <select value={sortBy} onChange={(event) => setSortBy(event.target.value as UserSort)}>
+                <option value="name">שם</option>
+                <option value="email">אימייל</option>
+                <option value="role">הרשאה</option>
+                <option value="cohort">שנתון</option>
+              </select>
+            </label>
+            <div className="admin-filter-meta" aria-label="כמות תוצאות">
+              {filteredUsersCount} תוצאות
+            </div>
           </div>
         </div>
         {usersError ? <span className="admin-error">{usersError}</span> : null}
@@ -251,25 +459,35 @@ export default function UsersSection({
                 <label>
                   שנתון
                   <select
-                    value={gradeValueFromCohort(userDraft.cohortStartYear)}
+                    value={userDraft.role === "moderator" && !userDraft.cohortStartYear ? "STAFF" : gradeValueFromCohort(userDraft.cohortStartYear)}
                     onChange={(event) => {
-                      const grade = event.target.value as "A" | "B" | "C";
+                      const value = event.target.value as "A" | "B" | "C" | "STAFF";
+                      if (value === "STAFF") {
+                        setUserDraft((prev) => ({
+                          ...prev,
+                          cohortStartYear: undefined,
+                          role: prev.role === "student" || prev.role === "pending" ? "moderator" : prev.role
+                        }));
+                        return;
+                      }
                       setUserDraft((prev) => ({
                         ...prev,
-                        cohortStartYear: cohortStartYearFromGrade(grade)
+                        cohortStartYear: cohortStartYearFromGrade(value),
+                        role: prev.role === "pending" ? "student" : prev.role
                       }));
                     }}
                   >
+                    <option value="STAFF">צוות</option>
                     {gradeOptions().map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
                 </label>
               </div>
-              {isEditing && userDraft.cohortStartYear ? (
+              {isEditing && (userDraft.cohortStartYear || (userDraft.role === "moderator" && !userDraft.cohortStartYear)) ? (
                 <p className="admin-meta">
-                  סטטוס נוכחי: {gradeLabelFromCohort(userDraft.cohortStartYear)} ·
-                  התחלת מחזור {userDraft.cohortStartYear}-{userDraft.cohortStartYear + 1}
+                  סטטוס נוכחי: {userDraft.role === "moderator" && !userDraft.cohortStartYear ? "צוות" : gradeLabelFromCohort(userDraft.cohortStartYear)}
+                  {userDraft.cohortStartYear ? ` · התחלת מחזור ${userDraft.cohortStartYear}-${userDraft.cohortStartYear + 1}` : ""}
                 </p>
               ) : null}
               <div className="admin-actions">
@@ -299,10 +517,46 @@ export default function UsersSection({
           <div className="admin-card list-card">
             <div className="admin-card-header">
               <h3>רשימת משתמשים</h3>
-              <button className="admin-card-action" type="button" onClick={handleNew}>
-                <AddIcon />
-                הוספה
-              </button>
+            </div>
+            <div className="admin-list-toolbar">
+              <div className="admin-list-toolbar-left">
+                <label className="admin-select-all">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    className="admin-row-check"
+                    checked={filteredUsers.length > 0 && selectedInView.length === filteredUsers.length}
+                    onChange={bulkToggleAll}
+                  />
+                  <span>בחירה</span>
+                </label>
+                <span className="admin-meta">
+                  {selectedInView.length ? `${selectedInView.length} נבחרו` : `${filteredUsersCount} תוצאות`}
+                </span>
+              </div>
+              <div className="admin-list-toolbar-right">
+                <button className="admin-card-action" type="button" onClick={handleNew}>
+                  <AddIcon />
+                  הוספה
+                </button>
+                <button className="admin-card-action" type="button" onClick={bulkEdit} disabled={selectedInView.length !== 1}>
+                  <EditIcon />
+                  עריכה
+                </button>
+                <button
+                  className="admin-card-action"
+                  type="button"
+                  onClick={bulkDuplicate}
+                  disabled={selectedInView.length !== 1}
+                >
+                  <DuplicateIcon />
+                  שכפול
+                </button>
+                <button className="admin-card-action" type="button" onClick={bulkDelete} disabled={!selectedInView.length}>
+                  <ReleaseIcon />
+                  מחיקה
+                </button>
+              </div>
             </div>
             {filteredUsers.length ? (
               <div className="admin-table scroll tall">
@@ -320,17 +574,69 @@ export default function UsersSection({
                       }
                     }}
                   >
-                    <div>
+                    <input
+                      type="checkbox"
+                      className="admin-row-check"
+                      checked={selectedEmails.has(user.email)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() =>
+                        setSelectedEmails((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(user.email)) next.delete(user.email);
+                          else next.add(user.email);
+                          return next;
+                        })
+                      }
+                      aria-label="בחר משתמש"
+                    />
+                    <div className="admin-row-main">
                       <p className="admin-row-title">{user.name || user.email}</p>
                       <p className="admin-row-meta">
                         {user.phone ? user.phone : "טלפון לא צויין"} ·{" "}
-                        {user.cohortStartYear
-                          ? `שנתון ${gradeLabelFromCohort(user.cohortStartYear)}`
-                          : "שנתון לא הוגדר"}
+                        {isStaffUser(user)
+                          ? "צוות"
+                          : user.cohortStartYear
+                            ? `שנתון ${gradeLabelFromCohort(user.cohortStartYear)}`
+                            : "שנתון לא הוגדר"}
                       </p>
                       <p className="admin-row-meta">{user.email}</p>
                     </div>
                     <div className="admin-row-actions">
+                      <div className="admin-row-buttons">
+                        <button
+                          type="button"
+                          className="admin-mini-action"
+                          aria-label="עריכה"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelect(user);
+                          }}
+                        >
+                          <EditIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-mini-action"
+                          aria-label="שכפול"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            duplicateUser(user);
+                          }}
+                        >
+                          <DuplicateIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-mini-action danger"
+                          aria-label="מחיקה"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteEmails([user.email]);
+                          }}
+                        >
+                          <ReleaseIcon />
+                        </button>
+                      </div>
                       <span className={`chip small${user.role === "pending" ? " active" : " ghost"}`}>
                         {user.role === "pending" ? "ממתין" : user.role}
                       </span>

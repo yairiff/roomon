@@ -15,6 +15,7 @@ export type BookingFinderProps = {
   roomMeta?: Record<string, RoomMeta>;
   getLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
   onReserve: (request: ReserveRequest) => void;
+  onOpenSchedule: (roomId: string, dateKey: string) => void;
 };
 
 export default function BookingFinder({
@@ -25,7 +26,8 @@ export default function BookingFinder({
   endHour,
   roomMeta,
   getLessonsForDate,
-  onReserve
+  onReserve,
+  onOpenSchedule
 }: BookingFinderProps) {
   const [advancedMode, setAdvancedMode] = useState(false);
   const [startDate, setStartDate] = useState(() => formatDateKey(new Date()));
@@ -57,7 +59,6 @@ export default function BookingFinder({
   const formatDurationLabel = (minutes: number) => {
     if (minutes === 60) return "שעה";
     if (minutes === 120) return "שעתיים";
-    if (minutes === 180) return "שלוש שעות";
     const hours = minutes / 60;
     if (Number.isInteger(hours)) return `${hours} שעות`;
     return `${hours.toFixed(2)} שעות`;
@@ -177,7 +178,7 @@ export default function BookingFinder({
       <div className="finder-form">
         <div className="finder-toggle-line">
           <p className="field-label">
-            {advancedMode ? "בחר טווח תאריכים" : "בחר ימים בשבוע"}
+            {advancedMode ? "" : "בימים"}
           </p>
           <button
             type="button"
@@ -250,10 +251,10 @@ export default function BookingFinder({
           </label>
         </div>
         <label>
-          משך
+          משך מינימלי
           <select value={duration} onChange={(event) => setDuration(event.target.value)}>
-            <option value="">משך רצוי (אופציונלי)</option>
-            {Array.from({ length: Math.min(6, endHour - startHour) }, (_, index) => index + 1).map((h) => (
+            <option value="">בחר...</option>
+            {Array.from({ length: Math.min(3, endHour - startHour) }, (_, index) => index + 1).map((h) => (
               <option key={h} value={h}>{h} שעות</option>
             ))}
           </select>
@@ -276,7 +277,7 @@ export default function BookingFinder({
                     );
                   }}
                 >
-                  {room.shortName || room.name}
+                  {room.name}
                 </button>
               );
             })}
@@ -287,7 +288,19 @@ export default function BookingFinder({
         {visibleResults.length ? (
           <ul className="finder-result-list">
             {visibleResults.map((item, index) => (
-              <li key={`${item.date}-${item.room.id}-${index}`} className="finder-result">
+              <li
+                key={`${item.date}-${item.room.id}-${index}`}
+                className="finder-result clickable"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpenSchedule(item.room.id, item.date)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpenSchedule(item.room.id, item.date);
+                  }
+                }}
+              >
                 <div>
                   <p className="finder-result-title">
                     <span className="dot empty" /> {item.room.name}
@@ -301,15 +314,16 @@ export default function BookingFinder({
                   type="button"
                   className="icon-button"
                   aria-label="Reserve"
-                  onClick={() =>
+                  onClick={(event) => {
+                    event.stopPropagation();
                     onReserve({
                       date: item.date,
                       day: item.dayKey,
                       time: item.start,
                       roomId: item.room.id,
                       durationMinutes: duration ? durationFilterMinutes : undefined
-                    })
-                  }
+                    });
+                  }}
                 >
                   <AddIcon />
                 </button>

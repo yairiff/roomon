@@ -17,7 +17,6 @@ export type LiveViewProps = {
   endHour: number;
   roomMeta?: Record<string, RoomMeta>;
   onRoomSelect: (roomId: string) => void;
-  nowLabel: string;
 };
 
 export default function LiveView({
@@ -30,15 +29,12 @@ export default function LiveView({
   startHour,
   endHour,
   roomMeta,
-  onRoomSelect,
-  nowLabel
+  onRoomSelect
 }: LiveViewProps) {
   const todayReservations = reservationMap[dateKey] || [];
   const todayDate = parseDateKey(dateKey);
   const isWeekend = todayDate.getDay() === 5 || todayDate.getDay() === 6;
   const isClosedNow = isWeekend || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60;
-  const weekdayLabel = new Intl.DateTimeFormat("he-IL", { weekday: "long" }).format(todayDate);
-  const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(todayDate);
 
   const getRoomStatus = (roomId: string) => {
     const policy = roomMeta?.[roomId];
@@ -180,8 +176,16 @@ export default function LiveView({
   const formatDiffMinutes = (targetMinutes: number) => {
     const diff = Math.max(0, Math.round(targetMinutes - nowMinutes));
     if (diff <= 0) return "";
-    if (diff === 1) return "דקה";
-    return `${diff} דקות`;
+    const hours = Math.floor(diff / 60);
+    const minutes = diff % 60;
+    if (hours <= 0) {
+      if (minutes === 1) return "דקה";
+      return `${minutes} דקות`;
+    }
+    if (minutes === 0) {
+      return hours === 1 ? "שעה" : `${hours} שעות`;
+    }
+    return `${hours}ש׳ ${minutes}ד׳`;
   };
 
   const roomStates = rooms.map((room) => {
@@ -196,23 +200,13 @@ export default function LiveView({
     };
   });
 
-  const availableCount = roomStates.filter((state) => state.status.status === "empty").length;
-
   return (
     <section className="live-view">
-      <div className="live-header">
-        <div className="live-clock-block">
-          <p className="live-clock">{nowLabel}</p>
-          <p className="live-date">{weekdayLabel} · {dateLabel}</p>
-        </div>
-        <p className="live-summary">
-          {isClosedNow ? "סגור עכשיו" : `חדרים זמינים עכשיו: ${availableCount}/${rooms.length}`}
-        </p>
-      </div>
       <div className="live-grid">
         {roomStates.map(({ room, status, busyUntil, nextEvent }) => {
           const nextBusyMinutes = busyUntil ? formatDiffMinutes(busyUntil) : "";
           const nextEventMinutes = nextEvent ? formatDiffMinutes(nextEvent.start) : "";
+          const details = [status.detailPrimary, status.detailSecondary].filter(Boolean).join(" · ");
           return (
             <button
               key={room.id}
@@ -227,21 +221,18 @@ export default function LiveView({
                   {status.label}
                 </p>
               </div>
+              {details ? (
+                <p className="live-details">{details}</p>
+              ) : null}
               {busyUntil ? (
-                <div className="live-next">
-                  <p className="live-next-label">פנוי בעוד {nextBusyMinutes}</p>
-                  <p className="live-next-time">ב־{formatMinutes(busyUntil)}</p>
+                <div className="live-eta">
+                  <p className="live-eta-label">פנוי בעוד {nextBusyMinutes}</p>
+                  <p className="live-eta-time">ב־{formatMinutes(busyUntil)}</p>
                 </div>
               ) : nextEvent ? (
-                <div className="live-next">
-                  <p className="live-next-label">הבא בעוד {nextEventMinutes}</p>
-                  <p className="live-next-time">{formatMinutes(nextEvent.start)} · {nextEvent.label}</p>
-                </div>
-              ) : null}
-              {status.detailPrimary || status.detailSecondary ? (
-                <div className="live-details">
-                  {status.detailPrimary ? <p className="live-detail-main">{status.detailPrimary}</p> : null}
-                  {status.detailSecondary ? <p className="live-detail-sub">{status.detailSecondary}</p> : null}
+                <div className="live-eta">
+                  <p className="live-eta-label">הבא בעוד {nextEventMinutes}</p>
+                  <p className="live-eta-time">{formatMinutes(nextEvent.start)} · {nextEvent.label}</p>
                 </div>
               ) : null}
             </button>

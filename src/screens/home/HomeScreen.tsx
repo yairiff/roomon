@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ScheduleGrid from "./views/ScheduleGrid";
 import Legend from "./views/Legend";
 import LiveView from "./views/LiveView";
-import BottomNav from "../../components/BottomNav";
 import BookingFinder from "./views/BookingFinder";
 import ReserveConfirmOverlay from "./overlays/ReserveConfirmOverlay";
 import ReservationDetailsOverlay from "./overlays/ReservationDetailsOverlay";
+import BlockDetailsOverlay from "./overlays/BlockDetailsOverlay";
 import ConfirmOverlay from "./overlays/ConfirmOverlay";
 import { useSchedule } from "../../hooks/useSchedule";
 import { useLessonOverrides } from "../../hooks/useLessonOverrides";
@@ -21,13 +21,22 @@ import {
 } from "../../lib/date";
 import { formatMinutes } from "../../lib/scheduleBuilder";
 import { applyLessonOverrides } from "../../lib/lessonOverrides";
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, ReleaseIcon, LessonTypeIcon, ReservationIcon, SpecialIcon, ClosedIcon } from "../../components/Icons";
+import {
+  CalendarIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  ClosedIcon,
+  LessonTypeIcon,
+  ReleaseIcon,
+  ReservationIcon,
+  RoomIcon,
+  SpecialIcon
+} from "../../components/Icons";
 import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
 import type { DayKey, Lesson } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
-
-const ALL_ROOMS_ID = "__all__";
 
 type AdminLessonDraft = {
   type: "lesson";
@@ -82,10 +91,13 @@ type AdminClosedDraft = {
 type AdminDraft = AdminLessonDraft | AdminReservationDraft | AdminSpecialDraft | AdminClosedDraft;
 
 type PendingConfirm = {
+  mode: "create" | "edit";
   request: ReserveRequest;
+  reservationId?: string;
   durationMinutes: number;
   limitEnd: number;
   startMinutes: number;
+  windowStart: number;
   userRemainingMinutes: number;
 };
 
@@ -97,9 +109,10 @@ export type HomeScreenProps = {
   addReservation: (reservation: Reservation) => void;
   upsertReservation: (reservation: Reservation) => void;
   releaseReservation: (dateKey: string, reservationId: string) => void;
+  view: ViewMode;
+  onViewChange: (view: ViewMode) => void;
   requestedView?: ViewMode | null;
   onRequestedViewHandled?: () => void;
-  showNav?: boolean;
   adminMode?: boolean;
 };
 
@@ -124,19 +137,29 @@ export default function HomeScreen({
   addReservation,
   upsertReservation,
   releaseReservation,
+  view,
+  onViewChange,
   requestedView,
   onRequestedViewHandled,
-  showNav = true,
   adminMode = false
 }: HomeScreenProps) {
-  const [view, setView] = useState<ViewMode>("live");
   const [selectedDate, setSelectedDate] = useState(() => formatDateKey(new Date()));
-  const [selectedRoom, setSelectedRoom] = useState(ALL_ROOMS_ID);
+  const [selectedRoom, setSelectedRoom] = useState<string>("");
+  const [allRooms, setAllRooms] = useState(true);
   const [roomMode, setRoomMode] = useState<"day" | "week">("day");
   const [now, setNow] = useState(() => new Date());
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [pendingRelease, setPendingRelease] = useState<{ dateKey: string; reservationId: string } | null>(null);
   const [reservationDetails, setReservationDetails] = useState<{ reservation: Reservation; dateKey: string } | null>(null);
+  const [blockDetails, setBlockDetails] = useState<{
+    kind: "lesson" | "special" | "closed";
+    dateKey: string;
+    roomId: string;
+    startMinutes: number;
+    durationMinutes: number;
+    title: string;
+    meta: string;
+  } | null>(null);
   const [adminError, setAdminError] = useState("");
   const [adminDraft, setAdminDraft] = useState<AdminDraft | null>(null);
   const [toast, setToast] = useState<{ message: string; tone?: "info" | "error" } | null>(null);
@@ -172,6 +195,7 @@ export default function HomeScreen({
   const scheduleDateKey = view === "live" ? todayDateKey : selectedDate;
   const isLocked = !currentUser?.allowed;
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "moderator";
+  const hasNav = Boolean(currentUser);
 
   const { rooms, weekDays, timeSlots, lessons, config, roomMeta } = useSchedule(scheduleDateKey);
   const { overridesByDate, addOverride } = useLessonOverrides();
@@ -202,17 +226,17 @@ export default function HomeScreen({
   }, [effectiveAdminMode]);
 
   useEffect(() => {
-    const isDailyView = view === "room" && (selectedRoom === ALL_ROOMS_ID || roomMode === "day");
+    const isDailyView = view === "room" && (allRooms || roomMode === "day");
     if (isDailyView && isWeekend(selectedDate)) {
       setSelectedDate(shiftSchoolDay(selectedDate, 1));
     }
-  }, [roomMode, selectedDate, view, selectedRoom]);
+  }, [allRooms, roomMode, selectedDate, view]);
 
   useEffect(() => {
     if (isLocked && view !== "live") {
-      setView("live");
+      onViewChange("live");
     }
-  }, [isLocked, view]);
+  }, [isLocked, onViewChange, view]);
 
   useEffect(() => {
     if (!adminMode) {
@@ -223,12 +247,16 @@ export default function HomeScreen({
 
   useEffect(() => {
     if (!requestedView) return;
-    setView(requestedView);
+    onViewChange(requestedView);
     onRequestedViewHandled?.();
-  }, [onRequestedViewHandled, requestedView]);
+  }, [onRequestedViewHandled, onViewChange, requestedView]);
 
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const todayDayKey = getDayKeyFromDateKey(todayDateKey);
+  const roomsKey = useMemo(
+    () => rooms.map((room) => `${room.id}:${room.shortName || room.name || ""}`).join("|"),
+    [rooms]
+  );
 
   const getLessonsForDate = useCallback(
     (dateKey: string, dayKey: DayKey) => {
@@ -300,17 +328,21 @@ export default function HomeScreen({
 
   useEffect(() => {
     if (!rooms.length) return;
+    if (!selectedRoom) {
+      setSelectedRoom(rooms[0].id);
+      return;
+    }
     const exists = rooms.some((room) => room.id === selectedRoom);
-    if (selectedRoom !== ALL_ROOMS_ID && !exists) {
-      setSelectedRoom(ALL_ROOMS_ID);
+    if (!exists) {
+      setSelectedRoom(rooms[0].id);
     }
   }, [rooms, selectedRoom]);
 
   useEffect(() => {
-    if (selectedRoom === ALL_ROOMS_ID && roomMode !== "day") {
+    if (allRooms && roomMode !== "day") {
       setRoomMode("day");
     }
-  }, [selectedRoom, roomMode]);
+  }, [allRooms, roomMode]);
 
 
   const buildIntervals = (dayKey: string, dateKey: string, roomId: string) => {
@@ -339,6 +371,8 @@ export default function HomeScreen({
   };
 
   const getAvailability = (request: ReserveRequest) => {
+    const STEP = 30;
+    const MIN_DURATION = 30;
     const intervals = buildIntervals(request.day, request.date, request.roomId);
     const policy = roomMeta?.[request.roomId];
     if (policy?.isClosed) return null;
@@ -347,7 +381,7 @@ export default function HomeScreen({
     const requestStart = Math.max(request.time, minStart);
     if (requestStart >= maxEnd) return null;
 
-    const alignedStart = Math.ceil(requestStart / 60) * 60;
+    const alignedStart = Math.ceil(requestStart / STEP) * STEP;
     const overlaps = intervals.some(
       (interval) => interval.start < alignedStart + 0.1 && interval.end > alignedStart
     );
@@ -359,16 +393,27 @@ export default function HomeScreen({
       .sort((a, b) => a - b)[0];
 
     const limit = Math.min(nextStart ?? maxEnd, maxEnd);
-    const alignedLimitEnd = Math.floor(limit / 60) * 60;
+    const alignedLimitEnd = Math.floor(limit / STEP) * STEP;
     if (alignedLimitEnd <= alignedStart) return null;
     const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
     const usedMinutes = getUserReservedMinutes(request.date, request.roomId);
     const userRemainingMinutes = Math.max(0, 180 - usedMinutes);
-    if (windowDuration <= 0 || userRemainingMinutes <= 0) return null;
-    return { limitEnd: alignedLimitEnd, startMinutes: alignedStart, userRemainingMinutes };
+    if (windowDuration < MIN_DURATION || userRemainingMinutes < MIN_DURATION) return null;
+
+    // Allow picking earlier starts within the same idle window.
+    let windowStart = minStart;
+    for (const interval of intervals) {
+      if (interval.end <= alignedStart && interval.end > windowStart) {
+        windowStart = interval.end;
+      }
+    }
+    const alignedWindowStart = Math.ceil(windowStart / STEP) * STEP;
+    if (alignedWindowStart >= alignedLimitEnd) return null;
+    return { limitEnd: alignedLimitEnd, startMinutes: alignedStart, windowStart: alignedWindowStart, userRemainingMinutes };
   };
 
   const handleReserve = (request: ReserveRequest) => {
+    const MIN_DURATION = 30;
     if (!currentUser?.allowed) {
       setAuthError("יש להתחבר עם חשבון סטודנט מאושר.");
       return;
@@ -376,45 +421,64 @@ export default function HomeScreen({
 
     const usedMinutes = getUserReservedMinutes(request.date, request.roomId);
     if (usedMinutes >= 180) {
-      showToast("מקסימום 3 שעות לחדר ליום. להחרגה יש לפנות למנהל מורשה.");
+      showToast("מקסימום 3 שעות לחדר ליום.\nלהחרגה יש לפנות למנהל מורשה.");
       return;
     }
 
     const availability = getAvailability(request);
     if (!availability) return;
-    const { limitEnd, startMinutes, userRemainingMinutes } = availability;
+    const { limitEnd, startMinutes, windowStart, userRemainingMinutes } = availability;
     const windowDuration = limitEnd - startMinutes;
     const maxDuration = Math.min(windowDuration, userRemainingMinutes, 180);
-    if (maxDuration < 60) return;
+    if (maxDuration < MIN_DURATION) return;
     const baseDuration = request.durationMinutes
-      ? Math.min(Math.floor(request.durationMinutes / 60) * 60 || 60, maxDuration)
-      : 60;
-    const desiredDuration = Math.max(60, Math.min(baseDuration, maxDuration));
+      ? Math.min(Math.floor(request.durationMinutes / 30) * 30 || 60, maxDuration)
+      : Math.min(60, maxDuration);
+    const desiredDuration = Math.max(MIN_DURATION, Math.min(baseDuration, maxDuration));
     setPendingConfirm({
+      mode: "create",
       request,
       durationMinutes: desiredDuration,
       limitEnd,
       startMinutes,
+      windowStart,
       userRemainingMinutes
     });
     if (view === "finder") {
+      setAllRooms(false);
       setSelectedRoom(request.roomId);
       setSelectedDate(request.date);
       setRoomMode("day");
-      setView("room");
+      onViewChange("room");
       return;
     }
-    if (view === "room" && (selectedRoom === ALL_ROOMS_ID || roomMode === "week")) {
+    if (view === "room" && allRooms) {
+      setAllRooms(false);
       setSelectedRoom(request.roomId);
       setSelectedDate(request.date);
       setRoomMode("day");
-      setView("room");
+      onViewChange("room");
+      return;
     }
   };
 
   const handleConfirmReserve = (draft: ReserveRequest, startMinutes: number, durationMinutes: number) => {
+    const STEP = 30;
+    const MIN_DURATION = 30;
     if (!currentUser?.allowed) return;
     const { date, day, roomId } = draft;
+    if (startMinutes % 30 !== 0 || durationMinutes % 30 !== 0) {
+      showToast("יש לבחור שעות במרווחים של חצי שעה.");
+      return;
+    }
+    if (durationMinutes < MIN_DURATION) {
+      showToast("משך מינימלי הוא חצי שעה.");
+      return;
+    }
+    if (durationMinutes > 180) {
+      showToast("מקסימום 3 שעות לחדר ליום.\nלהחרגה יש לפנות למנהל מורשה.");
+      return;
+    }
 
     const policy = roomMeta?.[roomId];
     if (policy?.isClosed) {
@@ -453,7 +517,7 @@ export default function HomeScreen({
 
     const remainingMinutes = Math.max(0, 180 - getUserReservedMinutes(date, roomId));
     if (durationMinutes > remainingMinutes) {
-      showToast("מקסימום 3 שעות לחדר ליום. להחרגה יש לפנות למנהל מורשה.");
+      showToast("מקסימום 3 שעות לחדר ליום.\nלהחרגה יש לפנות למנהל מורשה.");
       return;
     }
 
@@ -461,15 +525,164 @@ export default function HomeScreen({
       ? crypto.randomUUID()
       : `res-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-    addReservation({
-      id,
-      date,
-      time: startMinutes,
-      durationMinutes,
-      roomId,
-      reservedBy: currentUser.name,
-      reservedEmail: currentUser.email
+    void (async () => {
+      const ok = await addReservation({
+        id,
+        date,
+        time: startMinutes,
+        durationMinutes,
+        roomId,
+        reservedBy: currentUser.name,
+        reservedEmail: currentUser.email
+      });
+      if (!ok) {
+        showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
+        return;
+      }
+      setPendingConfirm(null);
+    })();
+  };
+
+  const handleEditReservation = (dateKey: string, reservationId: string) => {
+    if (!currentUser?.allowed) return;
+    const entry = (reservationMap[dateKey] || []).find((item) => item.id === reservationId);
+    if (!entry) return;
+    if (entry.kind) return;
+    if (entry.reservedEmail !== currentUser.email) return;
+
+    const dayKey = getDayKeyFromDateKey(dateKey);
+    const STEP = 30;
+    const MIN_DURATION = 30;
+    const roomId = entry.roomId;
+    const policy = roomMeta?.[roomId];
+    if (policy?.isClosed) {
+      showToast("החדר סגור זמנית.");
+      return;
+    }
+    const minStart = policy?.openMinutes ?? config.startHour * 60;
+    const maxEnd = policy?.closeMinutes ?? config.endHour * 60;
+
+    const lessonIntervals = getLessonsForDate(dateKey, dayKey)
+      .filter((lesson) => lesson.roomId === roomId)
+      .map((lesson) => ({ start: lesson.startMinutes, end: lesson.startMinutes + lesson.durationMinutes }));
+    const reservationIntervals = (reservationMap[dateKey] || [])
+      .filter((item) => item.roomId === roomId && item.id !== reservationId)
+      .map((item) => ({ start: item.time, end: item.time + item.durationMinutes }));
+    const intervals = [...lessonIntervals, ...reservationIntervals];
+
+    const alignedStart = Math.ceil(Math.max(entry.time, minStart) / STEP) * STEP;
+    const overlaps = intervals.some((interval) => interval.start < alignedStart + 0.1 && interval.end > alignedStart);
+    if (overlaps || alignedStart >= maxEnd) return;
+
+    const nextStart = intervals
+      .map((interval) => interval.start)
+      .filter((value) => value >= alignedStart && value < maxEnd)
+      .sort((a, b) => a - b)[0];
+    const limit = Math.min(nextStart ?? maxEnd, maxEnd);
+    const alignedLimitEnd = Math.floor(limit / STEP) * STEP;
+    if (alignedLimitEnd - alignedStart < MIN_DURATION) return;
+
+    let windowStart = minStart;
+    for (const interval of intervals) {
+      if (interval.end <= alignedStart && interval.end > windowStart) {
+        windowStart = interval.end;
+      }
+    }
+    const alignedWindowStart = Math.ceil(windowStart / STEP) * STEP;
+
+    const usedMinutes = getUserReservedMinutes(dateKey, roomId);
+    const usedWithoutThis = Math.max(0, usedMinutes - entry.durationMinutes);
+    const userRemainingMinutes = Math.max(0, 180 - usedWithoutThis);
+    if (userRemainingMinutes < MIN_DURATION) {
+      showToast("מקסימום 3 שעות לחדר ליום.\nלהחרגה יש לפנות למנהל מורשה.");
+      return;
+    }
+
+    const request: ReserveRequest = { date: dateKey, day: dayKey, time: alignedStart, roomId, durationMinutes: entry.durationMinutes };
+    setPendingConfirm({
+      mode: "edit",
+      reservationId,
+      request,
+      durationMinutes: Math.max(MIN_DURATION, Math.min(entry.durationMinutes, userRemainingMinutes)),
+      limitEnd: alignedLimitEnd,
+      startMinutes: alignedStart,
+      windowStart: alignedWindowStart,
+      userRemainingMinutes
     });
+  };
+
+  const handleConfirmEdit = async (pending: PendingConfirm, startMinutes: number, durationMinutes: number) => {
+    if (!currentUser?.allowed) return;
+    if (!pending.reservationId) return;
+    const { date, day, roomId } = pending.request;
+    const reservationId = pending.reservationId;
+    const STEP = 30;
+    const MIN_DURATION = 30;
+    if (startMinutes % STEP !== 0 || durationMinutes % STEP !== 0) {
+      showToast("יש לבחור שעות במרווחים של חצי שעה.");
+      return;
+    }
+    if (durationMinutes < MIN_DURATION) {
+      showToast("משך מינימלי הוא חצי שעה.");
+      return;
+    }
+
+    const currentEntry = (reservationMap[date] || []).find((item) => item.id === reservationId);
+    if (!currentEntry) return;
+    if (currentEntry.kind) return;
+    if (currentEntry.reservedEmail !== currentUser.email) return;
+
+    const policy = roomMeta?.[roomId];
+    if (policy?.isClosed) {
+      showToast("החדר סגור זמנית.");
+      return;
+    }
+    const roomOpen = policy?.openMinutes ?? config.startHour * 60;
+    const roomClose = policy?.closeMinutes ?? config.endHour * 60;
+    if (startMinutes < roomOpen || startMinutes + durationMinutes > roomClose) {
+      showToast("השעה מחוץ לשעות הפעילות של החדר.");
+      return;
+    }
+
+    const dayLessons = getLessonsForDate(date, day);
+    const overlapsLesson = dayLessons.some((lesson) => {
+      if (lesson.roomId !== roomId) return false;
+      const lessonEnd = lesson.startMinutes + lesson.durationMinutes;
+      return lesson.startMinutes < startMinutes + durationMinutes && lessonEnd > startMinutes;
+    });
+    if (overlapsLesson) {
+      showToast("קיים שיעור חופף.");
+      return;
+    }
+
+    const overlapsReservation = (reservationMap[date] || []).some((entry) => {
+      if (entry.id === reservationId) return false;
+      if (entry.roomId !== roomId) return false;
+      const entryEnd = entry.time + entry.durationMinutes;
+      return entry.time < startMinutes + durationMinutes && entryEnd > startMinutes;
+    });
+    if (overlapsReservation) {
+      showToast("קיים שמור חופף.");
+      return;
+    }
+
+    const usedMinutes = getUserReservedMinutes(date, roomId);
+    const usedWithoutThis = Math.max(0, usedMinutes - currentEntry.durationMinutes);
+    const remainingMinutes = Math.max(0, 180 - usedWithoutThis);
+    if (durationMinutes > remainingMinutes) {
+      showToast("מקסימום 3 שעות לחדר ליום.\nלהחרגה יש לפנות למנהל מורשה.");
+      return;
+    }
+
+    const ok = await upsertReservation({
+      ...currentEntry,
+      time: startMinutes,
+      durationMinutes
+    });
+    if (!ok) {
+      showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
+      return;
+    }
     setPendingConfirm(null);
   };
 
@@ -563,6 +776,49 @@ export default function HomeScreen({
     setReservationDetails({ reservation, dateKey });
   };
 
+  const handleLessonDetails = (lessonId: string, dateKey: string) => {
+    const dayKey = getDayKeyFromDateKey(dateKey);
+    const lesson = getLessonsForDate(dateKey, dayKey).find((entry) => entry.id === lessonId);
+    if (!lesson) return;
+    setBlockDetails({
+      kind: "lesson",
+      dateKey,
+      roomId: lesson.roomId,
+      startMinutes: lesson.startMinutes,
+      durationMinutes: lesson.durationMinutes,
+      title: lesson.title,
+      meta: lesson.teacher || "ללא מרצה"
+    });
+  };
+
+  const handleSpecialDetails = (reservationId: string, dateKey: string) => {
+    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    if (!reservation) return;
+    setBlockDetails({
+      kind: "special",
+      dateKey,
+      roomId: reservation.roomId,
+      startMinutes: reservation.time,
+      durationMinutes: reservation.durationMinutes,
+      title: reservation.reservedBy || "אירוע",
+      meta: ""
+    });
+  };
+
+  const handleClosedDetails = (reservationId: string, dateKey: string) => {
+    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    if (!reservation) return;
+    setBlockDetails({
+      kind: "closed",
+      dateKey,
+      roomId: reservation.roomId,
+      startMinutes: reservation.time,
+      durationMinutes: reservation.durationMinutes,
+      title: reservation.reservedBy || "סגור",
+      meta: ""
+    });
+  };
+
   const checkReservationConflict = (draft: AdminReservationDraft | AdminSpecialDraft | AdminClosedDraft) => {
     const { dateKey, dayKey, roomId, startMinutes, durationMinutes, reservationId } = draft;
     const endMinutes = startMinutes + durationMinutes;
@@ -613,13 +869,17 @@ export default function HomeScreen({
         startMinutes: adminDraft.startMinutes,
         durationMinutes: adminDraft.durationMinutes
       };
-      await addOverride({
+      const ok = await addOverride({
         date: adminDraft.dateKey,
         action,
-        targetLessonId: adminDraft.targetLessonId,
         lesson,
-        createdBy: currentUser?.email
+        ...(adminDraft.targetLessonId ? { targetLessonId: adminDraft.targetLessonId } : {}),
+        ...(currentUser?.email ? { createdBy: currentUser.email } : {})
       });
+      if (!ok) {
+        setAdminError("שמירה נכשלה (בדוק הגדרות Firestore).");
+        return;
+      }
       setAdminDraft(null);
       return;
     }
@@ -644,13 +904,25 @@ export default function HomeScreen({
           ? (adminDraft.label || "סגור זמנית")
           : (adminDraft.reservedBy || "אדמין"),
       reservedEmail: adminDraft.type === "reservation" ? (adminDraft.reservedEmail || "") : "",
-      kind: adminDraft.type === "special" ? "special" : adminDraft.type === "closed" ? "closed" : undefined
+      ...(adminDraft.type === "special"
+        ? { kind: "special" as const }
+        : adminDraft.type === "closed"
+          ? { kind: "closed" as const }
+          : {})
     };
 
     if (adminDraft.mode === "create") {
-      addReservation(reservation);
+      const ok = await addReservation(reservation);
+      if (!ok) {
+        setAdminError("שמירה נכשלה (בדוק הגדרות Firestore).");
+        return;
+      }
     } else {
-      upsertReservation(reservation);
+      const ok = await upsertReservation(reservation);
+      if (!ok) {
+        setAdminError("שמירה נכשלה (בדוק הגדרות Firestore).");
+        return;
+      }
     }
     setAdminDraft(null);
   };
@@ -668,8 +940,14 @@ export default function HomeScreen({
 
   const handleAdminDeleteReservation = () => {
     if (!adminDraft || !effectiveAdminMode || (adminDraft.type !== "reservation" && adminDraft.type !== "special" && adminDraft.type !== "closed") || !adminDraft.reservationId) return;
-    releaseReservation(adminDraft.dateKey, adminDraft.reservationId);
-    setAdminDraft(null);
+    void (async () => {
+      const ok = await releaseReservation(adminDraft.dateKey, adminDraft.reservationId);
+      if (!ok) {
+        setAdminError("מחיקה נכשלה (בדוק הגדרות Firestore).");
+        return;
+      }
+      setAdminDraft(null);
+    })();
   };
 
   const switchAdminType = (nextType: "lesson" | "reservation" | "special" | "closed") => {
@@ -733,21 +1011,22 @@ export default function HomeScreen({
   };
 
   const handleRoomSelect = (roomId: string, dateKey = selectedDate) => {
+    setAllRooms(false);
     setSelectedRoom(roomId);
     setSelectedDate(dateKey);
     setRoomMode("day");
-    setView("room");
+    onViewChange("room");
   };
 
   const handleDaySelect = (dateKey: string) => {
     setSelectedDate(dateKey);
     setRoomMode("day");
-    setView("room");
+    onViewChange("room");
   };
 
   const handlePrev = useCallback(() => {
     if (view === "room") {
-      const isAllRooms = selectedRoom === ALL_ROOMS_ID;
+      const isAllRooms = allRooms;
       if (!isAllRooms && roomMode === "week") {
         const delta = -7;
         setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), delta)));
@@ -757,11 +1036,11 @@ export default function HomeScreen({
       return;
     }
     setSelectedDate(shiftSchoolDay(selectedDate, -1));
-  }, [roomMode, selectedDate, selectedRoom, view]);
+  }, [allRooms, roomMode, selectedDate, view]);
 
   const handleNext = useCallback(() => {
     if (view === "room") {
-      const isAllRooms = selectedRoom === ALL_ROOMS_ID;
+      const isAllRooms = allRooms;
       if (!isAllRooms && roomMode === "week") {
         const delta = 7;
         setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), delta)));
@@ -771,14 +1050,14 @@ export default function HomeScreen({
       return;
     }
     setSelectedDate(shiftSchoolDay(selectedDate, 1));
-  }, [roomMode, selectedDate, selectedRoom, view]);
+  }, [allRooms, roomMode, selectedDate, view]);
 
   useEffect(() => {
     if (!onContextChange) return;
-    const roomsKey = rooms
-      .map((room) => `${room.id}:${room.shortName || room.name || ""}`)
-      .join("|");
-    const contextKey = [view, roomMode, selectedDate, selectedRoom, roomsKey].join("::");
+    const liveClockKey = view === "live"
+      ? now.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })
+      : "";
+    const contextKey = [view, roomMode, allRooms ? "all" : "single", selectedDate, selectedRoom, roomsKey, liveClockKey].join("::");
     if (lastContextKeyRef.current === contextKey) {
       return;
     }
@@ -792,7 +1071,7 @@ export default function HomeScreen({
 
     const dayLabel = weekDays.find((day) => day.key === selectedDayKey)?.label || "";
     const shortDate = formatShortDate(selectedDate);
-    const navText = view === "room" && roomMode === "week" && selectedRoom !== ALL_ROOMS_ID
+    const navText = view === "room" && roomMode === "week" && !allRooms
       ? `שבוע ${getWeekNumber(selectedDate)}`
       : `${dayLabel} · ${shortDate}`;
 
@@ -801,18 +1080,15 @@ export default function HomeScreen({
     };
 
     if (view === "room") {
-      const roomOptions = [
-        { id: ALL_ROOMS_ID, label: "כל החדרים" },
-        ...rooms.map((room) => ({ id: room.id, label: room.shortName || room.name }))
-      ];
+      const roomOptions = rooms.map((room) => ({ id: room.id, label: room.name || room.shortName || room.id }));
       const roomSelect = (
-        <label className="top-bar-select inline">
+        <label className="top-bar-select inline no-caret">
           <span className="sr-only">חדר</span>
           <select
             value={selectedRoom}
             onChange={(event) => {
+              setAllRooms(false);
               setSelectedRoom(event.target.value);
-              setRoomMode("day");
             }}
           >
             {roomOptions.map((room) => (
@@ -823,79 +1099,162 @@ export default function HomeScreen({
           </select>
         </label>
       );
-      const isAllRooms = selectedRoom === ALL_ROOMS_ID;
-      context.title = (
-        <div className="top-bar-title-block">
-          <div>לוח זמנים</div>
-          <div className="mode-toggle-title">
-            <div className={`mode-toggle small${isAllRooms ? " disabled" : ""}`}>
-              <button
-                type="button"
-                className={roomMode === "day" ? "active" : ""}
-                onClick={() => setRoomMode("day")}
-                disabled={isAllRooms}
-              >
-                יומי
-              </button>
-              <button
-                type="button"
-                className={roomMode === "week" ? "active" : ""}
-                onClick={() => setRoomMode("week")}
-                disabled={isAllRooms}
-              >
-                שבועי
-              </button>
-            </div>
-          </div>
-        </div>
+      const roomControl = allRooms ? (
+        <button
+          type="button"
+          className="top-bar-room-all"
+          onClick={() => setAllRooms(false)}
+          aria-label="בחירת חדר"
+        >
+          כל החדרים
+        </button>
+      ) : (
+        roomSelect
       );
+      const roomIdList = roomOptions.map((opt) => opt.id);
+      const roomIndex = Math.max(0, roomIdList.indexOf(selectedRoom));
+      const shiftRoom = (delta: number) => {
+        if (!roomIdList.length) return;
+        const next = (roomIndex + delta + roomIdList.length) % roomIdList.length;
+        setAllRooms(false);
+        setSelectedRoom(roomIdList[next]);
+      };
       context.subtitle = (
-        <div className="top-bar-subtitle-block">
-          <div className="top-bar-subline inline-controls">
-            {roomMode === "day" ? <span className="top-bar-inline-label">ליום</span> : null}
-            <div className="top-bar-date-pill">
-              <button type="button" className="icon-button inline" onClick={handlePrev} aria-label="הקודם">
-                <ChevronRightIcon />
-              </button>
-              <button
-                type="button"
-                className={`top-bar-date-button${roomMode === "week" ? " narrow" : ""}`}
-                onClick={openDatePicker}
-              >
-                {navText}
-              </button>
-              <button type="button" className="icon-button inline" onClick={handleNext} aria-label="הבא">
-                <ChevronLeftIcon />
-              </button>
+        <div className="top-bar-schedule">
+          <div className="top-bar-schedule-row">
+            <div className="top-bar-field schedule-date">
+              <div className="top-bar-field-hints">
+                <span className="top-bar-field-hint">תאריך</span>
+                <button
+                  type="button"
+                  className="top-bar-mode-mini"
+                  onClick={() => {
+                    setAllRooms(false);
+                    setRoomMode((prev) => (prev === "day" ? "week" : "day"));
+                  }}
+                  aria-pressed={roomMode === "week"}
+                  aria-label="החלפת תצוגה"
+                >
+                  <CalendarIcon />
+                  <span>תצוגה שבועית</span>
+                </button>
+              </div>
+              <div className="top-bar-date-pill schedule">
+                <button type="button" className="icon-button inline" onClick={handlePrev} aria-label="הקודם">
+                  <ChevronRightIcon />
+                </button>
+                <button
+                  type="button"
+                  className="top-bar-date-button"
+                  onClick={openDatePicker}
+                >
+                  {navText}
+                </button>
+                <button type="button" className="icon-button inline" onClick={handleNext} aria-label="הבא">
+                  <ChevronLeftIcon />
+                </button>
+              </div>
+              <input
+                ref={dateInputRef}
+                className="top-bar-date-input"
+                type="date"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+              />
             </div>
-            <span className="top-bar-inline-label">לחדר</span>
-            {roomSelect}
-            <input
-              ref={dateInputRef}
-              className="top-bar-date-input"
-              type="date"
-              value={selectedDate}
-              onChange={(event) => setSelectedDate(event.target.value)}
-            />
+            <div className="top-bar-field schedule-room">
+              <div className="top-bar-field-hints">
+                <span className="top-bar-field-hint">חדר</span>
+                <button
+                  type="button"
+                  className="top-bar-mode-mini"
+                  onClick={() => {
+                    setAllRooms((prev) => {
+                      const next = !prev;
+                      if (next) setRoomMode("day");
+                      return next;
+                    });
+                  }}
+                  aria-pressed={allRooms}
+                  aria-label="תצוגת כל החדרים"
+                >
+                  <RoomIcon />
+                  <span>כל החדרים</span>
+                </button>
+              </div>
+              <div className="top-bar-room-pill">
+                <button
+                  type="button"
+                  className="icon-button inline"
+                  onClick={() => shiftRoom(-1)}
+                  aria-label="חדר קודם"
+                >
+                  <ChevronRightIcon />
+                </button>
+                {roomControl}
+                <button
+                  type="button"
+                  className="icon-button inline"
+                  onClick={() => shiftRoom(1)}
+                  aria-label="חדר הבא"
+                >
+                  <ChevronLeftIcon />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       );
     } else if (view === "finder") {
-      context.subtitle = "איתור חדר פנוי לפי יום, שעה ומשך.";
+      context.subtitle = "איתור חדרים פנויים לפי ההעדפות שלי";
     } else if (view === "reservations") {
-      context.subtitle = "השריונים שלי במקום אחד.";
+      context.subtitle = "כל החדרים ששריינתי";
       context.controls = (
         <button
           type="button"
           className="icon-button"
           aria-label="סגירה"
-          onClick={() => setView(lastMainViewRef.current || "room")}
+          onClick={() => onViewChange(lastMainViewRef.current || "room")}
         >
           <CloseIcon />
         </button>
       );
     } else if (view === "live") {
-      context.subtitle = "סטטוס חדרים בזמן אמת.";
+      const today = parseDateKey(todayDateKey);
+      const weekdayLabel = new Intl.DateTimeFormat("he-IL", { weekday: "long" }).format(today);
+      const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(today);
+      const todayReservations = reservationMap[todayDateKey] || [];
+      const isWeekend = today.getDay() === 5 || today.getDay() === 6;
+      const isClosedNow = isWeekend || nowMinutes < config.startHour * 60 || nowMinutes >= config.endHour * 60;
+      const todayLessons = getLessonsForDate(todayDateKey, todayDayKey);
+
+      const availableCount = rooms.filter((room) => {
+        const policy = roomMeta?.[room.id];
+        const roomOpen = policy?.openMinutes ?? config.startHour * 60;
+        const roomClose = policy?.closeMinutes ?? config.endHour * 60;
+        if (policy?.isClosed) return false;
+        if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return false;
+        const activeLesson = todayLessons.some((lesson) => {
+          if (lesson.roomId !== room.id) return false;
+          return lesson.startMinutes <= nowMinutes && lesson.startMinutes + lesson.durationMinutes > nowMinutes;
+        });
+        if (activeLesson) return false;
+        const activeReservation = todayReservations.some((entry) => {
+          if (entry.roomId !== room.id) return false;
+          return entry.time <= nowMinutes && entry.time + entry.durationMinutes > nowMinutes;
+        });
+        return !activeReservation;
+      }).length;
+
+      context.subtitle = (
+        <div className="top-bar-live">
+          <div className="top-bar-live-clock">{liveClockKey}</div>
+          <div className="top-bar-live-date">{weekdayLabel} · {dateLabel}</div>
+          <div className="top-bar-live-summary">
+            {isClosedNow ? "סגור עכשיו" : `חדרים זמינים עכשיו: ${availableCount}/${rooms.length}`}
+          </div>
+        </div>
+      );
     }
 
     onContextChange(context);
@@ -903,13 +1262,25 @@ export default function HomeScreen({
     onContextChange,
     rooms,
     selectedRoom,
+    allRooms,
     view,
     roomMode,
     selectedDate,
     selectedDayKey,
     weekDays,
+    roomsKey,
     handlePrev,
-    handleNext
+    handleNext,
+    onViewChange,
+    now,
+    nowMinutes,
+    todayDateKey,
+    todayDayKey,
+    reservationMap,
+    getLessonsForDate,
+    config.startHour,
+    config.endHour,
+    roomMeta
   ]);
 
   const renderView = () => {
@@ -926,7 +1297,6 @@ export default function HomeScreen({
           endHour={config.endHour}
           roomMeta={roomMeta}
           onRoomSelect={(roomId) => handleRoomSelect(roomId, todayDateKey)}
-          nowLabel={now.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
         />
       );
     }
@@ -942,6 +1312,7 @@ export default function HomeScreen({
           roomMeta={roomMeta}
           getLessonsForDate={getLessonsForDate}
           onReserve={handleReserve}
+          onOpenSchedule={(roomId, dateKey) => handleRoomSelect(roomId, dateKey)}
         />
       );
     }
@@ -968,7 +1339,19 @@ export default function HomeScreen({
                 const dayLabel =
                   weekDays.find((day) => day.key === getDayKeyFromDateKey(entry.dateKey))?.label || "";
                 return (
-                  <li key={entry.id} className="finder-result reserved">
+                  <li
+                    key={entry.id}
+                    className="finder-result reserved clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleEditReservation(entry.dateKey, entry.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleEditReservation(entry.dateKey, entry.id);
+                      }
+                    }}
+                  >
                     <div>
                       <p className="finder-result-title">
                         <span className="dot reserved" /> {roomName}
@@ -982,7 +1365,10 @@ export default function HomeScreen({
                       type="button"
                       className="icon-button"
                       aria-label="Release"
-                      onClick={() => handleRelease(entry.dateKey, entry.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleRelease(entry.dateKey, entry.id);
+                      }}
                     >
                       <ReleaseIcon />
                     </button>
@@ -1001,7 +1387,7 @@ export default function HomeScreen({
       <>
         {/** schedule view */}
         <ScheduleGrid
-          view={selectedRoom === ALL_ROOMS_ID ? "daily" : "room"}
+          view={allRooms ? "daily" : "room"}
           rooms={rooms}
           weekDates={view === "room" ? roomDates : weekDates}
           timeSlots={timeSlots}
@@ -1015,6 +1401,10 @@ export default function HomeScreen({
           currentUser={currentUser}
           onReserve={handleReserve}
           onRelease={handleRelease}
+          onEditReservation={handleEditReservation}
+          onLessonDetails={handleLessonDetails}
+          onSpecialDetails={handleSpecialDetails}
+          onClosedDetails={handleClosedDetails}
           onAdminSlotClick={handleAdminSlotClick}
           onAdminLessonClick={handleAdminLessonClick}
           onAdminReservationClick={handleAdminReservationClick}
@@ -1022,13 +1412,15 @@ export default function HomeScreen({
           adminMode={effectiveAdminMode}
           startHour={config.startHour}
           endHour={config.endHour}
-          compact={selectedRoom === ALL_ROOMS_ID || roomMode === "week"}
-          compactLabel={selectedRoom === ALL_ROOMS_ID ? "status" : "title"}
-          onRoomSelect={selectedRoom === ALL_ROOMS_ID ? handleRoomSelect : undefined}
+          compact={allRooms || roomMode === "week"}
+          compactLabel={allRooms ? "status" : "title"}
+          onRoomSelect={allRooms ? handleRoomSelect : undefined}
           onDateSelect={roomMode === "week" ? handleDaySelect : undefined}
-          showHeaders={selectedRoom === ALL_ROOMS_ID || roomMode === "week"}
+          showHeaders={allRooms || roomMode === "week"}
+          footer={<Legend />}
+          nowMinutes={nowMinutes}
+          todayDateKey={todayDateKey}
         />
-        <Legend />
       </>
     );
   };
@@ -1143,7 +1535,7 @@ export default function HomeScreen({
       {toast ? (
         <div
           className={`home-toast${toast.tone === "error" ? " error" : ""}`}
-          style={{ bottom: showNav ? "calc(92px + env(safe-area-inset-bottom))" : "calc(18px + env(safe-area-inset-bottom))" }}
+          style={{ bottom: hasNav ? "calc(18px + env(safe-area-inset-bottom) + 74px)" : "calc(18px + env(safe-area-inset-bottom))" }}
           role="status"
           aria-live="polite"
         >
@@ -1153,16 +1545,30 @@ export default function HomeScreen({
       {pendingConfirm ? (
         <ReserveConfirmOverlay
           open
-          title="שמירת חדר"
+          title={pendingConfirm.mode === "edit" ? "עריכת שריון" : "שריון חדר"}
           room={rooms.find((room) => room.id === pendingConfirm.request.roomId)?.name || ""}
           dateLine={`יום ${weekDays.find((day) => day.key === pendingConfirm.request.day)?.label || ""} ` +
             `${formatShortDate(pendingConfirm.request.date)}`}
           request={pendingConfirm.request}
           limitEnd={pendingConfirm.limitEnd}
           startMinutes={pendingConfirm.startMinutes}
+          windowStart={pendingConfirm.windowStart}
           initialDuration={pendingConfirm.durationMinutes}
           userRemainingMinutes={pendingConfirm.userRemainingMinutes}
+          mode={pendingConfirm.mode}
+          onRelease={
+            pendingConfirm.mode === "edit" && pendingConfirm.reservationId
+              ? () => {
+                  handleRelease(pendingConfirm.request.date, pendingConfirm.reservationId!);
+                  setPendingConfirm(null);
+                }
+              : undefined
+          }
           onConfirm={(startMinutes, durationMinutes) => {
+            if (pendingConfirm.mode === "edit") {
+              void handleConfirmEdit(pendingConfirm, startMinutes, durationMinutes);
+              return;
+            }
             handleConfirmReserve(pendingConfirm.request, startMinutes, durationMinutes);
           }}
           onClose={() => setPendingConfirm(null)}
@@ -1179,6 +1585,43 @@ export default function HomeScreen({
         phone={detailsPhone}
         onClose={() => setReservationDetails(null)}
       />
+      <BlockDetailsOverlay
+        open={Boolean(blockDetails)}
+        title={
+          blockDetails?.kind === "lesson"
+            ? "פרטי שיעור"
+            : blockDetails?.kind === "special"
+              ? "פרטי אירוע"
+              : "פרטי סגירה"
+        }
+        room={
+          blockDetails
+            ? rooms.find((room) => room.id === blockDetails.roomId)?.name || blockDetails.roomId
+            : ""
+        }
+        dateLine={
+          blockDetails
+            ? `יום ${weekDays.find((day) => day.key === getDayKeyFromDateKey(blockDetails.dateKey))?.label || ""} ${formatShortDate(blockDetails.dateKey)}`
+            : ""
+        }
+        timeLine={
+          blockDetails
+            ? `בין ${formatMinutes(blockDetails.startMinutes)}-${formatMinutes(blockDetails.startMinutes + blockDetails.durationMinutes)} · ` +
+              `${formatDurationLabel(blockDetails.durationMinutes)}`
+            : ""
+        }
+        lines={
+          blockDetails?.kind === "lesson"
+            ? [
+                { label: "שיעור", value: blockDetails.title },
+                { label: "מרצה", value: blockDetails.meta }
+              ]
+            : [
+                { label: blockDetails?.kind === "special" ? "אירוע" : "סגירה", value: blockDetails?.title || "" }
+              ]
+        }
+        onClose={() => setBlockDetails(null)}
+      />
       <ConfirmOverlay
         open={Boolean(pendingRelease)}
         title="שחרור חדר"
@@ -1189,8 +1632,14 @@ export default function HomeScreen({
         cancelLabel="חזרה"
         onConfirm={() => {
           if (!pendingRelease) return;
-          releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
-          setPendingRelease(null);
+          void (async () => {
+            const ok = await releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
+            if (!ok) {
+              showToast("שחרור נכשל (בדוק הגדרות Firestore).", "error");
+              return;
+            }
+            setPendingRelease(null);
+          })();
         }}
         onClose={() => setPendingRelease(null)}
       />
@@ -1462,7 +1911,6 @@ export default function HomeScreen({
           </div>
         </div>
       ) : null}
-      {showNav ? <BottomNav view={view} onChange={setView} locked={isLocked} /> : null}
     </div>
   );
 }

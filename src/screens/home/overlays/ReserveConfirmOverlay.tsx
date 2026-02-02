@@ -11,15 +11,22 @@ export type ReserveConfirmOverlayProps = {
   request: ReserveRequest;
   limitEnd: number;
   startMinutes: number;
+  windowStart: number;
   initialDuration: number;
   userRemainingMinutes: number;
+  mode?: "create" | "edit";
+  onRelease?: () => void;
   onConfirm: (startMinutes: number, durationMinutes: number) => void;
   onClose: () => void;
 };
 
 const formatDurationLabel = (minutes: number) => {
+  if (minutes === 30) return "חצי שעה";
   if (minutes === 60) return "שעה";
+  if (minutes === 90) return "שעה וחצי";
   if (minutes === 120) return "שעתיים";
+  if (minutes === 150) return "שעתיים וחצי";
+  if (minutes === 180) return "3 שעות";
   const hours = minutes / 60;
   if (Number.isInteger(hours)) return `${hours} שעות`;
   return `${hours.toFixed(2)} שעות`;
@@ -33,8 +40,11 @@ export default function ReserveConfirmOverlay({
   request,
   limitEnd,
   startMinutes: initialStart,
+  windowStart,
   initialDuration,
   userRemainingMinutes,
+  mode = "create",
+  onRelease,
   onConfirm,
   onClose
 }: ReserveConfirmOverlayProps) {
@@ -51,25 +61,30 @@ export default function ReserveConfirmOverlay({
   }, [open, initialStart, initialDuration]);
 
   const startOptions = useMemo(() => {
+    const STEP = 30;
+    const MIN_DURATION = 30;
     const options: number[] = [];
-    for (let value = initialStart; value + 60 <= limitEnd; value += 60) {
+    for (let value = windowStart; value + MIN_DURATION <= limitEnd; value += STEP) {
       options.push(value);
     }
-    if (!options.includes(initialStart)) {
-      options.unshift(initialStart);
+    return options;
+  }, [limitEnd, windowStart]);
+
+  const STEP = 30;
+  const MIN_DURATION = 30;
+  const maxDurationForStart = Math.floor(Math.min(limitEnd - startMinutes, userRemainingMinutes, 180) / STEP) * STEP;
+  const endOptions = useMemo(() => {
+    const options: { end: number; duration: number; label: string }[] = [];
+    for (let duration = MIN_DURATION; duration <= maxDurationForStart; duration += STEP) {
+      const end = startMinutes + duration;
+      options.push({
+        end,
+        duration,
+        label: `${formatMinutes(end)} (${formatDurationLabel(duration)})`
+      });
     }
     return options;
-  }, [initialStart, limitEnd]);
-
-  const maxDurationForStart = Math.min(limitEnd - startMinutes, userRemainingMinutes, 180);
-  const endOptions = useMemo(() => {
-    const durations = [60, 120, 180].filter((value) => value <= maxDurationForStart);
-    return durations.map((duration) => ({
-      end: startMinutes + duration,
-      duration,
-      label: `${formatMinutes(startMinutes + duration)} (${formatDurationLabel(duration)})`
-    }));
-  }, [maxDurationForStart, startMinutes]);
+  }, [MIN_DURATION, STEP, maxDurationForStart, startMinutes]);
 
   useEffect(() => {
     const currentDuration = endMinutes - startMinutes;
@@ -108,11 +123,13 @@ export default function ReserveConfirmOverlay({
               value={startMinutes}
               onChange={(event) => {
                 const nextStart = Number(event.target.value);
-                const previousDuration = Math.max(60, endMinutes - startMinutes);
+                const previousDuration = Math.max(MIN_DURATION, endMinutes - startMinutes);
                 setStartMinutes(nextStart);
-                const nextMax = Math.min(limitEnd - nextStart, userRemainingMinutes, 180);
-                const nextDuration = Math.max(60, Math.min(previousDuration, nextMax));
-                setEndMinutes(nextStart + Math.floor(nextDuration / 60) * 60);
+                const nextMaxRaw = Math.min(limitEnd - nextStart, userRemainingMinutes, 180);
+                const nextMax = Math.floor(nextMaxRaw / STEP) * STEP;
+                const nextDurationRaw = Math.max(MIN_DURATION, Math.min(previousDuration, nextMax));
+                const nextDuration = Math.max(MIN_DURATION, Math.floor(nextDurationRaw / STEP) * STEP);
+                setEndMinutes(nextStart + nextDuration);
                 setInfoOpen(false);
               }}
             >
@@ -160,17 +177,37 @@ export default function ReserveConfirmOverlay({
         </div>
 
         <div className="reserve-actions">
-          <button className="secondary" type="button" onClick={onClose}>
-            ביטול
-          </button>
-          <button
-            className="primary"
-            type="button"
-            disabled={durationMinutes < 60}
-            onClick={() => onConfirm(startMinutes, durationMinutes)}
-          >
-            אישור
-          </button>
+          {mode === "edit" ? (
+            <>
+              {onRelease ? (
+                <button className="secondary" type="button" onClick={onRelease}>
+                  שחרור
+                </button>
+              ) : null}
+              <button
+                className="primary"
+                type="button"
+                disabled={durationMinutes < MIN_DURATION}
+                onClick={() => onConfirm(startMinutes, durationMinutes)}
+              >
+                עדכון
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="secondary" type="button" onClick={onClose}>
+                ביטול
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={durationMinutes < MIN_DURATION}
+                onClick={() => onConfirm(startMinutes, durationMinutes)}
+              >
+                אישור
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

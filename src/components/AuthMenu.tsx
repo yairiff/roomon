@@ -45,7 +45,7 @@ export default function AuthMenu({
                 >
                   <span className="auth-admin-label">
                     <AdminIcon />
-                    <span>לוח ניהול</span>
+                    <span>דשבורד ניהול</span>
                   </span>
                   <span
                     className="auth-admin-switch"

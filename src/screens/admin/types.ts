@@ -1,1 +1,1 @@
-export type AdminSection = "users" | "lessons" | "rooms" | "reservations";
+export type AdminSection = "users" | "schedule" | "rooms";

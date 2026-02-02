@@ -1,5 +1,5 @@
 import type { ViewMode } from "../types/ui";
-import { CalendarIcon, LiveIcon, SearchIcon } from "./Icons";
+import { CalendarIcon, SearchIcon } from "./Icons";
 
 export type BottomNavProps = {
   view: ViewMode;
@@ -37,8 +37,8 @@ export default function BottomNav({ view, onChange, locked }: BottomNavProps) {
         type="button"
         aria-label="Live"
       >
-        <LiveIcon />
-        <span className="nav-live-label">עכשיו</span>
+        <span className="nav-live-icon" aria-hidden="true">LIVE</span>
+        <span className="nav-live-label">זמן אמת</span>
       </button>
     </nav>
   );

@@ -4,6 +4,7 @@ import { useAuth } from "./hooks/useAuth";
 import { useReservations } from "./hooks/useReservations";
 import TopBar from "./components/TopBar";
 import AuthMenu from "./components/AuthMenu";
+import BottomNav from "./components/BottomNav";
 import type { TopBarContext } from "./types/ui";
 import LoginOverlay from "./components/LoginOverlay";
 import type { ViewMode } from "./types/ui";
@@ -27,6 +28,7 @@ export default function App() {
   const [topBar, setTopBar] = useState<TopBarContext>({ title: "עכשיו" });
   const [loginPromptOpen, setLoginPromptOpen] = useState(true);
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
+  const [view, setView] = useState<ViewMode>("live");
   const isAdminRoute = window.location.pathname.startsWith("/admin");
   const needsSignup = Boolean(user && user.role === "pending");
   const [adminMode, setAdminMode] = useState(false);
@@ -129,12 +131,14 @@ export default function App() {
           addReservation={addReservation}
           upsertReservation={upsertReservation}
           releaseReservation={releaseReservation}
+          view={view}
+          onViewChange={setView}
           requestedView={requestedView}
           onRequestedViewHandled={() => setRequestedView(null)}
-          showNav={Boolean(user)}
           adminMode={adminMode}
         />
       </main>
+      {user ? <BottomNav view={view} onChange={setView} locked={!user.allowed} /> : null}
       <LoginOverlay
         open={!user && loginPromptOpen}
         onClose={() => setLoginPromptOpen(false)}

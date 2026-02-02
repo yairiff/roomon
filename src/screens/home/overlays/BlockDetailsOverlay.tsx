@@ -1,30 +1,23 @@
-export type ReservationDetailsOverlayProps = {
+export type BlockDetailsOverlayProps = {
   open: boolean;
   title: string;
   room: string;
   dateLine: string;
   timeLine: string;
-  name: string;
-  email: string;
-  phone: string;
+  lines?: { label: string; value: string }[];
   onClose: () => void;
 };
 
-export default function ReservationDetailsOverlay({
+export default function BlockDetailsOverlay({
   open,
   title,
   room,
   dateLine,
   timeLine,
-  name,
-  email,
-  phone,
+  lines = [],
   onClose
-}: ReservationDetailsOverlayProps) {
+}: BlockDetailsOverlayProps) {
   if (!open) return null;
-
-  const normalizedPhone = phone ? phone.replace(/[^\d+]/g, "") : "";
-  const telHref = normalizedPhone ? `tel:${normalizedPhone}` : "";
 
   return (
     <div className="reserve-overlay" onClick={onClose}>
@@ -36,24 +29,21 @@ export default function ReservationDetailsOverlay({
         <div className="reserve-details">
           <p className="reserve-date">{dateLine}</p>
           <p className="reserve-time">{timeLine}</p>
-          {name ? <p className="reserve-detail">שם: {name}</p> : null}
-          <p className="reserve-detail">טלפון: {phone || "לא זמין"}</p>
+          {lines
+            .filter((line) => Boolean(line.value))
+            .map((line) => (
+              <p key={line.label} className="reserve-detail">
+                {line.label}: {line.value}
+              </p>
+            ))}
         </div>
         <div className="reserve-actions">
           <button className="secondary" type="button" onClick={onClose}>
             סגירה
           </button>
-          {telHref ? (
-            <a className="primary" href={telHref}>
-              התקשר
-            </a>
-          ) : (
-            <button className="primary" type="button" disabled>
-              אין טלפון
-            </button>
-          )}
         </div>
       </div>
     </div>
   );
 }
+

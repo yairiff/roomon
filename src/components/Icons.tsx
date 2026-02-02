@@ -19,6 +19,7 @@ import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
@@ -107,6 +108,10 @@ export function LogoutIcon() {
 }
 export function EditIcon() {
   return <EditRoundedIcon fontSize="small" />;
+}
+
+export function DuplicateIcon() {
+  return <ContentCopyRoundedIcon fontSize="small" />;
 }
 
 export function ApproveIcon() {
