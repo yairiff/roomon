@@ -30,12 +30,13 @@ export function useDirectoryUsers(enabled = true) {
           const data = docSnap.data() as Partial<DirectoryUser>;
           const email = (data.email || docSnap.id || "").toLowerCase();
           if (!email) return;
+          const cohortStartYear = typeof data.cohortStartYear === "number" ? data.cohortStartYear : undefined;
           next.push({
             email,
             name: data.name || "",
             role: data.role || "pending",
             phone: data.phone || "",
-            cohortStartYear: data.cohortStartYear,
+            cohortStartYear,
             notes: data.notes || ""
           });
         });

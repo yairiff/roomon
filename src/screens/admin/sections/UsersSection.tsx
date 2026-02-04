@@ -30,7 +30,14 @@ type GradeFilter = "all" | "A" | "B" | "C" | "STAFF";
 type PhoneFilter = "all" | "has" | "missing";
 type UserSort = "name" | "email" | "role" | "cohort";
 
-const isStaffUser = (user: DirectoryUser) => user.role === "moderator" && !user.cohortStartYear;
+const isStaffUser = (user: DirectoryUser) => user.cohortStartYear == null;
+
+const roleLabel = (role: DirectoryUser["role"]) => {
+  if (role === "admin") return "מנהל";
+  if (role === "moderator") return "מתאם";
+  if (role === "pending") return "ממתין";
+  return "משתמש";
+};
 
 export default function UsersSection({
   users,
@@ -85,7 +92,7 @@ export default function UsersSection({
         base.STAFF += 1;
         return;
       }
-      if (!user.cohortStartYear) return;
+      if (user.cohortStartYear == null) return;
       const grade = gradeValueFromCohort(user.cohortStartYear);
       if (grade === "A") base.A += 1;
       if (grade === "B") base.B += 1;
@@ -100,7 +107,7 @@ export default function UsersSection({
       list = list.filter((user) => isStaffUser(user));
     } else if (gradeFilter !== "all") {
       list = list.filter((user) => {
-        if (!user.cohortStartYear) return false;
+        if (user.cohortStartYear == null) return false;
         return gradeValueFromCohort(user.cohortStartYear) === gradeFilter;
       });
     }
@@ -346,7 +353,7 @@ export default function UsersSection({
                     setUserDraft((prev) => ({ ...prev, role: event.target.value as DirectoryUser["role"] }))
                   }
                 >
-                  <option value="student">סטודנט</option>
+                  <option value="student">משתמש</option>
                   <option value="moderator">מתאם</option>
                   <option value="admin">מנהל</option>
                 </select>
@@ -355,9 +362,7 @@ export default function UsersSection({
                 שנתון
                 <select
                   value={
-                    userDraft.role === "moderator" && !userDraft.cohortStartYear
-                      ? "STAFF"
-                      : gradeValueFromCohort(userDraft.cohortStartYear)
+                    userDraft.cohortStartYear == null ? "STAFF" : gradeValueFromCohort(userDraft.cohortStartYear)
                   }
                   onChange={(event) => {
                     const value = event.target.value as "A" | "B" | "C" | "STAFF";
@@ -385,12 +390,10 @@ export default function UsersSection({
                 </select>
               </label>
             </div>
-            {userDraft.cohortStartYear || (userDraft.role === "moderator" && !userDraft.cohortStartYear) ? (
+            {userDraft.cohortStartYear || userDraft.cohortStartYear == null ? (
               <p className="admin-meta">
                 סטטוס נוכחי:{" "}
-                {userDraft.role === "moderator" && !userDraft.cohortStartYear
-                  ? "צוות"
-                  : gradeLabelFromCohort(userDraft.cohortStartYear)}
+                {userDraft.cohortStartYear == null ? "צוות" : gradeLabelFromCohort(userDraft.cohortStartYear)}
                 {userDraft.cohortStartYear
                   ? ` · התחלת מחזור ${userDraft.cohortStartYear}-${userDraft.cohortStartYear + 1}`
                   : ""}
@@ -435,7 +438,7 @@ export default function UsersSection({
               className={`chip small${filter === "student" ? " active" : ""}`}
               onClick={() => setFilter("student")}
             >
-              סטודנטים ({counts.student})
+              משתמשים ({counts.student})
             </button>
             <button
               type="button"
@@ -624,7 +627,7 @@ export default function UsersSection({
                         </button>
                       </div>
                       <span className={`chip small${user.role === "pending" ? " active" : " ghost"}`}>
-                        {user.role === "pending" ? "ממתין" : user.role}
+                        {roleLabel(user.role)}
                       </span>
                     </div>
                   </div>

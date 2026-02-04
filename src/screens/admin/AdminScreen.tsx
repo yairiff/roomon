@@ -378,7 +378,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         <div className="admin-csv-help-row">
           <span className="admin-csv-help-key">role</span>
           <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">student / moderator / admin / pending</span>
+          <span className="admin-csv-help-value">student (משתמש) / moderator (מתאם) / admin (מנהל) / pending (ממתין)</span>
         </div>
         <div className="admin-csv-help-row">
           <span className="admin-csv-help-key">phone</span>
@@ -388,7 +388,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         <div className="admin-csv-help-row">
           <span className="admin-csv-help-key">grade</span>
           <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">A / B / C (אפשר גם א/ב/ג)</span>
+          <span className="admin-csv-help-value">A / B / C / STAFF (אפשר גם א/ב/ג/צוות). אם grade=צוות ו-role ריק → ברירת מחדל moderator</span>
         </div>
       </div>
     </details>
@@ -471,11 +471,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         name: u.name || "",
         role: u.role || "student",
         phone: u.phone || "",
-        grade: u.role === "moderator" && !u.cohortStartYear
-          ? "צוות"
-          : u.cohortStartYear
-            ? gradeValueFromCohort(u.cohortStartYear)
-            : ""
+        grade: u.cohortStartYear ? gradeValueFromCohort(u.cohortStartYear) : "צוות"
       }));
       return { filename: "users.csv", csv: stringifyCsv(userCsvHeaders, rows) };
     }
@@ -578,7 +574,18 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       seen.add(email);
 
       const roleCell = String(row.role || "").trim();
-      const roleRaw = (roleCell || "student").toLowerCase() as UserRole;
+      const roleNormalized = roleCell.toLowerCase();
+      const roleAlias = roleNormalized === "משתמש" || roleNormalized === "user"
+        ? "student"
+        : roleNormalized === "מנהל"
+          ? "admin"
+          : roleNormalized === "מתאם"
+            ? "moderator"
+            : roleNormalized === "ממתין"
+              ? "pending"
+              : roleNormalized;
+
+      const roleRaw = (roleAlias || "student").toLowerCase() as UserRole;
       const role: UserRole =
         roleRaw === "admin" || roleRaw === "moderator" || roleRaw === "student" || roleRaw === "pending"
           ? roleRaw
