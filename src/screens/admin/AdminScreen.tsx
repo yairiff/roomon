@@ -61,10 +61,14 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     | null
     | {
         section: "users" | "schedule";
-        kind: "csv_import" | "csv_export" | "semesters" | "clear_reservations";
+        kind: "csv" | "semesters" | "clear_reservations";
       }
   >(null);
-  const [importMode, setImportMode] = useState<"override" | "add">("add");
+  const [csvStep, setCsvStep] = useState<1 | 2 | 3 | 4>(2);
+  const [csvTable, setCsvTable] = useState<
+    "users" | "schedule_all" | "lessons" | "reservations" | "special" | "closed"
+  >("users");
+  const [importMode, setImportMode] = useState<"add" | "diff" | "override">("add");
   const [importText, setImportText] = useState("");
   const [importMessage, setImportMessage] = useState("");
   const [scheduleCsvTypes, setScheduleCsvTypes] = useState({
@@ -222,27 +226,79 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 
   const overlayOpen = activeTool !== null;
   const menuCollapsed = sideCollapsed && !isNarrow;
+  const prevToolRef = useRef<typeof activeTool>(null);
 
   useEffect(() => {
     if (!activeTool) return;
-    if (activeTool.kind === "csv_export") {
-      setExportScope("filtered");
-    }
+    if (activeTool.kind === "csv") setExportScope("filtered");
   }, [activeTool]);
+
+  useEffect(() => {
+    const prev = prevToolRef.current;
+    prevToolRef.current = activeTool;
+    if (!activeTool || activeTool.kind !== "csv") return;
+    const isNewOpen = !prev || prev.kind !== "csv" || prev.section !== activeTool.section;
+    if (!isNewOpen) return;
+
+    setImportText("");
+    setImportMessage("");
+    setImportMode("add");
+    setCsvStep(activeTool.section === "schedule" && scheduleFilter === "all" ? 1 : 2);
+    if (activeTool.section === "users") {
+      setCsvTable("users");
+    } else if (scheduleFilter === "all") {
+      setCsvTable("schedule_all");
+    } else {
+      const table =
+        scheduleFilter === "lessons"
+          ? "lessons"
+          : scheduleFilter === "regular"
+            ? "reservations"
+            : scheduleFilter === "special"
+              ? "special"
+              : "closed";
+      setCsvTable(table);
+    }
+  }, [activeTool, scheduleFilter]);
 
   useEffect(() => {
     if (!activeTool) return;
     if (activeTool.section !== "schedule") return;
-    if (activeTool.kind !== "csv_export" && activeTool.kind !== "csv_import") return;
-    // When the admin schedule view is filtered, default the CSV type selection to match it.
+    if (activeTool.kind !== "csv") return;
+    // When opening the CSV wizard from a filtered schedule view, preselect the table.
     if (scheduleFilter === "all") return;
+    const table =
+      scheduleFilter === "lessons"
+        ? "lessons"
+        : scheduleFilter === "regular"
+          ? "reservations"
+          : scheduleFilter === "special"
+            ? "special"
+            : "closed";
+    setCsvTable(table);
+    setCsvStep(2);
     setScheduleCsvTypes({
-      lessons: scheduleFilter === "lessons",
-      reservations: scheduleFilter === "regular",
-      special: scheduleFilter === "special",
-      closed: scheduleFilter === "closed"
+      lessons: table === "lessons",
+      reservations: table === "reservations",
+      special: table === "special",
+      closed: table === "closed"
     });
   }, [activeTool, scheduleFilter]);
+
+  useEffect(() => {
+    if (!activeTool) return;
+    if (activeTool.section !== "schedule") return;
+    if (activeTool.kind !== "csv") return;
+    if (scheduleFilter !== "all") return; // handled by the filtered-view effect above
+
+    const table = csvTable === "users" ? "schedule_all" : csvTable;
+    setScheduleCsvTypes({
+      lessons: table === "schedule_all" || table === "lessons",
+      reservations: table === "schedule_all" || table === "reservations",
+      special: table === "schedule_all" || table === "special",
+      closed: table === "schedule_all" || table === "closed"
+    });
+  }, [activeTool, csvTable, scheduleFilter]);
 
   useEffect(() => {
     setActiveTool(null);
@@ -253,6 +309,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     setScheduleFilter("all");
     setScheduleCsvTypes({ lessons: true, reservations: true, special: true, closed: true });
     setBulkState(null);
+    setCsvStep(2);
+    setCsvTable("users");
   }, [activeSection]);
 
   useEffect(() => {
@@ -405,7 +463,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   );
 
   const exportPayload = useMemo(() => {
-    if (!activeTool || activeTool.kind !== "csv_export") return null;
+    if (!activeTool || activeTool.kind !== "csv") return null;
     if (activeTool.section === "users") {
       const list = exportScope === "filtered" && exportUsersView ? exportUsersView : users;
       const rows = list.map((u) => ({
@@ -688,14 +746,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 
   const currentAcademicYear = getAcademicYearStartYear();
   const pendingUsers = users.filter((entry) => entry.role === "pending");
-  const handleApprove = async (user: DirectoryUser) => {
-    try {
-      await upsertUser({ ...user, role: "student" });
-      showToast("משתמש אושר.");
-    } catch {
-      showToast("אישור נכשל.", "error");
-    }
-  };
 
   useEffect(() => {
     const rangeA = semesterRanges.find((range) => range.key === "A");
@@ -954,7 +1004,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   );
 
   const importPreview = useMemo(() => {
-    if (!activeTool || activeTool.kind !== "csv_import") return null;
+    if (!activeTool || activeTool.kind !== "csv") return null;
     if (!importText.trim()) return null;
     if (activeTool.section === "users") return importUsersFromCsv(importText);
     const parsed = importScheduleFromCsv(importText);
@@ -968,30 +1018,224 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     return { lessons, reservations, errors: parsed.errors };
   }, [activeTool, importText, scheduleCsvTypes]);
 
+  type CsvImportPlan =
+    | {
+        section: "users";
+        mode: typeof importMode;
+        adds: number;
+        updates: number;
+        deletes: number;
+        toWrite: DirectoryUser[];
+      }
+    | {
+        section: "schedule";
+        mode: typeof importMode;
+        addsLessons: number;
+        updatesLessons: number;
+        deletesLessons: number;
+        addsReservations: number;
+        updatesReservations: number;
+        deletesReservations: number;
+        toWriteLessons: LessonRecord[];
+        toWriteReservations: Reservation[];
+      };
+
+  const canonicalUser = (u: DirectoryUser) => ({
+    email: u.email.toLowerCase(),
+    name: u.name || "",
+    role: u.role || "student",
+    phone: u.phone || "",
+    cohortStartYear: u.cohortStartYear ?? null
+  });
+
+  const canonicalLesson = (l: LessonRecord) => ({
+    id: l.id,
+    semester: l.semester,
+    day: l.day,
+    roomId: l.roomId,
+    startMinutes: l.startMinutes,
+    durationMinutes: l.durationMinutes,
+    title: l.title || "",
+    teacher: l.teacher || ""
+  });
+
+  const canonicalReservation = (r: Reservation) => ({
+    id: r.id,
+    date: r.date,
+    time: r.time,
+    durationMinutes: r.durationMinutes || 60,
+    roomId: r.roomId,
+    reservedBy: r.reservedBy || "",
+    reservedEmail: r.reservedEmail || "",
+    kind: r.kind || "regular"
+  });
+
+  const buildCsvImportPlan = (preview: NonNullable<typeof importPreview>): CsvImportPlan => {
+    if ("users" in preview) {
+      const existingByEmail = new Map(users.map((u) => [u.email.toLowerCase(), canonicalUser(u)]));
+      let adds = 0;
+      let updates = 0;
+      const toWrite: DirectoryUser[] = [];
+
+      preview.users.forEach((u) => {
+        const next = canonicalUser(u);
+        const existing = existingByEmail.get(next.email);
+        if (!existing) {
+          if (importMode === "add" || importMode === "diff" || importMode === "override") {
+            adds += 1;
+            toWrite.push(u);
+          }
+          return;
+        }
+        if (importMode === "add") return;
+        const changed =
+          existing.name !== next.name
+          || existing.role !== next.role
+          || existing.phone !== next.phone
+          || existing.cohortStartYear !== next.cohortStartYear;
+        if (!changed) return;
+        updates += 1;
+        toWrite.push(u);
+      });
+
+      if (importMode === "override") {
+        adds = preview.users.length;
+        updates = 0;
+        return {
+          section: "users",
+          mode: importMode,
+          adds,
+          updates,
+          deletes: users.length,
+          toWrite: preview.users
+        };
+      }
+
+      return { section: "users", mode: importMode, adds, updates, deletes: 0, toWrite };
+    }
+
+    const existingLessonsById = new Map(lessonsAll.map((l) => [l.id, canonicalLesson(l)]));
+    const existingReservations = reservationList.filter((r) => {
+      const kind = r.kind === "special" || r.kind === "closed" ? r.kind : "regular";
+      if (kind === "regular") return scheduleCsvTypes.reservations;
+      if (kind === "special") return scheduleCsvTypes.special;
+      return scheduleCsvTypes.closed;
+    });
+    const existingReservationsById = new Map(existingReservations.map((r) => [r.id, canonicalReservation(r)]));
+
+    let addsLessons = 0;
+    let updatesLessons = 0;
+    const toWriteLessons: LessonRecord[] = [];
+    preview.lessons.forEach((l) => {
+      const existing = existingLessonsById.get(l.id);
+      if (!existing) {
+        if (importMode === "add" || importMode === "diff") {
+          addsLessons += 1;
+          toWriteLessons.push(l);
+        }
+        return;
+      }
+      if (importMode === "add") return;
+      const next = canonicalLesson(l);
+      const changed =
+        existing.semester !== next.semester
+        || existing.day !== next.day
+        || existing.roomId !== next.roomId
+        || existing.startMinutes !== next.startMinutes
+        || existing.durationMinutes !== next.durationMinutes
+        || existing.title !== next.title
+        || existing.teacher !== next.teacher;
+      if (!changed) return;
+      updatesLessons += 1;
+      toWriteLessons.push(l);
+    });
+
+    let addsReservations = 0;
+    let updatesReservations = 0;
+    const toWriteReservations: Reservation[] = [];
+    preview.reservations.forEach((r) => {
+      const existing = existingReservationsById.get(r.id);
+      if (!existing) {
+        if (importMode === "add" || importMode === "diff") {
+          addsReservations += 1;
+          toWriteReservations.push(r);
+        }
+        return;
+      }
+      if (importMode === "add") return;
+      const next = canonicalReservation(r);
+      const changed =
+        existing.date !== next.date
+        || existing.time !== next.time
+        || existing.durationMinutes !== next.durationMinutes
+        || existing.roomId !== next.roomId
+        || existing.reservedBy !== next.reservedBy
+        || existing.reservedEmail !== next.reservedEmail
+        || existing.kind !== next.kind;
+      if (!changed) return;
+      updatesReservations += 1;
+      toWriteReservations.push(r);
+    });
+
+    if (importMode === "override") {
+      return {
+        section: "schedule",
+        mode: importMode,
+        addsLessons: preview.lessons.length,
+        updatesLessons: 0,
+        deletesLessons: scheduleCsvTypes.lessons ? lessonsAll.length : 0,
+        addsReservations: preview.reservations.length,
+        updatesReservations: 0,
+        deletesReservations: existingReservations.length,
+        toWriteLessons: preview.lessons,
+        toWriteReservations: preview.reservations
+      };
+    }
+
+    return {
+      section: "schedule",
+      mode: importMode,
+      addsLessons,
+      updatesLessons,
+      deletesLessons: 0,
+      addsReservations,
+      updatesReservations,
+      deletesReservations: 0,
+      toWriteLessons,
+      toWriteReservations
+    };
+  };
+
+  const importPlan = useMemo(() => {
+    if (!activeTool || activeTool.kind !== "csv") return null;
+    if (!importPreview) return null;
+    if (importPreview.errors.length) return null;
+    return buildCsvImportPlan(importPreview);
+  }, [activeTool, importMode, importPreview, lessonsAll, reservationList, scheduleCsvTypes, users]);
+
   const handleRunCsvImport = async () => {
     if (!db) {
       showToast("Firestore לא מוגדר.", "error");
       return;
     }
-    if (!activeTool || activeTool.kind !== "csv_import") return;
+    if (!activeTool || activeTool.kind !== "csv") return;
     if (!importText.trim()) {
       setImportMessage("בחר קובץ CSV כדי להמשיך.");
       return;
     }
+    if (!importPlan) {
+      setImportMessage("לא ניתן לבצע ייבוא: בדוק שיש קובץ תקין ושאין שגיאות.");
+      showToast("ייבוא נכשל: יש שגיאות בקובץ.", "error");
+      return;
+    }
 
     if (activeTool.section === "users") {
-      const parsed = importUsersFromCsv(importText);
-      if (parsed.errors.length) {
-        setImportMessage(`נמצאו שגיאות: ${parsed.errors.slice(0, 5).join(" | ")}`);
-        showToast("ייבוא נכשל: יש שגיאות בקובץ.", "error");
-        return;
-      }
-      const existingEmails = new Set(users.map((u) => u.email.toLowerCase()));
-      const toWrite = importMode === "add" ? parsed.users.filter((u) => !existingEmails.has(u.email)) : parsed.users;
+      if (importPlan.section !== "users") return;
+      const toWrite = importPlan.toWrite;
       try {
         if (importMode === "override") {
-          const snapshot = await getDocs(collection(db, "users"));
-          const refs = snapshot.docs.map((d) => d.ref);
+          // Avoid a full collection scan: we already have the list in state.
+          const refs = users.map((u) => doc(db, "users", u.email.toLowerCase()));
           for (let i = 0; i < refs.length; i += 450) {
             const batch = writeBatch(db);
             refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
@@ -1010,43 +1254,22 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           });
           await batch.commit();
         }
-        setImportMessage(`יובאו ${toWrite.length} משתמשים.`);
+        setImportMessage(`עודכנו/נוספו ${toWrite.length} משתמשים.`);
         showToast("ייבוא משתמשים הושלם.");
       } catch {
         showToast("ייבוא משתמשים נכשל.", "error");
       }
       return;
     }
-    const parsedRaw = importScheduleFromCsv(importText);
-    const parsed = {
-      lessons: scheduleCsvTypes.lessons ? parsedRaw.lessons : [],
-      reservations: parsedRaw.reservations.filter((r) => {
-        const kind = r.kind || "regular";
-        if (kind === "regular") return scheduleCsvTypes.reservations;
-        if (kind === "special") return scheduleCsvTypes.special;
-        return scheduleCsvTypes.closed;
-      }),
-      errors: parsedRaw.errors
-    };
-    if (parsed.errors.length) {
-      setImportMessage(`נמצאו שגיאות: ${parsed.errors.slice(0, 5).join(" | ")}`);
-      showToast("ייבוא נכשל: יש שגיאות בקובץ.", "error");
-      return;
-    }
-    const existingLessonIds = new Set(lessonsAll.map((l) => l.id));
-    const existingReservationIds = new Set(reservationList.map((r) => r.id));
-    const lessonsToWrite = importMode === "add"
-      ? parsed.lessons.filter((l) => !existingLessonIds.has(l.id))
-      : parsed.lessons;
-    const reservationsToWrite = importMode === "add"
-      ? parsed.reservations.filter((r) => !existingReservationIds.has(r.id))
-      : parsed.reservations;
+    if (importPlan.section !== "schedule") return;
+    const lessonsToWrite = importPlan.toWriteLessons;
+    const reservationsToWrite = importPlan.toWriteReservations;
 
     try {
       if (importMode === "override") {
         if (scheduleCsvTypes.lessons) {
-          const lessonsSnap = await getDocs(collection(db, "lessons"));
-          const lessonsRefs = lessonsSnap.docs.map((d) => d.ref);
+          // Avoid a full collection scan: we already have the list in state.
+          const lessonsRefs = lessonsAll.map((l) => doc(db, "lessons", l.id));
           for (let i = 0; i < lessonsRefs.length; i += 450) {
             const batch = writeBatch(db);
             lessonsRefs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
@@ -1055,17 +1278,15 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         }
 
         if (scheduleCsvTypes.reservations || scheduleCsvTypes.special || scheduleCsvTypes.closed) {
-          const reservationsSnap = await getDocs(collection(db, "reservations"));
-          const reservationsRefs = reservationsSnap.docs
-            .map((d) => {
-              const data = d.data() as { kind?: string };
-              const kind = data.kind === "special" || data.kind === "closed" ? data.kind : "regular";
-              if (kind === "regular" && !scheduleCsvTypes.reservations) return null;
-              if (kind === "special" && !scheduleCsvTypes.special) return null;
-              if (kind === "closed" && !scheduleCsvTypes.closed) return null;
-              return d.ref;
+          // Avoid a full collection scan: we already have the list in state.
+          const reservationsRefs = reservationList
+            .filter((r) => {
+              const kind = r.kind === "special" || r.kind === "closed" ? r.kind : "regular";
+              if (kind === "regular") return scheduleCsvTypes.reservations;
+              if (kind === "special") return scheduleCsvTypes.special;
+              return scheduleCsvTypes.closed;
             })
-            .filter((ref): ref is typeof reservationsSnap.docs[number]["ref"] => Boolean(ref));
+            .map((r) => doc(db, "reservations", r.id));
           for (let i = 0; i < reservationsRefs.length; i += 450) {
             const batch = writeBatch(db);
             reservationsRefs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
@@ -1089,7 +1310,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         await batch.commit();
       }
 
-      setImportMessage(`יובאו ${lessonsToWrite.length} שיעורים ו-${reservationsToWrite.length} שריונים/אירועים/סגירות.`);
+      setImportMessage(`עודכנו/נוספו ${lessonsToWrite.length} שיעורים ו-${reservationsToWrite.length} שריונים/אירועים/סגירות.`);
       showToast("ייבוא מערכת שעות הושלם.");
     } catch {
       showToast("ייבוא מערכת שעות נכשל.", "error");
@@ -1098,13 +1319,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 
   const overlayTitle = !activeTool
     ? ""
-    : activeTool.kind === "csv_export"
-      ? `ייצוא CSV - ${activeTool.section === "users" ? "משתמשים" : "מערכת שעות"}`
-      : activeTool.kind === "csv_import"
-        ? `ייבוא CSV - ${activeTool.section === "users" ? "משתמשים" : "מערכת שעות"}`
-        : activeTool.kind === "semesters"
-          ? "טווחי סמסטר"
-          : "ניקוי שריונים";
+    : activeTool.kind === "csv"
+      ? `ייבוא וייצוא · ${activeTool.section === "users" ? "משתמשים" : "מערכת שעות"}`
+      : activeTool.kind === "semesters"
+        ? "טווחי סמסטר"
+        : "ניקוי שריונים";
 
   const scheduleFilterLabel =
     scheduleFilter === "all"
@@ -1117,12 +1336,43 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             ? "אירועים"
             : "סגירות";
 
-  const distinctHelp =
-    !activeTool || activeTool.kind !== "csv_import"
-      ? ""
-      : activeTool.section === "users"
-        ? "email"
-        : "שיעורים: semester, day, roomId, startTime · שריונים: date, roomId, startTime";
+  const csvHasTableStep = Boolean(
+    activeTool && activeTool.kind === "csv" && activeTool.section === "schedule" && scheduleFilter === "all"
+  );
+
+  const csvStepTotal = csvHasTableStep ? 4 : 3;
+  const csvStepNumber = !activeTool || activeTool.kind !== "csv"
+    ? 1
+    : csvHasTableStep
+      ? csvStep
+      : Math.max(2, csvStep) - 1;
+
+  const csvTableLabel = !activeTool || activeTool.kind !== "csv"
+    ? ""
+    : activeTool.section === "users"
+      ? "משתמשים"
+      : scheduleFilter !== "all"
+        ? scheduleFilterLabel
+        : csvTable === "schedule_all"
+          ? "מערכת שעות (הכל)"
+          : csvTable === "lessons"
+            ? "שיעורים"
+            : csvTable === "reservations"
+              ? "שריונים"
+              : csvTable === "special"
+                ? "אירועים"
+                : "סגירות";
+
+  const csvDistinctHelp = useMemo(() => {
+    if (!activeTool || activeTool.kind !== "csv") return "";
+    if (activeTool.section === "users") return "email";
+    const parts: string[] = [];
+    if (scheduleCsvTypes.lessons) parts.push("שיעורים: semester + day + roomId + startTime");
+    if (scheduleCsvTypes.reservations || scheduleCsvTypes.special || scheduleCsvTypes.closed) {
+      parts.push("שריונים/אירועים/סגירות: date + roomId + startTime");
+    }
+    return parts.join(" · ");
+  }, [activeTool, scheduleCsvTypes]);
 
   const exportUsersCount = exportScope === "filtered" && exportUsersView ? exportUsersView.length : users.length;
   const exportLessonsBase = exportScope === "filtered" && exportLessonsView ? exportLessonsView : lessonsAll;
@@ -1137,241 +1387,268 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     return base;
   }, [exportReservationsBase]);
 
+  const exportScheduleCountLabel = useMemo(() => {
+    if (!activeTool || activeTool.kind !== "csv") return "";
+    if (activeTool.section !== "schedule") return "";
+    const parts: string[] = [];
+    if (scheduleCsvTypes.lessons) parts.push(`שיעורים: ${exportLessonsBase.length}`);
+    if (scheduleCsvTypes.reservations) parts.push(`שריונים: ${exportReservationCounts.regular}`);
+    if (scheduleCsvTypes.special) parts.push(`אירועים: ${exportReservationCounts.special}`);
+    if (scheduleCsvTypes.closed) parts.push(`סגירות: ${exportReservationCounts.closed}`);
+    return parts.join(" · ");
+  }, [activeTool, exportLessonsBase.length, exportReservationCounts, scheduleCsvTypes]);
+
   const scheduleSelectionEmpty = !scheduleCsvTypes.lessons
     && !scheduleCsvTypes.reservations
     && !scheduleCsvTypes.special
     && !scheduleCsvTypes.closed;
 
-  const overlayContent = !activeTool ? null : activeTool.kind === "csv_export" ? (
+  const overlayContent = !activeTool ? null : activeTool.kind === "csv" ? (
     <div className="admin-tool-content">
-      <p className="admin-meta">מומלץ: ייצוא → עריכה → ייבוא. אפשר לבחור ייצוא של “הכל” או “לפי המסנן הנוכחי”.</p>
-      <div className="admin-filters">
-        <button
-          type="button"
-          className={`chip small${exportScope === "filtered" ? " active" : ""}`}
-          onClick={() => setExportScope("filtered")}
-        >
-          לפי המסנן הנוכחי
-        </button>
-        <button
-          type="button"
-          className={`chip small${exportScope === "all" ? " active" : ""}`}
-          onClick={() => setExportScope("all")}
-        >
-          כל הנתונים
-        </button>
-        <span className="chip small ghost">
-          {activeTool.section === "users"
-            ? `${exportUsersCount} משתמשים`
-            : `שיעורים: ${exportLessonsBase.length} · שריונים: ${exportReservationCounts.regular} · אירועים: ${exportReservationCounts.special} · סגירות: ${exportReservationCounts.closed}`}
-        </span>
-        {activeTool.section === "schedule" ? (
-          <span className="chip small ghost">מסנן במסך: {scheduleFilterLabel}</span>
-        ) : null}
-      </div>
-      {activeTool.section === "users" ? usersCsvHelp : null}
-      {activeTool.section === "schedule" && (lessonsAllError || reservationsError) ? (
-        <p className="admin-error">{lessonsAllError || reservationsError}</p>
-      ) : null}
-      {activeTool.section === "schedule" ? (
-        <div className="admin-csv">
-          <p className="admin-meta">בחר מה לכלול בקובץ:</p>
-          <div className="admin-inline">
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.lessons}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, lessons: !prev.lessons }))}
-              />
-              שיעורים ({exportLessonsBase.length})
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.reservations}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, reservations: !prev.reservations }))}
-              />
-              שריונים ({exportReservationCounts.regular})
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.special}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, special: !prev.special }))}
-              />
-              אירועים ({exportReservationCounts.special})
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.closed}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, closed: !prev.closed }))}
-              />
-              סגירות ({exportReservationCounts.closed})
-            </label>
-          </div>
-          {scheduleCsvHelp}
-        </div>
-      ) : null}
-      {exportPayload ? (
-        <details>
-          <summary className="admin-meta" style={{ cursor: "pointer" }}>תצוגה מקדימה</summary>
-          <textarea
-            className="admin-csv-preview"
-            readOnly
-            value={
-              exportPayload.csv.length > 9000
-                ? `${exportPayload.csv.slice(0, 9000)}\n...\n`
-                : exportPayload.csv
-            }
-          />
-        </details>
-      ) : null}
-      <div className="admin-actions">
-        <button
-          className="secondary"
-          type="button"
-          onClick={() => exportPayload && void copyToClipboard(exportPayload.csv)}
-          disabled={!exportPayload || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
-        >
-          העתקה
-        </button>
-        <button
-          className="primary"
-          type="button"
-          onClick={() => {
-            if (!exportPayload) return;
-            downloadTextFile(exportPayload.filename, exportPayload.csv);
-          }}
-          disabled={!exportPayload || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
-        >
-          <DownloadIcon />
-          הורדה
-        </button>
-      </div>
-    </div>
-  ) : activeTool.kind === "csv_import" ? (
-    <div className="admin-tool-content">
-      <p className="admin-meta">
-        {activeTool.section === "schedule"
-          ? `מסנן במסך: ${scheduleFilterLabel} · ייבוא משפיע על כל הנתונים (לא רק המסנן).`
-          : "ייבוא משפיע על כל המשתמשים (לא רק המסנן)."}
-      </p>
-      {activeTool.section === "users" ? usersCsvHelp : null}
-      {activeTool.section === "schedule" ? (
-        <>
-          <p className="admin-meta">בחר מה לייבא מהקובץ:</p>
-          <div className="admin-inline">
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.lessons}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, lessons: !prev.lessons }))}
-              />
-              שיעורים
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.reservations}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, reservations: !prev.reservations }))}
-              />
-              שריונים
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.special}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, special: !prev.special }))}
-              />
-              אירועים
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={scheduleCsvTypes.closed}
-                onChange={() => setScheduleCsvTypes((prev) => ({ ...prev, closed: !prev.closed }))}
-              />
-              סגירות
-            </label>
-          </div>
-          {scheduleCsvHelp}
-        </>
-      ) : null}
-      <div className="admin-form-grid">
-        <label>
-          קובץ CSV
-          <input type="file" accept=".csv" onChange={handleImportFile} />
-        </label>
-      </div>
-      <label>
-        תוכן CSV (אפשר להדביק/לערוך)
-        <textarea
-          className="admin-csv-preview"
-          value={importText}
-          placeholder="הדבק כאן CSV או בחר קובץ…"
-          onChange={(event) => {
-            setImportText(event.target.value);
-            setImportMessage("");
-          }}
-        />
-      </label>
-      <div className="admin-import-modes">
-        <label>
-          <input type="radio" name="importMode" checked={importMode === "add"} onChange={() => setImportMode("add")} />
-          הוספת חדשים בלבד
-          <span className="admin-radio-help">- (בדיקה לפי השדות: {distinctHelp})</span>
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="importMode"
-            checked={importMode === "override"}
-            onChange={() => setImportMode("override")}
-          />
-          דריסה מלאה
-          <span className="admin-radio-help">- החלפת כל המידע בסוגים שנבחרו</span>
-        </label>
-      </div>
-      {importPreview ? (
+      <div className="admin-csv-wizard">
         <p className="admin-meta">
-          נמצאו{" "}
-          {"users" in importPreview
-            ? importPreview.users.length
-            : `${importPreview.lessons.length} שיעורים ו-${importPreview.reservations.length} שריונים/אירועים/סגירות`}
-          {importPreview.errors.length ? ` · שגיאות: ${importPreview.errors.length}` : ""}
+          שלב {csvStepNumber}/{csvStepTotal} · טבלה: {csvTableLabel}
+          {activeTool.section === "schedule" ? ` · מסנן במסך: ${scheduleFilterLabel}` : ""}
         </p>
-      ) : null}
-      {importPreview?.errors?.length ? (
-        <details>
-          <summary className="admin-error" style={{ cursor: "pointer" }}>הצג שגיאות</summary>
-          <div className="admin-csv-preview" style={{ whiteSpace: "pre-wrap" }}>
-            {importPreview.errors.slice(0, 30).join("\n")}
-          </div>
-        </details>
-      ) : null}
-      {importMessage ? <p className="admin-meta">{importMessage}</p> : null}
-      <div className="admin-actions">
-        <button
-          className="secondary"
-          type="button"
-          onClick={() => {
-            setImportText("");
-            setImportMessage("");
-          }}
-          disabled={!importText.trim()}
-        >
-          ניקוי
-        </button>
-        <button
-          className="primary"
-          type="button"
-          onClick={handleRunCsvImport}
-          disabled={!importText.trim() || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
-        >
-          <UploadIcon />
-          ייבוא
-        </button>
+
+        {csvHasTableStep && csvStep === 1 ? (
+          <>
+            <p className="admin-meta">בחר טבלה לעבודה:</p>
+            <div className="admin-inline" style={{ flexWrap: "wrap", gap: 10 }}>
+              {(
+                [
+                  { key: "schedule_all", label: "מערכת שעות (הכל)" },
+                  { key: "lessons", label: "שיעורים" },
+                  { key: "reservations", label: "שריונים" },
+                  { key: "special", label: "אירועים" },
+                  { key: "closed", label: "סגירות" }
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  className={`chip${csvTable === opt.key ? " active" : ""}`}
+                  onClick={() => {
+                    setCsvTable(opt.key);
+                    setCsvStep(2);
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
+
+        {csvStep === 2 ? (
+          <>
+            <p className="admin-meta">ייצוא (הורדה):</p>
+            <div className="admin-filters">
+              <button
+                type="button"
+                className={`chip small${exportScope === "filtered" ? " active" : ""}`}
+                onClick={() => setExportScope("filtered")}
+              >
+                לפי המסנן הנוכחי
+              </button>
+              <button
+                type="button"
+                className={`chip small${exportScope === "all" ? " active" : ""}`}
+                onClick={() => setExportScope("all")}
+              >
+                כל הנתונים
+              </button>
+                <span className="chip small ghost">
+                  {activeTool.section === "users"
+                    ? `${exportUsersCount} משתמשים`
+                  : exportScheduleCountLabel}
+                </span>
+              {csvHasTableStep ? (
+                <button type="button" className="chip small" onClick={() => setCsvStep(1)}>
+                  שינוי טבלה
+                </button>
+              ) : null}
+            </div>
+
+            {activeTool.section === "users" ? usersCsvHelp : null}
+            {activeTool.section === "schedule" && (lessonsAllError || reservationsError) ? (
+              <p className="admin-error">{lessonsAllError || reservationsError}</p>
+            ) : null}
+            {activeTool.section === "schedule" ? scheduleCsvHelp : null}
+
+            {exportPayload ? (
+              <details>
+                <summary className="admin-meta" style={{ cursor: "pointer" }}>תצוגה מקדימה</summary>
+                <textarea
+                  className="admin-csv-preview"
+                  readOnly
+                  value={
+                    exportPayload.csv.length > 9000
+                      ? `${exportPayload.csv.slice(0, 9000)}\n...\n`
+                      : exportPayload.csv
+                  }
+                />
+              </details>
+            ) : null}
+
+            <div className="admin-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => exportPayload && void copyToClipboard(exportPayload.csv)}
+                disabled={!exportPayload || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
+              >
+                העתקה
+              </button>
+              <button
+                className="primary"
+                type="button"
+                onClick={() => {
+                  if (!exportPayload) return;
+                  downloadTextFile(exportPayload.filename, exportPayload.csv);
+                }}
+                disabled={!exportPayload || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
+              >
+                <DownloadIcon />
+                הורדה
+              </button>
+              <span style={{ flex: 1 }} />
+              <button className="primary" type="button" onClick={() => setCsvStep(3)}>
+                המשך לייבוא
+              </button>
+            </div>
+          </>
+        ) : null}
+
+        {csvStep === 3 ? (
+          <>
+            <p className="admin-meta">ייבוא:</p>
+            <div className="admin-import-modes">
+              <label>
+                <input type="radio" name="importMode" checked={importMode === "add"} onChange={() => setImportMode("add")} />
+                הוספת חדשים בלבד
+                <span className="admin-radio-help">- לא משנה רשומות קיימות</span>
+              </label>
+              <label>
+                <input type="radio" name="importMode" checked={importMode === "diff"} onChange={() => setImportMode("diff")} />
+                הוספה + עדכון לפי diff
+                <span className="admin-radio-help">- מוסיף חדשים ומעדכן קיימים רק אם השתנו</span>
+              </label>
+              <label>
+                <input type="radio" name="importMode" checked={importMode === "override"} onChange={() => setImportMode("override")} />
+                דריסה מלאה (כולל מחיקות)
+                <span className="admin-radio-help">- מוחק את הטבלה הנבחרת ומייבא מחדש</span>
+              </label>
+            </div>
+            <p className="admin-meta">זיהוי רשומות לפי: {csvDistinctHelp}</p>
+
+            <div className="admin-form-grid">
+              <label>
+                קובץ CSV
+                <input type="file" accept=".csv" onChange={handleImportFile} />
+              </label>
+            </div>
+            <label>
+              תוכן CSV (אפשר להדביק/לערוך)
+              <textarea
+                className="admin-csv-preview"
+                value={importText}
+                placeholder="הדבק כאן CSV או בחר קובץ…"
+                onChange={(event) => {
+                  setImportText(event.target.value);
+                  setImportMessage("");
+                }}
+              />
+            </label>
+
+            {importPreview ? (
+              <p className="admin-meta">
+                נמצאו{" "}
+                {"users" in importPreview
+                  ? importPreview.users.length
+                  : `${importPreview.lessons.length} שיעורים ו-${importPreview.reservations.length} שריונים/אירועים/סגירות`}
+                {importPreview.errors.length ? ` · שגיאות: ${importPreview.errors.length}` : ""}
+              </p>
+            ) : null}
+            {importPreview?.errors?.length ? (
+              <details>
+                <summary className="admin-error" style={{ cursor: "pointer" }}>הצג שגיאות</summary>
+                <div className="admin-csv-preview" style={{ whiteSpace: "pre-wrap" }}>
+                  {importPreview.errors.slice(0, 30).join("\n")}
+                </div>
+              </details>
+            ) : null}
+
+            <div className="admin-actions">
+              <button className="secondary" type="button" onClick={() => setCsvStep(2)}>
+                חזרה
+              </button>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  setImportText("");
+                  setImportMessage("");
+                }}
+                disabled={!importText.trim()}
+              >
+                ניקוי
+              </button>
+              <span style={{ flex: 1 }} />
+              <button
+                className="primary"
+                type="button"
+                onClick={() => setCsvStep(4)}
+                disabled={!importText.trim() || !importPreview || Boolean(importPreview.errors.length) || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
+              >
+                המשך לאישור
+              </button>
+            </div>
+          </>
+        ) : null}
+
+        {csvStep === 4 ? (
+          <>
+            <p className="admin-meta">אישור פעולות:</p>
+            {importPlan ? (
+              <div className="admin-csv-confirm">
+                {importPlan.section === "users" ? (
+                  <p className="admin-meta">
+                    {importPlan.mode === "override"
+                      ? `מחיקה: ${importPlan.deletes} · ייבוא: ${importPlan.adds}`
+                      : `חדשים: ${importPlan.adds} · עדכונים: ${importPlan.updates}`}
+                  </p>
+                ) : (
+                  <p className="admin-meta">
+                    {importPlan.mode === "override"
+                      ? `מחיקת שיעורים: ${importPlan.deletesLessons} · מחיקת שריונים/אירועים/סגירות: ${importPlan.deletesReservations}`
+                      : `שיעורים: +${importPlan.addsLessons} / ~${importPlan.updatesLessons} · שריונים/אירועים/סגירות: +${importPlan.addsReservations} / ~${importPlan.updatesReservations}`}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="admin-error">אין תצוגת ייבוא תקינה (בדוק שאין שגיאות וחזור לשלב הקודם).</p>
+            )}
+
+            {importMessage ? <p className="admin-meta">{importMessage}</p> : null}
+
+            <div className="admin-actions">
+              <button className="secondary" type="button" onClick={() => setCsvStep(3)}>
+                חזרה
+              </button>
+              <span style={{ flex: 1 }} />
+              <button
+                className="primary"
+                type="button"
+                onClick={handleRunCsvImport}
+                disabled={!importPlan || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
+              >
+                <UploadIcon />
+                ביצוע ייבוא
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   ) : activeTool.kind === "semesters" ? (
@@ -1467,19 +1744,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 <>
                   <button
                     type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv_export" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "users", kind: "csv_export" })}
-                  >
-                    <DownloadIcon />
-                    ייצוא
-                  </button>
-                  <button
-                    type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv_import" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "users", kind: "csv_import" })}
+                    className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "users", kind: "csv" })}
                   >
                     <UploadIcon />
-                    ייבוא
+                    <DownloadIcon />
+                    ייבוא וייצוא
                   </button>
                 </>
               ) : null}
@@ -1487,19 +1757,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 <>
                   <button
                     type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "csv_export" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "schedule", kind: "csv_export" })}
-                  >
-                    <DownloadIcon />
-                    ייצוא CSV
-                  </button>
-                  <button
-                    type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "csv_import" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "schedule", kind: "csv_import" })}
+                    className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "csv" ? " active" : ""}`}
+                    onClick={() => toolToggle({ section: "schedule", kind: "csv" })}
                   >
                     <UploadIcon />
-                    ייבוא CSV
+                    <DownloadIcon />
+                    ייבוא וייצוא
                   </button>
                   <button
                     type="button"
@@ -1561,7 +1824,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             userDraft={userDraft}
             setUserDraft={setUserDraft}
             currentAcademicYear={currentAcademicYear}
-            onApprove={handleApprove}
             onUpsert={handleUpsertUser}
             onRemove={handleRemoveUser}
             onReset={() =>

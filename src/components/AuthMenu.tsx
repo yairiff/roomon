@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "../types/auth";
-import { BookmarkIcon, AdminIcon, ShortcutIcon } from "./Icons";
+import { BookmarkIcon, AdminIcon, ShortcutIcon, CalendarIcon } from "./Icons";
 
 export type AuthMenuProps = {
   user: User | null;
@@ -10,6 +10,7 @@ export type AuthMenuProps = {
   onLoginClick: () => void;
   reservationsCount?: number;
   onOpenReservations?: () => void;
+  onOpenMySchedule?: () => void;
   adminMode?: boolean;
   onToggleAdminMode?: () => void;
   installAvailable?: boolean;
@@ -25,6 +26,7 @@ export default function AuthMenu({
   onLoginClick,
   reservationsCount = 0,
   onOpenReservations,
+  onOpenMySchedule,
   adminMode = false,
   onToggleAdminMode,
   installAvailable = false,
@@ -158,6 +160,17 @@ export default function AuthMenu({
               {reservationsCount > 0 ? (
                 <span className="auth-reservations-count">{reservationsCount}</span>
               ) : null}
+            </button>
+            <button
+              className="secondary auth-reservations-button"
+              type="button"
+              onClick={() => {
+                onOpenMySchedule?.();
+                onClose();
+              }}
+            >
+              <CalendarIcon />
+              <span>המערכת שלי</span>
             </button>
             {!isStandalone ? (
               <>

@@ -161,6 +161,7 @@ export default function App() {
         onLoginClick={handleLoginClick}
         reservationsCount={reservationsCount}
         onOpenReservations={() => setRequestedView("reservations")}
+        onOpenMySchedule={() => setRequestedView("mySchedule")}
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}
         installAvailable={Boolean(installPrompt)}

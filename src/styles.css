@@ -978,6 +978,23 @@ body,
   line-height: 1.15;
 }
 
+.reserve-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.reserve-title-row .icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.reserve-title-row .icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+
 .reserve-room {
   margin: 2px 0 0;
   font-weight: 600;
@@ -2623,6 +2640,58 @@ select,
   border-color: var(--reserved-border);
   color: var(--reserved);
   background: var(--reserved-icon-bg);
+}
+
+.finder-result.lesson {
+  border-color: rgba(229, 57, 53, 0.35);
+  background: rgba(229, 57, 53, 0.06);
+}
+
+.finder-result.special {
+  border-color: rgba(123, 97, 255, 0.35);
+  background: rgba(123, 97, 255, 0.06);
+}
+
+.finder-result.closed {
+  border-color: rgba(158, 158, 158, 0.35);
+  background: rgba(158, 158, 158, 0.06);
+}
+
+.my-schedule-week {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.my-schedule-day {
+  display: grid;
+  gap: 8px;
+}
+
+.my-schedule-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.my-schedule-day-name {
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+
+.my-schedule-day-date {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.my-schedule-empty {
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding: 8px 10px;
 }
 
 .finder-result-title {

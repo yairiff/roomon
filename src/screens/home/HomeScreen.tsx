@@ -3,6 +3,7 @@ import ScheduleGrid from "./views/ScheduleGrid";
 import Legend from "./views/Legend";
 import LiveView from "./views/LiveView";
 import BookingFinder from "./views/BookingFinder";
+import MyScheduleView from "./views/MyScheduleView";
 import ReserveConfirmOverlay from "./overlays/ReserveConfirmOverlay";
 import ReservationDetailsOverlay from "./overlays/ReservationDetailsOverlay";
 import BlockDetailsOverlay from "./overlays/BlockDetailsOverlay";
@@ -21,6 +22,7 @@ import {
 } from "../../lib/date";
 import { formatMinutes } from "../../lib/scheduleBuilder";
 import { applyLessonOverrides } from "../../lib/lessonOverrides";
+import { loadMySchedulePins, saveMySchedulePins } from "../../lib/storage";
 import {
   CalendarIcon,
   ChevronLeftIcon,
@@ -37,6 +39,7 @@ import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
 import type { DayKey, Lesson } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
+import type { MySchedulePin } from "../../types/mySchedule";
 
 type AdminLessonDraft = {
   type: "lesson";
@@ -160,6 +163,7 @@ export default function HomeScreen({
     title: string;
     meta: string;
   } | null>(null);
+  const [myPins, setMyPins] = useState<MySchedulePin[]>([]);
   const [adminError, setAdminError] = useState("");
   const [adminDraft, setAdminDraft] = useState<AdminDraft | null>(null);
   const [toast, setToast] = useState<{ message: string; tone?: "info" | "error" } | null>(null);
@@ -197,6 +201,57 @@ export default function HomeScreen({
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "moderator";
   const hasNav = Boolean(currentUser);
 
+  const pinIdFor = useCallback(
+    (pin: Pick<MySchedulePin, "kind" | "dateKey" | "roomId" | "startMinutes" | "durationMinutes">) =>
+      `${pin.kind}:${pin.dateKey}:${pin.roomId}:${pin.startMinutes}:${pin.durationMinutes}`,
+    []
+  );
+
+  useEffect(() => {
+    const email = currentUser?.email;
+    if (!email) {
+      setMyPins([]);
+      return;
+    }
+    setMyPins(loadMySchedulePins(email));
+  }, [currentUser?.email]);
+
+  useEffect(() => {
+    const email = currentUser?.email;
+    if (!email) return;
+    saveMySchedulePins(email, myPins);
+  }, [currentUser?.email, myPins]);
+
+  const togglePin = useCallback((details: NonNullable<typeof blockDetails>) => {
+    const email = currentUser?.email;
+    if (!email) return;
+    setMyPins((prev) => {
+      const base = {
+        kind: details.kind,
+        dateKey: details.dateKey,
+        roomId: details.roomId,
+        startMinutes: details.startMinutes,
+        durationMinutes: details.durationMinutes
+      };
+      const id = pinIdFor(base);
+      const exists = prev.some((pin) => pin.id === id);
+      const next = exists
+        ? prev.filter((pin) => pin.id !== id)
+        : [
+            ...prev,
+            {
+              id,
+              ...base,
+              title: details.title,
+              meta: details.meta,
+              createdAt: Date.now()
+            }
+          ];
+      showToast(exists ? "הוסר מהמערכת שלי" : "נוסף למערכת שלי");
+      return next;
+    });
+  }, [currentUser?.email, pinIdFor, showToast]);
+
   const { rooms, weekDays, timeSlots, lessons, config, roomMeta } = useSchedule(scheduleDateKey);
   const { overridesByDate, addOverride } = useLessonOverrides();
   const { users } = useDirectoryUsers();
@@ -210,8 +265,11 @@ export default function HomeScreen({
     if (view === "room" && prevViewRef.current !== "room") {
       setRoomMode("day");
     }
+    if (view === "mySchedule") {
+      setSelectedDate(formatDateKey(new Date()));
+    }
     prevViewRef.current = view;
-    if (view !== "reservations") {
+    if (view !== "reservations" && view !== "mySchedule") {
       lastMainViewRef.current = view;
     }
   }, [view]);
@@ -1025,6 +1083,10 @@ export default function HomeScreen({
   };
 
   const handlePrev = useCallback(() => {
+    if (view === "mySchedule") {
+      setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), -7)));
+      return;
+    }
     if (view === "room") {
       const isAllRooms = allRooms;
       if (!isAllRooms && roomMode === "week") {
@@ -1039,6 +1101,10 @@ export default function HomeScreen({
   }, [allRooms, roomMode, selectedDate, view]);
 
   const handleNext = useCallback(() => {
+    if (view === "mySchedule") {
+      setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), 7)));
+      return;
+    }
     if (view === "room") {
       const isAllRooms = allRooms;
       if (!isAllRooms && roomMode === "week") {
@@ -1066,7 +1132,8 @@ export default function HomeScreen({
       live: "עכשיו",
       room: "לוח זמנים",
       finder: "איתור חדרים",
-      reservations: "השעות שלי"
+      reservations: "השעות שלי",
+      mySchedule: "המערכת שלי"
     };
 
     const dayLabel = weekDays.find((day) => day.key === selectedDayKey)?.label || "";
@@ -1219,6 +1286,23 @@ export default function HomeScreen({
           <CloseIcon />
         </button>
       );
+    } else if (view === "mySchedule") {
+      const weekStart = weekDates[0]?.dateKey;
+      const weekEnd = weekDates[weekDates.length - 1]?.dateKey;
+      context.navLabel = `שבוע ${getWeekNumber(selectedDate)}`;
+      context.onPrev = handlePrev;
+      context.onNext = handleNext;
+      context.subtitle = weekStart && weekEnd ? `${formatShortDate(weekStart)}–${formatShortDate(weekEnd)}` : "";
+      context.controls = (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="סגירה"
+          onClick={() => onViewChange(lastMainViewRef.current || "room")}
+        >
+          <CloseIcon />
+        </button>
+      );
     } else if (view === "live") {
       const today = parseDateKey(todayDateKey);
       const weekdayLabel = new Intl.DateTimeFormat("he-IL", { weekday: "long" }).format(today);
@@ -1268,6 +1352,7 @@ export default function HomeScreen({
     selectedDate,
     selectedDayKey,
     weekDays,
+    weekDates,
     roomsKey,
     handlePrev,
     handleNext,
@@ -1313,6 +1398,30 @@ export default function HomeScreen({
           getLessonsForDate={getLessonsForDate}
           onReserve={handleReserve}
           onOpenSchedule={(roomId, dateKey) => handleRoomSelect(roomId, dateKey)}
+        />
+      );
+    }
+
+    if (view === "mySchedule") {
+      return (
+        <MyScheduleView
+          weekDates={weekDates}
+          rooms={rooms}
+          reservationMap={reservationMap}
+          currentUser={currentUser}
+          pins={myPins}
+          onEditReservation={handleEditReservation}
+          onOpenPinned={(pin) =>
+            setBlockDetails({
+              kind: pin.kind,
+              dateKey: pin.dateKey,
+              roomId: pin.roomId,
+              startMinutes: pin.startMinutes,
+              durationMinutes: pin.durationMinutes,
+              title: pin.title,
+              meta: pin.meta
+            })
+          }
         />
       );
     }
@@ -1583,7 +1692,7 @@ export default function HomeScreen({
         name={detailsName}
         email={detailsEmail}
         phone={detailsPhone}
-        pictureUrl={user && detailsEmail && user.email.toLowerCase() === detailsEmail.toLowerCase() ? (user.picture || "") : undefined}
+        pictureUrl={currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase() ? (currentUser.picture || "") : undefined}
         onClose={() => setReservationDetails(null)}
       />
       <BlockDetailsOverlay
@@ -1621,6 +1730,24 @@ export default function HomeScreen({
                 { label: blockDetails?.kind === "special" ? "אירוע" : "סגירה", value: blockDetails?.title || "" }
               ]
         }
+        pinned={
+          Boolean(
+            blockDetails &&
+              currentUser?.email &&
+              myPins.some(
+                (pin) =>
+                  pin.id ===
+                  pinIdFor({
+                    kind: blockDetails.kind,
+                    dateKey: blockDetails.dateKey,
+                    roomId: blockDetails.roomId,
+                    startMinutes: blockDetails.startMinutes,
+                    durationMinutes: blockDetails.durationMinutes
+                  })
+              )
+          )
+        }
+        onTogglePin={blockDetails && currentUser?.email ? () => togglePin(blockDetails) : undefined}
         onClose={() => setBlockDetails(null)}
       />
       <ConfirmOverlay

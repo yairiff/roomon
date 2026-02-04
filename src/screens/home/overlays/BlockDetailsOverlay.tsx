@@ -1,3 +1,5 @@
+import { PinAddIcon, PinOnIcon } from "../../../components/Icons";
+
 export type BlockDetailsOverlayProps = {
   open: boolean;
   title: string;
@@ -5,6 +7,8 @@ export type BlockDetailsOverlayProps = {
   dateLine: string;
   timeLine: string;
   lines?: { label: string; value: string }[];
+  pinned?: boolean;
+  onTogglePin?: () => void;
   onClose: () => void;
 };
 
@@ -15,6 +19,8 @@ export default function BlockDetailsOverlay({
   dateLine,
   timeLine,
   lines = [],
+  pinned = false,
+  onTogglePin,
   onClose
 }: BlockDetailsOverlayProps) {
   if (!open) return null;
@@ -23,7 +29,20 @@ export default function BlockDetailsOverlay({
     <div className="reserve-overlay" onClick={onClose}>
       <div className="reserve-menu" onClick={(event) => event.stopPropagation()}>
         <div>
-          <p className="reserve-title">{title}</p>
+          <div className="reserve-title-row">
+            <p className="reserve-title">{title}</p>
+            {onTogglePin ? (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={pinned ? "הוסר מהמערכת שלי" : "הוסף למערכת שלי"}
+                aria-pressed={pinned}
+                onClick={onTogglePin}
+              >
+                {pinned ? <PinOnIcon /> : <PinAddIcon />}
+              </button>
+            ) : null}
+          </div>
           <p className="reserve-room">{room}</p>
         </div>
         <div className="reserve-details">
@@ -46,4 +65,3 @@ export default function BlockDetailsOverlay({
     </div>
   );
 }
-

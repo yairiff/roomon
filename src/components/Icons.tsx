@@ -24,6 +24,8 @@ import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
 import AddToHomeScreenRoundedIcon from "@mui/icons-material/AddToHomeScreenRounded";
+import BookmarkAddRoundedIcon from "@mui/icons-material/BookmarkAddRounded";
+import BookmarkAddedRoundedIcon from "@mui/icons-material/BookmarkAddedRounded";
 
 export function CalendarIcon() {
   return <CalendarMonthRoundedIcon fontSize="small" />;
@@ -129,4 +131,12 @@ export function DownloadIcon() {
 
 export function ShortcutIcon() {
   return <AddToHomeScreenRoundedIcon fontSize="small" />;
+}
+
+export function PinAddIcon() {
+  return <BookmarkAddRoundedIcon fontSize="small" />;
+}
+
+export function PinOnIcon() {
+  return <BookmarkAddedRoundedIcon fontSize="small" />;
 }

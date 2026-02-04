@@ -1,4 +1,4 @@
-export type ViewMode = "live" | "room" | "finder" | "reservations";
+export type ViewMode = "live" | "room" | "finder" | "reservations" | "mySchedule";
 
 import type { ReactNode } from "react";
 

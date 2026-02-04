@@ -6,7 +6,7 @@ import {
   gradeOptions,
   gradeValueFromCohort
 } from "../../../lib/academics";
-import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
+import { AddIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
 import ConfirmDialog from "../components/ConfirmDialog";
 import type { BulkState } from "../bulk";
 import PropsOverlay from "../components/PropsOverlay";
@@ -18,7 +18,6 @@ type UsersSectionProps = {
   userDraft: DirectoryUser;
   setUserDraft: Dispatch<SetStateAction<DirectoryUser>>;
   currentAcademicYear: number;
-  onApprove: (user: DirectoryUser) => void;
   onUpsert: (user: DirectoryUser) => void;
   onRemove: (email: string) => void;
   onReset: () => void;
@@ -40,7 +39,6 @@ export default function UsersSection({
   userDraft,
   setUserDraft,
   currentAcademicYear,
-  onApprove,
   onUpsert,
   onRemove,
   onReset,
@@ -311,13 +309,6 @@ export default function UsersSection({
             <h3>פרטי משתמש</h3>
             {userStatus ? <span className="admin-meta">{userStatus}</span> : null}
           </div>
-          {selectedUser?.role === "pending" ? (
-            <div className="admin-inline">
-              <button className="secondary" type="button" onClick={() => onApprove(selectedUser)}>
-                אישור משתמש
-              </button>
-            </div>
-          ) : null}
           <fieldset className="admin-fieldset">
             <div className="admin-form-grid">
               <label>
@@ -407,7 +398,6 @@ export default function UsersSection({
             ) : null}
             <div className="admin-actions">
               <button className="primary" type="button" onClick={() => onUpsert(userDraft)} disabled={!userDraft.email}>
-                <ApproveIcon />
                 {isNewEntry ? "הוספה" : "עדכון"}
               </button>
               <button

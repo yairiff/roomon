@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { rimonScheduleConfig } from "../../../config";
 import { weekDays } from "../../../config";
-import type { LessonRecord, RoomRecord } from "../../../types/admin";
+import type { LessonOverride, LessonRecord, RoomRecord } from "../../../types/admin";
 import type { SemesterKey } from "../../../types/ui";
 import type { Reservation } from "../../../types/reservations";
 import type { BulkState } from "../bulk";
-import { AddIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
+import { AddIcon, CloseIcon, DuplicateIcon, EditIcon, ReleaseIcon, TuneIcon } from "../../../components/Icons";
 import ConfirmDialog from "../components/ConfirmDialog";
 import PropsOverlay from "../components/PropsOverlay";
+import { useLessonOverrides } from "../../../hooks/useLessonOverrides";
 
 type ScheduleFilter = "all" | "lessons" | "regular" | "special" | "closed";
 
@@ -80,12 +81,17 @@ export default function ScheduleSection({
   const [dateEnd, setDateEnd] = useState<string>("");
   const [selectedKeys, setSelectedKeys] = useState<Set<ItemKey>>(() => new Set());
   const [confirmDeleteKeys, setConfirmDeleteKeys] = useState<ItemKey[] | null>(null);
+  const [lessonOverridesOpen, setLessonOverridesOpen] = useState(false);
+  const [overrideDraft, setOverrideDraft] = useState<LessonOverride | null>(null);
+  const [confirmRemoveOverride, setConfirmRemoveOverride] = useState<LessonOverride | null>(null);
 
   const [draft, setDraft] = useState<
     | { kind: "lesson"; value: LessonRecord }
     | { kind: "reservation"; value: Reservation }
     | null
   >(null);
+
+  const { overrides, upsertOverride, removeOverride } = useLessonOverrides();
 
   const roomLookup = useMemo(() => {
     const lookup: Record<string, string> = {};
@@ -413,6 +419,67 @@ export default function ScheduleSection({
     return `${kindLabel(draft.value)} · ${draft.value.date} · ${toTimeInput(draft.value.time)} · ${roomLookup[draft.value.roomId] || draft.value.roomId}`;
   }, [dayLabel, draft, roomLookup, toTimeInput]);
 
+  const lessonOverrides = useMemo(() => {
+    if (!draft || draft.kind !== "lesson") return [];
+    const lessonId = draft.value.id;
+    if (!lessonId) return [];
+    return overrides
+      .filter((override) => {
+        if (!override) return false;
+        if (override.targetLessonId && override.targetLessonId === lessonId) return true;
+        if (override.lesson?.id && override.lesson.id === lessonId) return true;
+        return false;
+      })
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [draft, overrides]);
+
+  useEffect(() => {
+    if (!draft || draft.kind !== "lesson") {
+      setLessonOverridesOpen(false);
+      setOverrideDraft(null);
+      setConfirmRemoveOverride(null);
+      return;
+    }
+    // Reset when switching lessons.
+    setLessonOverridesOpen(false);
+    setOverrideDraft(null);
+    setConfirmRemoveOverride(null);
+  }, [draft?.kind, draft && draft.kind === "lesson" ? draft.value.id : ""]);
+
+  const overrideActionLabel = (action: LessonOverride["action"]) => {
+    if (action === "add") return "הוספה";
+    if (action === "update") return "עדכון";
+    return "מחיקה";
+  };
+
+  const overrideSummary = (override: LessonOverride) => {
+    const action = overrideActionLabel(override.action);
+    if (override.action === "delete") {
+      return `${action} · יעד: ${override.targetLessonId || "-"}`;
+    }
+    const lesson = override.lesson;
+    if (!lesson) return `${action}`;
+    const day = dayLabel(lesson.day);
+    const room = roomLookup[lesson.roomId] || lesson.roomId;
+    const start = toTimeInput(lesson.startMinutes);
+    return `${action} · ${day} · ${room} · ${start} · ${lesson.durationMinutes} דק׳`;
+  };
+
+  const saveOverrideDraft = async () => {
+    if (!overrideDraft) return;
+    await upsertOverride(overrideDraft);
+    setOverrideDraft(null);
+  };
+
+  const removeOverrideConfirmed = async () => {
+    if (!confirmRemoveOverride) return;
+    await removeOverride(confirmRemoveOverride.id);
+    setConfirmRemoveOverride(null);
+    if (overrideDraft?.id === confirmRemoveOverride.id) {
+      setOverrideDraft(null);
+    }
+  };
+
   const updateDraft = () => {
     if (!draft) return;
     if (draft.kind === "lesson") {
@@ -453,13 +520,33 @@ export default function ScheduleSection({
         onConfirm={confirmDelete}
         onCancel={() => setConfirmDeleteKeys(null)}
       />
+      <ConfirmDialog
+        open={Boolean(confirmRemoveOverride)}
+        title="ביטול החרגה"
+        description="לבטל את ההחרגה הזו?"
+        confirmLabel="ביטול החרגה"
+        cancelLabel="חזרה"
+        tone="danger"
+        onConfirm={() => { void removeOverrideConfirmed(); }}
+        onCancel={() => setConfirmRemoveOverride(null)}
+      />
 
       <PropsOverlay open={Boolean(draft)} title={overlayTitle} meta={overlayMeta} onClose={closeDraft}>
         {draft ? (
           <>
             {draft.kind === "lesson" ? (
               <>
-                <div className="admin-inline">
+                <div className="admin-inline" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="admin-card-action"
+                    onClick={() => setLessonOverridesOpen(true)}
+                    disabled={!draft.value.id}
+                    title={!draft.value.id ? "שמור/י את השיעור כדי לנהל החרגות" : "הצג החרגות"}
+                  >
+                    <TuneIcon />
+                    הצג החרגות
+                  </button>
                   <label>
                     סמסטר
                     <select
@@ -677,6 +764,245 @@ export default function ScheduleSection({
           </>
         ) : null}
       </PropsOverlay>
+
+      {lessonOverridesOpen && draft?.kind === "lesson" ? (
+        <div
+          className="admin-tool-overlay admin-props-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            setLessonOverridesOpen(false);
+            setOverrideDraft(null);
+            setConfirmRemoveOverride(null);
+          }}
+        >
+          <div className="admin-tool-overlay-card" onClick={(event) => event.stopPropagation()}>
+            <button
+              className="admin-tool-overlay-close"
+              type="button"
+              aria-label="סגור"
+              onClick={() => {
+                setLessonOverridesOpen(false);
+                setOverrideDraft(null);
+                setConfirmRemoveOverride(null);
+              }}
+            >
+              <CloseIcon />
+            </button>
+            <div className="admin-tool-overlay-heading admin-props-overlay-heading">
+              <div className="admin-props-overlay-titles">
+                <h3>החרגות לשיעור</h3>
+                <div className="admin-meta">
+                  {draft.value.title || "שיעור"} · {draft.value.id}
+                </div>
+              </div>
+            </div>
+
+            {lessonOverrides.length ? (
+              <div className="admin-table">
+                {lessonOverrides.map((override) => (
+                  <div key={override.id} className="admin-row">
+                    <div className="admin-row-main">
+                      <p className="admin-row-title">{override.date}</p>
+                      <p className="admin-row-meta">{overrideSummary(override)}</p>
+                    </div>
+                    <div className="admin-row-actions">
+                      <div className="admin-row-buttons">
+                        <button
+                          type="button"
+                          className="admin-mini-action"
+                          aria-label="עריכה"
+                          onClick={() => setOverrideDraft(override)}
+                        >
+                          <EditIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-mini-action danger"
+                          aria-label="ביטול החרגה"
+                          onClick={() => setConfirmRemoveOverride(override)}
+                        >
+                          <ReleaseIcon />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="admin-meta">אין החרגות לשיעור הזה.</p>
+            )}
+
+            {overrideDraft ? (
+              <div className="admin-card" style={{ marginTop: 14 }}>
+                <div className="admin-card-header">
+                  <h3>עריכת החרגה</h3>
+                  <span className="admin-meta">{overrideDraft.id}</span>
+                </div>
+                <div className="admin-form-grid">
+                  <label>
+                    תאריך
+                    <input
+                      type="date"
+                      value={overrideDraft.date}
+                      onChange={(event) => setOverrideDraft({ ...overrideDraft, date: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    פעולה
+                    <select
+                      value={overrideDraft.action}
+                      onChange={(event) => {
+                        const action = event.target.value as LessonOverride["action"];
+                        setOverrideDraft((prev) => (prev ? { ...prev, action } : prev));
+                      }}
+                    >
+                      <option value="update">עדכון</option>
+                      <option value="delete">מחיקה</option>
+                      <option value="add">הוספה</option>
+                    </select>
+                  </label>
+                  <label>
+                    יעד (lesson id)
+                    <input type="text" value={overrideDraft.targetLessonId || ""} disabled />
+                  </label>
+                </div>
+                {overrideDraft.action === "delete" ? null : (
+                  <div className="admin-form-grid">
+                    <label>
+                      שם שיעור
+                      <input
+                        type="text"
+                        value={overrideDraft.lesson?.title || ""}
+                        onChange={(event) =>
+                          setOverrideDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lesson: { ...(prev.lesson || draft.value), title: event.target.value }
+                                }
+                              : prev
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      מרצה
+                      <input
+                        type="text"
+                        value={overrideDraft.lesson?.teacher || ""}
+                        onChange={(event) =>
+                          setOverrideDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lesson: { ...(prev.lesson || draft.value), teacher: event.target.value }
+                                }
+                              : prev
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      יום
+                      <select
+                        value={overrideDraft.lesson?.day || draft.value.day}
+                        onChange={(event) =>
+                          setOverrideDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lesson: { ...(prev.lesson || draft.value), day: event.target.value as LessonRecord["day"] }
+                                }
+                              : prev
+                          )
+                        }
+                      >
+                        {weekDays.map((day) => (
+                          <option key={day.key} value={day.key}>
+                            {day.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      חדר
+                      <select
+                        value={overrideDraft.lesson?.roomId || draft.value.roomId}
+                        onChange={(event) =>
+                          setOverrideDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lesson: { ...(prev.lesson || draft.value), roomId: event.target.value }
+                                }
+                              : prev
+                          )
+                        }
+                      >
+                        {roomsRaw.map((room) => (
+                          <option key={room.id} value={room.id}>
+                            {room.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      התחלה
+                      <input
+                        type="time"
+                        value={toTimeInput(overrideDraft.lesson?.startMinutes ?? draft.value.startMinutes)}
+                        onChange={(event) =>
+                          setOverrideDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lesson: { ...(prev.lesson || draft.value), startMinutes: parseTimeInput(event.target.value) }
+                                }
+                              : prev
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      משך (דקות)
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={overrideDraft.lesson?.durationMinutes ?? draft.value.durationMinutes}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          if (!Number.isFinite(next)) return;
+                          setOverrideDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  lesson: { ...(prev.lesson || draft.value), durationMinutes: Math.max(1, Math.floor(next)) }
+                                }
+                              : prev
+                          );
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+                <div className="admin-actions">
+                  <button className="primary" type="button" onClick={() => { void saveOverrideDraft(); }}>
+                    שמירה
+                  </button>
+                  <button className="secondary" type="button" onClick={() => setOverrideDraft(null)}>
+                    ביטול
+                  </button>
+                  <button className="danger" type="button" onClick={() => setConfirmRemoveOverride(overrideDraft)}>
+                    ביטול החרגה
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="admin-section-toolbar">
         <div className="admin-filters-stack">
@@ -896,4 +1222,3 @@ export default function ScheduleSection({
     </section>
   );
 }
-
