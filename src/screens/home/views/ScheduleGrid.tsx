@@ -24,6 +24,7 @@ export type ScheduleGridProps = {
   currentUser: User | null;
   onReserve: (request: ReserveRequest) => void;
   onRelease: (dateKey: string, reservationId: string) => void;
+  interactive?: boolean;
   onEditReservation?: (dateKey: string, reservationId: string) => void;
   onLessonDetails?: (lessonId: string, dateKey: string) => void;
   onSpecialDetails?: (reservationId: string, dateKey: string) => void;
@@ -133,6 +134,7 @@ export default function ScheduleGrid({
   currentUser,
   onReserve,
   onRelease,
+  interactive = true,
   onEditReservation,
   onLessonDetails,
   onSpecialDetails,
@@ -277,83 +279,82 @@ export default function ScheduleGrid({
     return (
       <div className="schedule-column" style={{ height: columnHeight }}>
         {showNowLine ? <div className="now-line" style={{ top: nowTop }} aria-hidden="true" /> : null}
-        {Array.from({ length: totalHours }, (_, index) => baseStartMinutes + index * 60).flatMap((hourStart) => {
-          const hourEnd = hourStart + 60;
-          const hourBusy = isSlotBusy(hourStart, hourEnd);
-          const hourTop = ((hourStart - baseStartMinutes) / 60) * rowHeight;
-          const hourHeight = rowHeight;
+        {interactive
+          ? Array.from({ length: totalHours }, (_, index) => baseStartMinutes + index * 60).flatMap((hourStart) => {
+              const hourEnd = hourStart + 60;
+              const hourBusy = isSlotBusy(hourStart, hourEnd);
+              const hourTop = ((hourStart - baseStartMinutes) / 60) * rowHeight;
+              const hourHeight = rowHeight;
 
-          const makeHit = (slotStart: number, slotEnd: number, showPlus: boolean) => {
-            const top = ((slotStart - baseStartMinutes) / 60) * rowHeight;
-            const height = ((slotEnd - slotStart) / 60) * rowHeight;
-            const busy = isSlotBusy(slotStart, slotEnd);
-            return (
-              <button
-                key={`${roomId}-${dateKey}-${slotStart}-${slotEnd}`}
-                className="slot-hit"
-                style={{ top, height }}
-                type="button"
-                aria-label="שמירה"
-              onClick={(event) => {
-                  // Prevent the room-column click handler from firing; in "all rooms" we switch
-                  // to the room view only when we actually open an overlay.
-                  event.stopPropagation();
-                  if (adminMode) {
-                    if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
-                    onAdminSlotClick?.({ date: dateKey, day: dayKey, time: slotStart, roomId });
-                    return;
-                  }
-                  if (!currentUser?.allowed) {
-                    onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId });
-                    return;
-                  }
-                  if (busy) return;
-                  // Default action is a 1 hour reservation; user can adjust duration in the confirmation overlay.
-                  onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId, durationMinutes: 60 });
-                }}
-                disabled={busy}
-              >
-                <span className="slot-label">{showPlus && !busy ? <AddIcon /> : null}</span>
-              </button>
-            );
-          };
+              const makeHit = (slotStart: number, slotEnd: number, showPlus: boolean) => {
+                const top = ((slotStart - baseStartMinutes) / 60) * rowHeight;
+                const height = ((slotEnd - slotStart) / 60) * rowHeight;
+                const busy = isSlotBusy(slotStart, slotEnd);
+                return (
+                  <button
+                    key={`${roomId}-${dateKey}-${slotStart}-${slotEnd}`}
+                    className="slot-hit"
+                    style={{ top, height }}
+                    type="button"
+                    aria-label="שמירה"
+                    onClick={(event) => {
+                      // Prevent the room-column click handler from firing; in "all rooms" we switch
+                      // to the room view only when we actually open an overlay.
+                      event.stopPropagation();
+                      if (adminMode) {
+                        if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
+                        onAdminSlotClick?.({ date: dateKey, day: dayKey, time: slotStart, roomId });
+                        return;
+                      }
+                      if (!currentUser?.allowed) {
+                        onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId });
+                        return;
+                      }
+                      if (busy) return;
+                      // Default action is a 1 hour reservation; user can adjust duration in the confirmation overlay.
+                      onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId, durationMinutes: 60 });
+                    }}
+                    disabled={busy}
+                  >
+                    <span className="slot-label">{showPlus && !busy ? <AddIcon /> : null}</span>
+                  </button>
+                );
+              };
 
-          // Prefer a full 1 hour hit area when the entire hour is free.
-          if (!hourBusy) {
-            return [
-              <button
-                key={`${roomId}-${dateKey}-${hourStart}-hour`}
-                className="slot-hit"
-                style={{ top: hourTop, height: hourHeight }}
-                type="button"
-                aria-label="שמירה"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (adminMode) {
-                    if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
-                    onAdminSlotClick?.({ date: dateKey, day: dayKey, time: hourStart, roomId });
-                    return;
-                  }
-                  if (!currentUser?.allowed) {
-                    onReserve({ date: dateKey, day: dayKey, time: hourStart, roomId });
-                    return;
-                  }
-                  onReserve({ date: dateKey, day: dayKey, time: hourStart, roomId, durationMinutes: 60 });
-                }}
-              >
-                <span className="slot-label">
-                  <AddIcon />
-                </span>
-              </button>
-            ];
-          }
+              // Prefer a full 1 hour hit area when the entire hour is free.
+              if (!hourBusy) {
+                return [
+                  <button
+                    key={`${roomId}-${dateKey}-${hourStart}-hour`}
+                    className="slot-hit"
+                    style={{ top: hourTop, height: hourHeight }}
+                    type="button"
+                    aria-label="שמירה"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (adminMode) {
+                        if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
+                        onAdminSlotClick?.({ date: dateKey, day: dayKey, time: hourStart, roomId });
+                        return;
+                      }
+                      if (!currentUser?.allowed) {
+                        onReserve({ date: dateKey, day: dayKey, time: hourStart, roomId });
+                        return;
+                      }
+                      onReserve({ date: dateKey, day: dayKey, time: hourStart, roomId, durationMinutes: 60 });
+                    }}
+                  >
+                    <span className="slot-label">
+                      <AddIcon />
+                    </span>
+                  </button>
+                ];
+              }
 
-          // Otherwise, allow half-hour clicks only where there isn't a full-hour window.
-          return [
-            makeHit(hourStart, hourStart + 30, false),
-            makeHit(hourStart + 30, hourEnd, false)
-          ];
-        })}
+              // Otherwise, allow half-hour clicks only where there isn't a full-hour window.
+              return [makeHit(hourStart, hourStart + 30, false), makeHit(hourStart + 30, hourEnd, false)];
+            })
+          : null}
         {positionedBlocks.map((block) => {
           const rawStart = block.startMinutes;
           const rawEnd = block.startMinutes + block.durationMinutes;
@@ -372,7 +373,11 @@ export default function ScheduleGrid({
 
           const showDetails = !compact;
           const showCompactDetails = compact;
-          const hasMeta = Boolean(block.meta);
+          const metaLines = (block.meta || "").split("\n").map((part) => part.trim()).filter(Boolean);
+          const primaryMeta = metaLines[0] || "";
+          const roomLine = metaLines.length > 1 ? metaLines[metaLines.length - 1] : "";
+          const hasRoomLine = Boolean(roomLine) && roomLine !== primaryMeta;
+          const hasMeta = Boolean(primaryMeta);
           // If there's not enough vertical space for a dedicated meta line, render it inline to avoid clipping.
           // (Font sizes are fixed, so a fixed px threshold is more stable than a duration heuristic.)
           const canShowSecondLine = height >= 48;
@@ -435,11 +440,12 @@ export default function ScheduleGrid({
                     <span className={`block-dot ${block.type}`} />
                     <p className="cell-title">
                       {block.title}
-                      {showInlineMeta ? <span className="cell-meta-inline"> · {block.meta}</span> : null}
+                      {showInlineMeta ? <span className="cell-meta-inline"> · {primaryMeta}</span> : null}
                     </p>
                   </div>
-                  {!showInlineMeta ? <p className="cell-meta">{block.meta}</p> : null}
-                  {block.type === "reserved" && currentUser?.allowed && block.reservedEmail === currentUser.email ? (
+                  {!showInlineMeta && hasMeta ? <p className="cell-meta">{primaryMeta}</p> : null}
+                  {hasRoomLine ? <p className="cell-room">{roomLine}</p> : null}
+                  {interactive && block.type === "reserved" && currentUser?.allowed && block.reservedEmail === currentUser.email ? (
                     <button
                       className="cell-action icon-button corner"
                       onClick={(event) => {

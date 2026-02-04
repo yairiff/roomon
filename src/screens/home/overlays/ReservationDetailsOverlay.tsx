@@ -1,5 +1,6 @@
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import { PinAddIcon, PinOnIcon } from "../../../components/Icons";
 
 export type ReservationDetailsOverlayProps = {
   open: boolean;
@@ -11,6 +12,8 @@ export type ReservationDetailsOverlayProps = {
   email: string;
   phone: string;
   pictureUrl?: string;
+  pinned?: boolean;
+  onTogglePin?: () => void;
   onClose: () => void;
 };
 
@@ -24,6 +27,8 @@ export default function ReservationDetailsOverlay({
   email,
   phone,
   pictureUrl,
+  pinned = false,
+  onTogglePin,
   onClose
 }: ReservationDetailsOverlayProps) {
   if (!open) return null;
@@ -51,20 +56,30 @@ export default function ReservationDetailsOverlay({
   return (
     <div className="reserve-overlay" onClick={onClose}>
       <div className="reserve-menu" onClick={(event) => event.stopPropagation()}>
+        {onTogglePin ? (
+          <button
+            type="button"
+            className="reserve-pin"
+            aria-label={pinned ? "הוסר מהמערכת שלי" : "הוסף למערכת שלי"}
+            aria-pressed={pinned}
+            onClick={onTogglePin}
+          >
+            {pinned ? <PinOnIcon /> : <PinAddIcon />}
+          </button>
+        ) : null}
         <div className="reserve-header">
           <div className="reserve-avatar" aria-hidden="true">
             {pictureUrl ? <img src={pictureUrl} alt="" /> : <span>{initials}</span>}
           </div>
           <div className="reserve-header-text">
-            <p className="reserve-title">{title}</p>
+            {name ? <p className="reserve-title">{name}</p> : <p className="reserve-title">{title}</p>}
             <p className="reserve-room">{room}</p>
           </div>
         </div>
         <div className="reserve-details">
           <p className="reserve-date">{dateLine}</p>
           <p className="reserve-time">{timeLine}</p>
-          {name ? <p className="reserve-detail">{name}</p> : null}
-          <p className="reserve-detail">טלפון: {phone || "לא זמין"}</p>
+          {!name ? <p className="reserve-detail">{title}</p> : null}
         </div>
         <div className="reserve-actions">
           {telHref ? (
@@ -75,7 +90,7 @@ export default function ReservationDetailsOverlay({
           ) : (
             <button className="primary" type="button" disabled>
               <PhoneInTalkRoundedIcon fontSize="small" />
-              אין טלפון
+              טלפון
             </button>
           )}
           {waHref ? (

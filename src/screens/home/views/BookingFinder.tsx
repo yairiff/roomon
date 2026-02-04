@@ -134,7 +134,7 @@ export default function BookingFinder({
           const alignedStart = Math.ceil(gapStart / 60) * 60;
           const alignedEnd = Math.floor(gapEnd / 60) * 60;
           if (alignedEnd - alignedStart >= minGap && alignedEnd > alignedStart) {
-            items.push({ date: dateKey, dayKey, room, start: alignedStart, end: alignedEnd });
+            items.push({ date: dateKey, day: dayKey, room, start: alignedStart, end: alignedEnd });
           }
           cursor = Math.max(cursor, interval.end);
           if (cursor >= roomClose) return;
@@ -146,7 +146,7 @@ export default function BookingFinder({
           const alignedStart = Math.ceil(gapStart / 60) * 60;
           const alignedEnd = Math.floor(gapEnd / 60) * 60;
           if (alignedEnd - alignedStart >= minGap && alignedEnd > alignedStart) {
-            items.push({ date: dateKey, dayKey, room, start: alignedStart, end: alignedEnd });
+            items.push({ date: dateKey, day: dayKey, room, start: alignedStart, end: alignedEnd });
           }
         }
       });
@@ -325,7 +325,7 @@ export default function BookingFinder({
                     event.stopPropagation();
                     onReserve({
                       date: item.date,
-                      day: item.dayKey,
+                      day: item.day,
                       time: item.start,
                       roomId: item.room.id,
                       durationMinutes: duration ? durationFilterMinutes : undefined

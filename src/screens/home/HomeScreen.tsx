@@ -11,7 +11,7 @@ import ConfirmOverlay from "./overlays/ConfirmOverlay";
 import { useSchedule } from "../../hooks/useSchedule";
 import { useLessonOverrides } from "../../hooks/useLessonOverrides";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import {
   addDays,
@@ -69,6 +69,18 @@ type AdminReservationDraft = {
   reservationId?: string;
 };
 
+type AdminChooseDraft = {
+  type: "choose";
+  mode: "create";
+  dateKey: string;
+  dayKey: DayKey;
+  roomId: string;
+  startMinutes: number;
+  durationMinutes: number;
+  reservedBy: string;
+  reservedEmail: string;
+};
+
 type AdminSpecialDraft = {
   type: "special";
   mode: "create" | "edit";
@@ -93,7 +105,7 @@ type AdminClosedDraft = {
   reservationId?: string;
 };
 
-type AdminDraft = AdminLessonDraft | AdminReservationDraft | AdminSpecialDraft | AdminClosedDraft;
+type AdminDraft = AdminChooseDraft | AdminLessonDraft | AdminReservationDraft | AdminSpecialDraft | AdminClosedDraft;
 
 type PendingConfirm = {
   mode: "create" | "edit";
@@ -112,9 +124,9 @@ export type HomeScreenProps = {
   onContextChange?: (context: TopBarContext) => void;
   onReservationWindowChange?: (window: { startDate: string; endDate: string }) => void;
   reservationMap: ReservationMap;
-  addReservation: (reservation: Reservation) => void;
-  upsertReservation: (reservation: Reservation) => void;
-  releaseReservation: (dateKey: string, reservationId: string) => void;
+  addReservation: (reservation: Reservation) => Promise<boolean>;
+  upsertReservation: (reservation: Reservation) => Promise<boolean>;
+  releaseReservation: (dateKey: string, reservationId: string) => Promise<boolean>;
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
   requestedView?: ViewMode | null;
@@ -154,6 +166,8 @@ export default function HomeScreen({
   const [selectedRoom, setSelectedRoom] = useState<string>("");
   const [allRooms, setAllRooms] = useState(true);
   const [roomMode, setRoomMode] = useState<"day" | "week">("day");
+  const [myScheduleMode, setMyScheduleMode] = useState<"day" | "week" | "agenda">("week");
+  const [myScheduleAgendaDays, setMyScheduleAgendaDays] = useState(14);
   const [now, setNow] = useState(() => new Date());
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [pendingRelease, setPendingRelease] = useState<{ dateKey: string; reservationId: string } | null>(null);
@@ -161,6 +175,7 @@ export default function HomeScreen({
   const [blockDetails, setBlockDetails] = useState<{
     kind: "lesson" | "special" | "closed";
     dateKey: string;
+    lessonId?: string;
     roomId: string;
     startMinutes: number;
     durationMinutes: number;
@@ -180,6 +195,10 @@ export default function HomeScreen({
   const lastValidReservationUser = useRef<{ label: string; email: string; name: string } | null>(null);
   const contactCacheRef = useRef<Map<string, { name: string; phone: string }>>(new Map());
   const [detailsContact, setDetailsContact] = useState<{ name: string; phone: string } | null>(null);
+  const pinsSyncReadyRef = useRef(false);
+  const pinsSuppressWriteRef = useRef(false);
+  const pinsWriteTimerRef = useRef<number | null>(null);
+  const pinsDirtyRef = useRef(false);
   const lastWindowKeyRef = useRef<string>("");
   const [finderWindow, setFinderWindow] = useState<{ startDate: string; endDate: string }>(() => {
     const today = new Date();
@@ -215,8 +234,10 @@ export default function HomeScreen({
   const hasNav = Boolean(currentUser);
 
   const pinIdFor = useCallback(
-    (pin: Pick<MySchedulePin, "kind" | "dateKey" | "roomId" | "startMinutes" | "durationMinutes">) =>
-      `${pin.kind}:${pin.dateKey}:${pin.roomId}:${pin.startMinutes}:${pin.durationMinutes}`,
+    (pin: Pick<MySchedulePin, "kind" | "dateKey" | "roomId" | "startMinutes" | "durationMinutes" | "lessonId">) => {
+      if (pin.kind === "lesson" && pin.lessonId) return `lesson:${pin.lessonId}`;
+      return `${pin.kind}:${pin.dateKey}:${pin.roomId}:${pin.startMinutes}:${pin.durationMinutes}`;
+    },
     []
   );
 
@@ -226,37 +247,118 @@ export default function HomeScreen({
       setMyPins([]);
       return;
     }
-    setMyPins(loadMySchedulePins(email));
+    const normalized = email.trim().toLowerCase();
+    const localPins = loadMySchedulePins(normalized);
+    setMyPins(localPins);
+    pinsSyncReadyRef.current = false;
+    pinsSuppressWriteRef.current = true;
+    pinsDirtyRef.current = false;
+    if (pinsWriteTimerRef.current) {
+      window.clearTimeout(pinsWriteTimerRef.current);
+      pinsWriteTimerRef.current = null;
+    }
+
+    let cancelled = false;
+    const loadRemote = async () => {
+      if (!db) {
+        pinsSyncReadyRef.current = true;
+        pinsSuppressWriteRef.current = false;
+        return;
+      }
+      let loadedRemotePins = false;
+      try {
+        const snap = await getDoc(doc(db, "users", normalized));
+        if (!snap.exists()) {
+          pinsSyncReadyRef.current = true;
+          pinsSuppressWriteRef.current = false;
+          return;
+        }
+        const raw = snap.data() as Record<string, unknown>;
+        const hasRemotePins = Object.prototype.hasOwnProperty.call(raw, "myPins") && Array.isArray(raw.myPins);
+        if (hasRemotePins) {
+          loadedRemotePins = true;
+          const remotePins = (raw.myPins as unknown[]).filter(Boolean) as MySchedulePin[];
+          if (cancelled) return;
+          if (pinsDirtyRef.current) {
+            // User changed pins before the fetch resolved; keep local state and sync it back.
+            pinsSuppressWriteRef.current = false;
+            return;
+          }
+          pinsSuppressWriteRef.current = true;
+          setMyPins(remotePins);
+          saveMySchedulePins(normalized, remotePins);
+          return;
+        }
+
+        // Migration path: if this user already has local pins, persist them to Firestore once.
+        if (localPins.length) {
+          await setDoc(
+            doc(db, "users", normalized),
+            { myPins: localPins, myPinsUpdatedAt: serverTimestamp() },
+            { merge: true }
+          );
+        }
+      } catch {
+        // Keep local pins if the fetch fails.
+      } finally {
+        pinsSyncReadyRef.current = true;
+        if (!loadedRemotePins) pinsSuppressWriteRef.current = false;
+      }
+    };
+
+    void loadRemote();
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser?.email]);
 
   useEffect(() => {
-    const email = currentUser?.email;
+    const email = currentUser?.email?.trim().toLowerCase();
     if (!email) return;
     saveMySchedulePins(email, myPins);
+    const firestore = db;
+    if (!firestore) return;
+    if (!pinsSyncReadyRef.current) return;
+    if (pinsSuppressWriteRef.current) {
+      pinsSuppressWriteRef.current = false;
+      return;
+    }
+    if (pinsWriteTimerRef.current) window.clearTimeout(pinsWriteTimerRef.current);
+    pinsWriteTimerRef.current = window.setTimeout(() => {
+      void setDoc(
+        doc(firestore, "users", email),
+        { myPins, myPinsUpdatedAt: serverTimestamp() },
+        { merge: true }
+      );
+    }, 500);
   }, [currentUser?.email, myPins]);
 
-  const togglePin = useCallback((details: NonNullable<typeof blockDetails>) => {
+  const togglePin = useCallback((pin: Omit<MySchedulePin, "id" | "createdAt">) => {
     const email = currentUser?.email;
     if (!email) return;
+    pinsDirtyRef.current = true;
     setMyPins((prev) => {
       const base = {
-        kind: details.kind,
-        dateKey: details.dateKey,
-        roomId: details.roomId,
-        startMinutes: details.startMinutes,
-        durationMinutes: details.durationMinutes
+        kind: pin.kind,
+        dateKey: pin.dateKey,
+        lessonId: pin.lessonId,
+        roomId: pin.roomId,
+        startMinutes: pin.startMinutes,
+        durationMinutes: pin.durationMinutes
       };
       const id = pinIdFor(base);
-      const exists = prev.some((pin) => pin.id === id);
+      const exists = prev.some((entry) => entry.id === id);
       const next = exists
-        ? prev.filter((pin) => pin.id !== id)
+        ? prev.filter((entry) => entry.id !== id)
         : [
             ...prev,
             {
               id,
               ...base,
-              title: details.title,
-              meta: details.meta,
+              title: pin.title,
+              meta: pin.meta,
+              reservedEmail: pin.reservedEmail,
+              lessonId: pin.lessonId,
               createdAt: Date.now()
             }
           ];
@@ -264,6 +366,15 @@ export default function HomeScreen({
       return next;
     });
   }, [currentUser?.email, pinIdFor, showToast]);
+
+  const isPinned = useCallback(
+    (pin: Pick<MySchedulePin, "kind" | "dateKey" | "roomId" | "startMinutes" | "durationMinutes" | "lessonId">) =>
+      Boolean(
+        currentUser?.email &&
+          myPins.some((entry) => entry.id === pinIdFor(pin))
+      ),
+    [currentUser?.email, myPins, pinIdFor]
+  );
 
   const { rooms, weekDays, timeSlots, lessons, config, roomMeta } = useSchedule(scheduleDateKey);
   const { overridesByDate, addOverride } = useLessonOverrides();
@@ -278,11 +389,13 @@ export default function HomeScreen({
     if (view === "room" && prevViewRef.current !== "room") {
       setRoomMode("day");
     }
-    if (view === "mySchedule") {
+    if (view === "mySchedule" && prevViewRef.current !== "mySchedule") {
       setSelectedDate(formatDateKey(new Date()));
+      setMyScheduleMode("week");
+      setMyScheduleAgendaDays(14);
     }
     prevViewRef.current = view;
-    if (view !== "reservations" && view !== "mySchedule") {
+    if (view !== "mySchedule") {
       lastMainViewRef.current = view;
     }
   }, [view]);
@@ -337,6 +450,56 @@ export default function HomeScreen({
     },
     [lessons, overridesByDate]
   );
+
+  // Best-effort migration: older "lesson" pins were date-specific; upgrade them to recurring pins
+  // by matching them to a lesson id for that date (when possible).
+  useEffect(() => {
+    if (!myPins.length) return;
+    let changed = false;
+    const seen = new Set<string>();
+    const nextPins: MySchedulePin[] = [];
+
+    myPins.forEach((pin) => {
+      if (pin.kind !== "lesson" || pin.lessonId) {
+        const id = pin.id || pinIdFor(pin);
+        if (!seen.has(id)) {
+          seen.add(id);
+          nextPins.push({ ...pin, id });
+        }
+        return;
+      }
+      const dayKey = getDayKeyFromDateKey(pin.dateKey);
+      const match = getLessonsForDate(pin.dateKey, dayKey).find((lesson) => {
+        if (lesson.roomId !== pin.roomId) return false;
+        if (lesson.startMinutes !== pin.startMinutes) return false;
+        if (lesson.durationMinutes !== pin.durationMinutes) return false;
+        if ((lesson.title || "").trim() && (pin.title || "").trim()) {
+          return lesson.title.trim() === pin.title.trim();
+        }
+        return true;
+      });
+
+      if (!match) {
+        const id = pin.id || pinIdFor(pin);
+        if (!seen.has(id)) {
+          seen.add(id);
+          nextPins.push({ ...pin, id });
+        }
+        return;
+      }
+
+      const upgraded: MySchedulePin = { ...pin, lessonId: match.id };
+      const id = pinIdFor(upgraded);
+      if (!seen.has(id)) {
+        seen.add(id);
+        nextPins.push({ ...upgraded, id });
+      }
+      if (id !== pin.id) changed = true;
+    });
+
+    if (!changed) return;
+    setMyPins(nextPins);
+  }, [getLessonsForDate, myPins, pinIdFor]);
 
   const toTimeInput = (minutes: number) => formatMinutes(minutes);
   const parseTimeInput = (value: string) => {
@@ -404,20 +567,34 @@ export default function HomeScreen({
 
   useEffect(() => {
     if (!onReservationWindowChange) return;
+    const agendaEnd = formatDateKey(addDays(parseDateKey(todayDateKey), Math.max(0, myScheduleAgendaDays - 1)));
     const desired =
       view === "live"
         ? { startDate: todayDateKey, endDate: todayDateKey }
         : view === "finder"
           ? finderWindow
-          : view === "reservations"
-            ? { startDate: todayDateKey, endDate: formatDateKey(addDays(parseDateKey(todayDateKey), 21)) }
-            : weekRange;
+          : view === "mySchedule"
+            ? (myScheduleMode === "agenda"
+              ? { startDate: todayDateKey, endDate: agendaEnd }
+              : myScheduleMode === "day"
+                ? { startDate: selectedDate, endDate: selectedDate }
+                : weekRange)
+          : weekRange;
 
     const key = `${desired.startDate}|${desired.endDate}`;
     if (key === lastWindowKeyRef.current) return;
     lastWindowKeyRef.current = key;
     onReservationWindowChange(desired);
-  }, [finderWindow, onReservationWindowChange, todayDateKey, view, weekRange]);
+  }, [
+    finderWindow,
+    myScheduleAgendaDays,
+    myScheduleMode,
+    onReservationWindowChange,
+    selectedDate,
+    todayDateKey,
+    view,
+    weekRange
+  ]);
 
   useEffect(() => {
     if (!rooms.length) return;
@@ -438,7 +615,7 @@ export default function HomeScreen({
   }, [allRooms, roomMode]);
 
 
-  const buildIntervals = (dayKey: string, dateKey: string, roomId: string) => {
+  const buildIntervals = (dayKey: DayKey, dateKey: string, roomId: string) => {
     const lessonIntervals = getLessonsForDate(dateKey, dayKey)
       .filter((lesson) => lesson.roomId === roomId)
       .map((lesson) => ({
@@ -783,15 +960,15 @@ export default function HomeScreen({
     if (!isAdmin || !effectiveAdminMode) return;
     setAdminError("");
     setAdminDraft({
-      type: "reservation",
+      type: "choose",
       mode: "create",
       dateKey: request.date,
       dayKey: request.day,
       roomId: request.roomId,
       startMinutes: request.time,
       durationMinutes: 60,
-      reservedBy: currentUser?.name || "",
-      reservedEmail: currentUser?.email || ""
+      reservedBy: "",
+      reservedEmail: ""
     });
   };
 
@@ -876,6 +1053,7 @@ export default function HomeScreen({
     setBlockDetails({
       kind: "lesson",
       dateKey,
+      lessonId: lesson.id,
       roomId: lesson.roomId,
       startMinutes: lesson.startMinutes,
       durationMinutes: lesson.durationMinutes,
@@ -947,6 +1125,10 @@ export default function HomeScreen({
     if (!adminDraft) return;
     if (!effectiveAdminMode) {
       setAdminError("אין הרשאת ניהול.");
+      return;
+    }
+    if (adminDraft.type === "choose") {
+      setAdminError("יש לבחור סוג רשומה (שיעור/שריון/אירוע/סגור).");
       return;
     }
     setAdminError("");
@@ -1033,8 +1215,9 @@ export default function HomeScreen({
 
   const handleAdminDeleteReservation = () => {
     if (!adminDraft || !effectiveAdminMode || (adminDraft.type !== "reservation" && adminDraft.type !== "special" && adminDraft.type !== "closed") || !adminDraft.reservationId) return;
+    const { dateKey, reservationId } = adminDraft;
     void (async () => {
-      const ok = await releaseReservation(adminDraft.dateKey, adminDraft.reservationId);
+      const ok = await releaseReservation(dateKey, reservationId);
       if (!ok) {
         setAdminError("מחיקה נכשלה (בדוק הגדרות Firestore).");
         return;
@@ -1069,7 +1252,7 @@ export default function HomeScreen({
         roomId: adminDraft.roomId,
         startMinutes: adminDraft.startMinutes,
         durationMinutes: adminDraft.durationMinutes,
-        label: "אירוע מיוחד"
+        label: ""
       });
       return;
     }
@@ -1082,7 +1265,7 @@ export default function HomeScreen({
         roomId: adminDraft.roomId,
         startMinutes: adminDraft.startMinutes,
         durationMinutes: adminDraft.durationMinutes,
-        label: "סגור זמנית"
+        label: ""
       });
       return;
     }
@@ -1094,8 +1277,8 @@ export default function HomeScreen({
       roomId: adminDraft.roomId,
       startMinutes: adminDraft.startMinutes,
       durationMinutes: adminDraft.durationMinutes,
-      reservedBy: currentUser?.name || "",
-      reservedEmail: currentUser?.email || ""
+      reservedBy: "",
+      reservedEmail: ""
     });
   };
 
@@ -1119,7 +1302,12 @@ export default function HomeScreen({
 
   const handlePrev = useCallback(() => {
     if (view === "mySchedule") {
-      setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), -7)));
+      if (myScheduleMode === "agenda") return;
+      if (myScheduleMode === "week") {
+        setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), -7)));
+        return;
+      }
+      setSelectedDate(shiftSchoolDay(selectedDate, -1));
       return;
     }
     if (view === "room") {
@@ -1133,11 +1321,16 @@ export default function HomeScreen({
       return;
     }
     setSelectedDate(shiftSchoolDay(selectedDate, -1));
-  }, [allRooms, roomMode, selectedDate, view]);
+  }, [allRooms, myScheduleMode, roomMode, selectedDate, view]);
 
   const handleNext = useCallback(() => {
     if (view === "mySchedule") {
-      setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), 7)));
+      if (myScheduleMode === "agenda") return;
+      if (myScheduleMode === "week") {
+        setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), 7)));
+        return;
+      }
+      setSelectedDate(shiftSchoolDay(selectedDate, 1));
       return;
     }
     if (view === "room") {
@@ -1151,14 +1344,23 @@ export default function HomeScreen({
       return;
     }
     setSelectedDate(shiftSchoolDay(selectedDate, 1));
-  }, [allRooms, roomMode, selectedDate, view]);
+  }, [allRooms, myScheduleMode, roomMode, selectedDate, view]);
 
   useEffect(() => {
     if (!onContextChange) return;
     const liveClockKey = view === "live"
       ? now.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })
       : "";
-    const contextKey = [view, roomMode, allRooms ? "all" : "single", selectedDate, selectedRoom, roomsKey, liveClockKey].join("::");
+    const contextKey = [
+      view,
+      roomMode,
+      myScheduleMode,
+      allRooms ? "all" : "single",
+      selectedDate,
+      selectedRoom,
+      roomsKey,
+      liveClockKey
+    ].join("::");
     if (lastContextKeyRef.current === contextKey) {
       return;
     }
@@ -1167,7 +1369,6 @@ export default function HomeScreen({
       live: "עכשיו",
       room: "לוח זמנים",
       finder: "איתור חדרים",
-      reservations: "השעות שלי",
       mySchedule: "המערכת שלי"
     };
 
@@ -1309,34 +1510,91 @@ export default function HomeScreen({
       );
     } else if (view === "finder") {
       context.subtitle = "איתור חדרים פנויים לפי ההעדפות שלי";
-    } else if (view === "reservations") {
-      context.subtitle = "כל החדרים ששריינתי";
-      context.controls = (
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="סגירה"
-          onClick={() => onViewChange(lastMainViewRef.current || "room")}
-        >
-          <CloseIcon />
-        </button>
-      );
     } else if (view === "mySchedule") {
       const weekStart = weekDates[0]?.dateKey;
       const weekEnd = weekDates[weekDates.length - 1]?.dateKey;
-      context.navLabel = `שבוע ${getWeekNumber(selectedDate)}`;
-      context.onPrev = handlePrev;
-      context.onNext = handleNext;
-      context.subtitle = weekStart && weekEnd ? `${formatShortDate(weekStart)}–${formatShortDate(weekEnd)}` : "";
-      context.controls = (
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="סגירה"
-          onClick={() => onViewChange(lastMainViewRef.current || "room")}
-        >
-          <CloseIcon />
-        </button>
+      const label =
+        myScheduleMode === "agenda"
+          ? "מהיום"
+          : myScheduleMode === "week"
+            ? `שבוע ${getWeekNumber(selectedDate)}`
+            : navText;
+      const hint = myScheduleMode === "week" && weekStart && weekEnd ? `${formatShortDate(weekStart)}–${formatShortDate(weekEnd)}` : "";
+
+      context.subtitle = (
+        <div className="top-bar-schedule">
+          <div className="top-bar-schedule-row one-col">
+            <div className="top-bar-field schedule-date">
+              <div className="top-bar-field-hints">
+                <span className="top-bar-field-hint">תאריך</span>
+                <div className="top-bar-mode-group" role="tablist" aria-label="תצוגת מערכת">
+                  <button
+                    type="button"
+                    className="top-bar-mode-mini"
+                    aria-pressed={myScheduleMode === "day"}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setMyScheduleMode("day")}
+                  >
+                    יומי
+                  </button>
+                  <button
+                    type="button"
+                    className="top-bar-mode-mini"
+                    aria-pressed={myScheduleMode === "week"}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setMyScheduleMode("week")}
+                  >
+                    שבועי
+                  </button>
+                  <button
+                    type="button"
+                    className="top-bar-mode-mini"
+                    aria-pressed={myScheduleMode === "agenda"}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setMyScheduleMode("agenda")}
+                  >
+                    אג׳נדה
+                  </button>
+                </div>
+              </div>
+              <div className="top-bar-date-pill schedule">
+                <button
+                  type="button"
+                  className="icon-button inline"
+                  onClick={handlePrev}
+                  aria-label="הקודם"
+                  disabled={myScheduleMode === "agenda"}
+                >
+                  <ChevronRightIcon />
+                </button>
+                <button
+                  type="button"
+                  className="top-bar-date-button"
+                  onClick={myScheduleMode === "agenda" ? undefined : openDatePicker}
+                >
+                  {label}
+                  {hint ? <span className="sr-only"> {hint}</span> : null}
+                </button>
+                <button
+                  type="button"
+                  className="icon-button inline"
+                  onClick={handleNext}
+                  aria-label="הבא"
+                  disabled={myScheduleMode === "agenda"}
+                >
+                  <ChevronLeftIcon />
+                </button>
+              </div>
+              <input
+                ref={dateInputRef}
+                className="top-bar-date-input"
+                type="date"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+              />
+            </div>
+          </div>
+        </div>
       );
     } else if (view === "live") {
       const today = parseDateKey(todayDateKey);
@@ -1384,6 +1642,7 @@ export default function HomeScreen({
     allRooms,
     view,
     roomMode,
+    myScheduleMode,
     selectedDate,
     selectedDayKey,
     weekDays,
@@ -1441,90 +1700,52 @@ export default function HomeScreen({
     if (view === "mySchedule") {
       return (
         <MyScheduleView
+          mode={myScheduleMode}
+          onModeChange={setMyScheduleMode}
+          selectedDate={selectedDate}
+          onSelectedDateChange={setSelectedDate}
+          agendaDays={myScheduleAgendaDays}
+          onAgendaLoadMore={() => setMyScheduleAgendaDays((prev) => prev + 14)}
+          todayDateKey={todayDateKey}
           weekDates={weekDates}
+          timeSlots={timeSlots}
+          startHour={config.startHour}
+          endHour={config.endHour}
           rooms={rooms}
           reservationMap={reservationMap}
           currentUser={currentUser}
           pins={myPins}
           onEditReservation={handleEditReservation}
-          onOpenPinned={(pin) =>
+          getScheduleLessonsForDate={getLessonsForDate}
+          onOpenPinned={(pin) => {
+            if (pin.kind === "reservation") {
+              const reservedBy = pin.title === "שמור" ? (pin.meta || "שמור") : (pin.title || pin.meta || "שמור");
+              setReservationDetails({
+                dateKey: pin.dateKey,
+                reservation: {
+                  id: pin.id,
+                  date: pin.dateKey,
+                  time: pin.startMinutes,
+                  durationMinutes: pin.durationMinutes,
+                  roomId: pin.roomId,
+                  reservedBy,
+                  reservedEmail: pin.reservedEmail || "",
+                }
+              });
+              return;
+            }
             setBlockDetails({
               kind: pin.kind,
               dateKey: pin.dateKey,
+              lessonId: pin.kind === "lesson" ? pin.lessonId : undefined,
               roomId: pin.roomId,
               startMinutes: pin.startMinutes,
               durationMinutes: pin.durationMinutes,
               title: pin.title,
               meta: pin.meta
-            })
-          }
+            });
+          }}
         />
-      );
-    }
-
-    if (view === "reservations") {
-      const reservations = Object.entries(reservationMap)
-        .flatMap(([dateKey, entries]) =>
-          entries
-            .filter((entry) => entry.reservedEmail === currentUser?.email)
-            .map((entry) => ({ ...entry, dateKey }))
-        )
-        .sort((a, b) => {
-          if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
-          return a.time - b.time;
-        });
-
-      return (
-        <section className="finder reservations">
-          {reservations.length ? (
-            <ul className="finder-result-list">
-              {reservations.map((entry) => {
-                const endMinutes = entry.time + entry.durationMinutes;
-                const roomName = rooms.find((room) => room.id === entry.roomId)?.name || entry.roomId;
-                const dayLabel =
-                  weekDays.find((day) => day.key === getDayKeyFromDateKey(entry.dateKey))?.label || "";
-                return (
-                  <li
-                    key={entry.id}
-                    className="finder-result reserved clickable"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleEditReservation(entry.dateKey, entry.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        handleEditReservation(entry.dateKey, entry.id);
-                      }
-                    }}
-                  >
-                    <div>
-                      <p className="finder-result-title">
-                        <span className="dot reserved" /> {roomName}
-                      </p>
-                      <p className="finder-result-meta">
-                        יום {dayLabel} · {formatShortDate(entry.dateKey)} ·{" "}
-                        {formatMinutes(entry.time)}–{formatMinutes(endMinutes)}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label="Release"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleRelease(entry.dateKey, entry.id);
-                      }}
-                    >
-                      <ReleaseIcon />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p>אין לך שריונים פעילים.</p>
-          )}
-        </section>
       );
     }
 
@@ -1631,10 +1852,22 @@ export default function HomeScreen({
           setDetailsContact(null);
           return;
         }
-        const data = snap.data() as { name?: unknown; phone?: unknown };
+        const data = snap.data() as Record<string, unknown>;
+        const phone =
+          typeof data.phone === "string"
+            ? data.phone
+            : typeof data.phoneNumber === "string"
+              ? data.phoneNumber
+              : typeof data.phone_number === "string"
+                ? data.phone_number
+                : typeof data.mobile === "string"
+                  ? data.mobile
+                  : typeof data.tel === "string"
+                    ? data.tel
+                    : "";
         const contact = {
           name: typeof data.name === "string" ? data.name : "",
-          phone: typeof data.phone === "string" ? data.phone : ""
+          phone
         };
         contactCacheRef.current.set(email, contact);
         setDetailsContact(contact);
@@ -1666,6 +1899,15 @@ export default function HomeScreen({
   const detailsName = detailsReservation?.reservedBy || detailsContact?.name || "";
   const detailsEmail = detailsReservation?.reservedEmail || "";
   const detailsPhone = detailsContact?.phone || "";
+  const reservationPinned = detailsReservation
+    ? isPinned({
+        kind: "reservation",
+        dateKey: detailsReservation.date,
+        roomId: detailsReservation.roomId,
+        startMinutes: detailsReservation.time,
+        durationMinutes: detailsDuration
+      })
+    : false;
 
   const adminDateLabel = adminDraft
     ? `יום ${weekDays.find((day) => day.key === adminDraft.dayKey)?.label || ""} ${formatShortDate(adminDraft.dateKey)}`
@@ -1677,39 +1919,14 @@ export default function HomeScreen({
         ? "אירוע"
         : adminDraft.type === "closed"
           ? "סגור"
-          : "שריון")
+          : adminDraft.type === "reservation"
+            ? "שריון"
+            : "בחר סוג")
     : "";
   const adminTimeLabel = adminDraft
     ? `בין ${formatMinutes(adminDraft.startMinutes)}-` +
       `${formatMinutes(adminDraft.startMinutes + adminDraft.durationMinutes)}`
     : "";
-  const adminEndMinutes = adminDraft ? adminDraft.startMinutes + adminDraft.durationMinutes : 0;
-
-  const buildEndOptions = (draft: AdminDraft) => {
-    const policy = roomMeta?.[draft.roomId];
-    const maxEnd = policy?.closeMinutes ?? config.endHour * 60;
-    const minEnd = draft.startMinutes + 30;
-    const options: { value: number; label: string }[] = [];
-    for (let duration = 30; draft.startMinutes + duration <= maxEnd; ) {
-      const end = draft.startMinutes + duration;
-      if (end >= minEnd) {
-        options.push({
-          value: end,
-          label: `${formatMinutes(end)} (${formatDurationLabel(duration)})`
-        });
-      }
-      duration += duration < 120 ? 15 : 30;
-    }
-    const currentEnd = draft.startMinutes + draft.durationMinutes;
-    if (currentEnd > draft.startMinutes && currentEnd <= maxEnd && !options.find((opt) => opt.value === currentEnd)) {
-      options.push({
-        value: currentEnd,
-        label: `${formatMinutes(currentEnd)} (${formatDurationLabel(currentEnd - draft.startMinutes)})`
-      });
-    }
-    options.sort((a, b) => a.value - b.value);
-    return options;
-  };
 
   return (
     <div className={`booking-shell${scheduleView ? " schedule-view" : ""}`}>
@@ -1766,6 +1983,21 @@ export default function HomeScreen({
         email={detailsEmail}
         phone={detailsPhone}
         pictureUrl={currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase() ? (currentUser.picture || "") : undefined}
+        pinned={reservationPinned}
+        onTogglePin={
+          detailsReservation && currentUser?.email
+            ? () => togglePin({
+                kind: "reservation",
+                dateKey: reservationDetails?.dateKey || detailsReservation.date,
+                roomId: detailsReservation.roomId,
+                startMinutes: detailsReservation.time,
+                durationMinutes: detailsDuration,
+                title: "שמור",
+                meta: detailsName,
+                reservedEmail: detailsEmail
+              })
+            : undefined
+        }
         onClose={() => setReservationDetails(null)}
       />
       <BlockDetailsOverlay
@@ -1806,21 +2038,30 @@ export default function HomeScreen({
         pinned={
           Boolean(
             blockDetails &&
-              currentUser?.email &&
-              myPins.some(
-                (pin) =>
-                  pin.id ===
-                  pinIdFor({
-                    kind: blockDetails.kind,
-                    dateKey: blockDetails.dateKey,
-                    roomId: blockDetails.roomId,
-                    startMinutes: blockDetails.startMinutes,
-                    durationMinutes: blockDetails.durationMinutes
-                  })
-              )
+              isPinned({
+                kind: blockDetails.kind,
+                dateKey: blockDetails.dateKey,
+                lessonId: blockDetails.kind === "lesson" ? blockDetails.lessonId : undefined,
+                roomId: blockDetails.roomId,
+                startMinutes: blockDetails.startMinutes,
+                durationMinutes: blockDetails.durationMinutes
+              })
           )
         }
-        onTogglePin={blockDetails && currentUser?.email ? () => togglePin(blockDetails) : undefined}
+        onTogglePin={
+          blockDetails && currentUser?.email
+            ? () => togglePin({
+                kind: blockDetails.kind,
+                dateKey: blockDetails.dateKey,
+                lessonId: blockDetails.kind === "lesson" ? blockDetails.lessonId : undefined,
+                roomId: blockDetails.roomId,
+                startMinutes: blockDetails.startMinutes,
+                durationMinutes: blockDetails.durationMinutes,
+                title: blockDetails.title,
+                meta: blockDetails.meta
+              })
+            : undefined
+        }
         onClose={() => setBlockDetails(null)}
       />
       <ConfirmOverlay
@@ -1846,14 +2087,41 @@ export default function HomeScreen({
       />
       {adminDraft ? (
         <div className="admin-overlay" onClick={() => setAdminDraft(null)}>
-          <div className="admin-modal" onClick={(event) => event.stopPropagation()}>
+          <div
+            className={`admin-modal type-${adminDraft.type}${adminDraft.mode === "edit" ? " edit" : ""}`}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="admin-modal-header">
               <div>
                 <p className="admin-title">
                   {adminTypeLabel} ·{" "}
                   {adminDraft.mode === "create" ? "חדש" : "עריכה"}
                 </p>
-                <p className="admin-subtitle">{adminDateLabel} · {adminTimeLabel}</p>
+                <div className="admin-subtitle">
+                  <div className="admin-subtitle-row">
+                    <span>{`יום ${weekDays.find((day) => day.key === adminDraft.dayKey)?.label || ""}`}</span>
+                    <input
+                      className="admin-date-picker"
+                      type="date"
+                      value={adminDraft.dateKey}
+                      onChange={(event) => {
+                        const nextDate = event.target.value;
+                        if (!nextDate) return;
+                        setAdminDraft((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                dateKey: nextDate,
+                                dayKey: getDayKeyFromDateKey(nextDate)
+                              } as AdminDraft
+                            : prev
+                        );
+                      }}
+                    />
+                    <span className="admin-subtitle-sep" aria-hidden="true">·</span>
+                    <span>{adminTimeLabel}</span>
+                  </div>
+                </div>
               </div>
               <button
                 className="icon-button"
@@ -1901,6 +2169,13 @@ export default function HomeScreen({
               </div>
             ) : null}
             <div className="admin-form">
+              {adminDraft.type === "lesson" && adminDraft.mode === "edit" && adminDraft.targetLessonId ? (
+                <p className="admin-meta" style={{ margin: "-2px 0 4px" }}>
+                  העריכה כאן יוצרת החרגה לתאריך הזה בלבד (לא משנה את הסדרה הקבועה).
+                  <br />
+                  כדי לשנות את כל הסדרה: ניהול → מערכת שעות → שיעורים.
+                </p>
+              ) : null}
               <label>
                 חדר
                 <select
@@ -1924,30 +2199,37 @@ export default function HomeScreen({
                     value={toTimeInput(adminDraft.startMinutes)}
                     onChange={(event) =>
                       setAdminDraft((prev) =>
-                        prev ? { ...prev, startMinutes: parseTimeInput(event.target.value) } as AdminDraft : prev
+                        prev
+                          ? {
+                              ...prev,
+                              startMinutes: parseTimeInput(event.target.value)
+                            } as AdminDraft
+                          : prev
                       )
                     }
                   />
                 </label>
                 <label>
                   שעת סיום
-                  <select
-                    value={adminEndMinutes}
-                    onChange={(event) => {
-                      const endMinutes = Number(event.target.value);
-                      setAdminDraft((prev) =>
-                        prev ? { ...prev, durationMinutes: Math.max(15, endMinutes - prev.startMinutes) } as AdminDraft : prev
-                      );
-                    }}
-                  >
-                    {adminDraft ? buildEndOptions(adminDraft).map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    )) : null}
-                  </select>
+                  <input
+                    type="time"
+                    value={toTimeInput(adminDraft.startMinutes + adminDraft.durationMinutes)}
+                    onChange={(event) =>
+                      setAdminDraft((prev) => {
+                        if (!prev) return prev;
+                        const endMinutes = parseTimeInput(event.target.value);
+                        return {
+                          ...prev,
+                          durationMinutes: Math.max(15, endMinutes - prev.startMinutes)
+                        } as AdminDraft;
+                      })
+                    }
+                  />
                 </label>
               </div>
+              <p className="admin-meta" style={{ margin: "-4px 0 4px", textAlign: "center" }}>
+                משך: {formatDurationLabel(adminDraft.durationMinutes)}
+              </p>
               {adminDraft.type === "lesson" ? (
                 <>
                   <label>
@@ -1955,6 +2237,7 @@ export default function HomeScreen({
                     <input
                       type="text"
                       value={adminDraft.title}
+                      placeholder="לדוגמה: תרגול הרמוניה"
                       onChange={(event) =>
                         setAdminDraft((prev) =>
                           prev && prev.type === "lesson"
@@ -1969,6 +2252,7 @@ export default function HomeScreen({
                     <input
                       type="text"
                       value={adminDraft.teacher}
+                      placeholder="שם המרצה"
                       onChange={(event) =>
                         setAdminDraft((prev) =>
                           prev && prev.type === "lesson"
@@ -1985,6 +2269,7 @@ export default function HomeScreen({
                   <input
                     type="text"
                     value={adminDraft.label}
+                    placeholder={adminDraft.type === "special" ? "תיאור אירוע" : "תיאור סגירה"}
                     onChange={(event) =>
                       setAdminDraft((prev) =>
                         prev && (prev.type === "special" || prev.type === "closed")
@@ -1994,7 +2279,7 @@ export default function HomeScreen({
                     }
                   />
                 </label>
-              ) : (
+              ) : adminDraft.type === "reservation" ? (
                 <>
                   <label>
                     משתמש
@@ -2088,7 +2373,11 @@ export default function HomeScreen({
                     </div>
                   </label>
                 </>
-              )}
+              ) : adminDraft.mode === "create" ? (
+                <p className="admin-meta" style={{ textAlign: "center" }}>
+                  בחר סוג רשומה למעלה כדי להמשיך.
+                </p>
+              ) : null}
               {adminError ? <p className="admin-error">{adminError}</p> : null}
             </div>
             <div className="admin-actions">
@@ -2105,7 +2394,12 @@ export default function HomeScreen({
               <button type="button" className="secondary" onClick={() => setAdminDraft(null)}>
                 ביטול
               </button>
-              <button type="button" className="primary" onClick={handleAdminSave} disabled={!effectiveAdminMode}>
+              <button
+                type="button"
+                className="primary"
+                onClick={handleAdminSave}
+                disabled={!effectiveAdminMode || adminDraft.type === "choose"}
+              >
                 שמירה
               </button>
             </div>

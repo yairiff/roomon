@@ -31,9 +31,22 @@ export function useAuth({ clientId }: { clientId?: string }) {
         setUser((prev) => prev ? { ...prev, role: "pending", allowed: false } : prev);
         return;
       }
-      const data = snap.data() as DirectoryUser;
+      const raw = snap.data() as Record<string, unknown>;
+      const data = raw as DirectoryUser;
       const role = data.role || "pending";
       const allowed = role === "admin" || role === "moderator" || role === "student";
+      const phone =
+        typeof raw.phone === "string"
+          ? raw.phone
+          : typeof raw.phoneNumber === "string"
+            ? raw.phoneNumber
+            : typeof raw.phone_number === "string"
+              ? raw.phone_number
+              : typeof raw.mobile === "string"
+                ? raw.mobile
+                : typeof raw.tel === "string"
+                  ? raw.tel
+                  : "";
       setUser((prev) => {
         if (!prev) return prev;
         const next: User = {
@@ -41,7 +54,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
           name: data.name || prev.name,
           role,
           allowed,
-          phone: data.phone,
+          phone,
           cohortStartYear: data.cohortStartYear ?? prev.cohortStartYear
         };
         if (
@@ -76,11 +89,25 @@ export function useAuth({ clientId }: { clientId?: string }) {
               return;
             }
             let directoryUser: DirectoryUser | null = null;
+            let directoryPhone = "";
             if (db) {
               try {
                 const snap = await getDoc(doc(db, "users", email.toLowerCase()));
                 if (snap.exists()) {
-                  directoryUser = snap.data() as DirectoryUser;
+                  const raw = snap.data() as Record<string, unknown>;
+                  directoryUser = raw as DirectoryUser;
+                  directoryPhone =
+                    typeof raw.phone === "string"
+                      ? raw.phone
+                      : typeof raw.phoneNumber === "string"
+                        ? raw.phoneNumber
+                        : typeof raw.phone_number === "string"
+                          ? raw.phone_number
+                          : typeof raw.mobile === "string"
+                            ? raw.mobile
+                            : typeof raw.tel === "string"
+                              ? raw.tel
+                              : "";
                 }
               } catch {
                 directoryUser = null;
@@ -95,7 +122,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
               picture: profile.picture || "",
               allowed,
               role: role || "pending",
-              phone: directoryUser?.phone,
+              phone: directoryPhone || directoryUser?.phone,
               cohortStartYear: directoryUser?.cohortStartYear
             });
           }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { collection, doc, getDocs, writeBatch } from "firebase/firestore";
+import { collection, doc, writeBatch } from "firebase/firestore";
 import { rimonScheduleConfig } from "../../config";
 import { db } from "../../lib/firebase";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
@@ -46,37 +46,26 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const [activeSemester, setActiveSemester] = useState<SemesterKey>("A");
   const [activeSection, setActiveSection] = useState<AdminSection>("users");
   const [scheduleFilter, setScheduleFilter] = useState<"all" | "lessons" | "regular" | "special" | "closed">("all");
-  const [clearRange, setClearRange] = useState({ start: "", end: "" });
-  const [clearMessage, setClearMessage] = useState("");
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" } | null>(null);
   const [bulkState, setBulkState] = useState<BulkState | null>(null);
-  const [exportScope, setExportScope] = useState<"filtered" | "all">("filtered");
-  const [exportUsersView, setExportUsersView] = useState<DirectoryUser[] | null>(null);
-  const [exportLessonsView, setExportLessonsView] = useState<LessonRecord[] | null>(null);
-  const [exportReservationsView, setExportReservationsView] = useState<Reservation[] | null>(null);
   const [activeTool, setActiveTool] = useState<
     | null
     | {
         section: "users" | "schedule";
-        kind: "csv" | "semesters" | "clear_reservations";
+        kind: "csv" | "semesters";
       }
   >(null);
-  const [csvStep, setCsvStep] = useState<1 | 2 | 3 | 4>(2);
+  const [csvStep, setCsvStep] = useState<1 | 2 | 3 | 4>(1);
   const [csvTable, setCsvTable] = useState<
-    "users" | "schedule_all" | "lessons" | "reservations" | "special" | "closed"
+    "users" | "lessons" | "reservations" | "special" | "closed"
   >("users");
   const [importMode, setImportMode] = useState<"add" | "diff" | "override">("add");
   const [importText, setImportText] = useState("");
+  const [importFileName, setImportFileName] = useState("");
   const [importMessage, setImportMessage] = useState("");
-  const [scheduleCsvTypes, setScheduleCsvTypes] = useState({
-    lessons: true,
-    reservations: true,
-    special: true,
-    closed: true
-  });
   const userInitials = currentUser
     ? currentUser.name
         .split(" ")
@@ -219,19 +208,14 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const closeTools = useCallback(() => {
     setActiveTool(null);
     setImportText("");
+    setImportFileName("");
     setImportMessage("");
     setImportMode("add");
-    setScheduleCsvTypes({ lessons: true, reservations: true, special: true, closed: true });
   }, []);
 
   const overlayOpen = activeTool !== null;
   const menuCollapsed = sideCollapsed && !isNarrow;
   const prevToolRef = useRef<typeof activeTool>(null);
-
-  useEffect(() => {
-    if (!activeTool) return;
-    if (activeTool.kind === "csv") setExportScope("filtered");
-  }, [activeTool]);
 
   useEffect(() => {
     const prev = prevToolRef.current;
@@ -241,32 +225,14 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     if (!isNewOpen) return;
 
     setImportText("");
+    setImportFileName("");
     setImportMessage("");
     setImportMode("add");
-    setCsvStep(activeTool.section === "schedule" && scheduleFilter === "all" ? 1 : 2);
+    setCsvStep(1);
     if (activeTool.section === "users") {
       setCsvTable("users");
-    } else if (scheduleFilter === "all") {
-      setCsvTable("schedule_all");
-    } else {
-      const table =
-        scheduleFilter === "lessons"
-          ? "lessons"
-          : scheduleFilter === "regular"
-            ? "reservations"
-            : scheduleFilter === "special"
-              ? "special"
-              : "closed";
-      setCsvTable(table);
+      return;
     }
-  }, [activeTool, scheduleFilter]);
-
-  useEffect(() => {
-    if (!activeTool) return;
-    if (activeTool.section !== "schedule") return;
-    if (activeTool.kind !== "csv") return;
-    // When opening the CSV wizard from a filtered schedule view, preselect the table.
-    if (scheduleFilter === "all") return;
     const table =
       scheduleFilter === "lessons"
         ? "lessons"
@@ -274,42 +240,21 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           ? "reservations"
           : scheduleFilter === "special"
             ? "special"
-            : "closed";
+            : scheduleFilter === "closed"
+              ? "closed"
+              : "lessons";
     setCsvTable(table);
-    setCsvStep(2);
-    setScheduleCsvTypes({
-      lessons: table === "lessons",
-      reservations: table === "reservations",
-      special: table === "special",
-      closed: table === "closed"
-    });
   }, [activeTool, scheduleFilter]);
-
-  useEffect(() => {
-    if (!activeTool) return;
-    if (activeTool.section !== "schedule") return;
-    if (activeTool.kind !== "csv") return;
-    if (scheduleFilter !== "all") return; // handled by the filtered-view effect above
-
-    const table = csvTable === "users" ? "schedule_all" : csvTable;
-    setScheduleCsvTypes({
-      lessons: table === "schedule_all" || table === "lessons",
-      reservations: table === "schedule_all" || table === "reservations",
-      special: table === "schedule_all" || table === "special",
-      closed: table === "schedule_all" || table === "closed"
-    });
-  }, [activeTool, csvTable, scheduleFilter]);
 
   useEffect(() => {
     setActiveTool(null);
     setImportText("");
+    setImportFileName("");
     setImportMessage("");
     setImportMode("add");
-    setClearMessage("");
     setScheduleFilter("all");
-    setScheduleCsvTypes({ lessons: true, reservations: true, special: true, closed: true });
     setBulkState(null);
-    setCsvStep(2);
+    setCsvStep(1);
     setCsvTable("users");
   }, [activeSection]);
 
@@ -346,127 +291,71 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const userCsvHeaders = ["email", "name", "role", "phone", "grade"];
-  const scheduleCsvHeaders = [
-    "type",
-    "semester",
-    "day",
-    "date",
-    "roomId",
-    "startTime",
-    "durationMinutes",
-    "title",
-    "teacher",
-    "reservedBy",
-    "reservedEmail",
-    "kind"
-  ];
+  const lessonsCsvHeaders = ["semester", "day", "roomId", "startTime", "endTime", "title", "teacher"];
+  const reservationsCsvHeaders = ["date", "roomId", "startTime", "endTime", "reservedBy", "reservedEmail"];
+  const specialCsvHeaders = ["date", "roomId", "startTime", "endTime", "label"];
+  const closedCsvHeaders = ["date", "roomId", "startTime", "endTime", "label"];
 
-  const usersCsvHelp = (
-    <details>
-      <summary className="admin-meta" style={{ cursor: "pointer" }}>הסבר שדות CSV</summary>
+  type CsvHelpRow = { key: string; value: string };
+
+  const renderCsvHelp = (rows: CsvHelpRow[]) => (
+    <div className="admin-csv-help-card" aria-label="שדות CSV">
+      <div className="admin-csv-help-title">שדות בקובץ</div>
       <div className="admin-csv-help">
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">email</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">אימייל (מזהה ייחודי)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">name</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">שם תצוגה</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">role</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">student (משתמש) / moderator (מתאם) / admin (מנהל) / pending (ממתין)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">phone</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">טלפון (אופציונלי)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">grade</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">A / B / C / STAFF (אפשר גם א/ב/ג/צוות). אם grade=צוות ו-role ריק → ברירת מחדל moderator</span>
-        </div>
+        {rows.map((row) => (
+          <div key={row.key} className="admin-csv-help-row">
+            <div className="admin-csv-help-key">{row.key}</div>
+            <div className="admin-csv-help-value">{row.value}</div>
+          </div>
+        ))}
       </div>
-    </details>
+    </div>
   );
 
-  const scheduleCsvHelp = (
-    <details>
-      <summary className="admin-meta" style={{ cursor: "pointer" }}>הסבר שדות CSV</summary>
-      <div className="admin-csv-help">
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">type</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">lesson / reservation / special / closed</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">semester</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">A / B (רק ל-type=lesson)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">day</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">sun / mon / tue / wed / thu / fri (רק ל-type=lesson)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">date</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">YYYY-MM-DD (רק ל-type=reservation/special/closed)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">roomId</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">מזהה חדר</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">startTime</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">HH:MM (למשל: 09:00)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">durationMinutes</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">מספר דקות (למשל: 60)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">title</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">שם שיעור (רק ל-type=lesson)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">teacher</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">מרצה (רק ל-type=lesson)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">reservedBy</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">שם/תיאור (לשריון/אירוע/סגירה)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">reservedEmail</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">אימייל (רק ל-type=reservation)</span>
-        </div>
-        <div className="admin-csv-help-row">
-          <span className="admin-csv-help-key">kind</span>
-          <span className="admin-csv-help-dash">-</span>
-          <span className="admin-csv-help-value">regular / special / closed (לתאימות)</span>
-        </div>
-      </div>
-    </details>
-  );
+  const usersCsvHelp = renderCsvHelp([
+    { key: "email", value: "אימייל (מזהה ייחודי)" },
+    { key: "name", value: "שם תצוגה" },
+    { key: "role", value: "student (משתמש) / moderator (מתאם) / admin (מנהל) / pending (ממתין)" },
+    { key: "phone", value: "טלפון (אופציונלי)" },
+    { key: "grade", value: "A / B / C / STAFF (אפשר גם א/ב/ג/צוות). אם grade=צוות ו-role ריק → ברירת מחדל moderator" }
+  ]);
+
+  const scheduleCsvHelp = (table: "lessons" | "reservations" | "special" | "closed") => {
+    const rows =
+      table === "lessons"
+        ? [
+            { key: "semester", value: "A / B (אופציונלי, ברירת מחדל: הסמסטר הפעיל)" },
+            { key: "day", value: "sun / mon / tue / wed / thu" },
+            { key: "roomId", value: "מזהה חדר" },
+            { key: "startTime", value: "HH:MM (למשל 09:00)" },
+            { key: "endTime", value: "HH:MM (למשל 10:30)" },
+            { key: "title", value: "שם שיעור" },
+            { key: "teacher", value: "מרצה" }
+          ]
+        : table === "reservations"
+          ? [
+              { key: "date", value: "YYYY-MM-DD" },
+              { key: "roomId", value: "מזהה חדר" },
+              { key: "startTime", value: "HH:MM" },
+              { key: "endTime", value: "HH:MM" },
+              { key: "reservedBy", value: "שם" },
+              { key: "reservedEmail", value: "אימייל" }
+            ]
+          : [
+              { key: "date", value: "YYYY-MM-DD" },
+              { key: "roomId", value: "מזהה חדר" },
+              { key: "startTime", value: "HH:MM" },
+              { key: "endTime", value: "HH:MM" },
+              { key: "label", value: table === "special" ? "תיאור אירוע" : "תיאור סגירה" }
+            ];
+
+    return renderCsvHelp(rows);
+  };
 
   const exportPayload = useMemo(() => {
     if (!activeTool || activeTool.kind !== "csv") return null;
     if (activeTool.section === "users") {
-      const list = exportScope === "filtered" && exportUsersView ? exportUsersView : users;
-      const rows = list.map((u) => ({
+      const rows = users.map((u) => ({
         email: u.email,
         name: u.name || "",
         role: u.role || "student",
@@ -475,54 +364,64 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       }));
       return { filename: "users.csv", csv: stringifyCsv(userCsvHeaders, rows) };
     }
-    const lessonsBase = exportScope === "filtered" && exportLessonsView ? exportLessonsView : lessonsAll;
-    const reservationsBase = exportScope === "filtered" && exportReservationsView ? exportReservationsView : reservationList;
-
-    const lessonRows = scheduleCsvTypes.lessons
-      ? lessonsBase.map((l) => ({
-        type: "lesson",
+    if (csvTable === "lessons") {
+      const rows = lessonsAll.map((l) => ({
         semester: l.semester || activeSemester,
         day: l.day,
-        date: "",
         roomId: l.roomId,
         startTime: toTimeInput(l.startMinutes),
-        durationMinutes: l.durationMinutes,
+        endTime: toTimeInput(l.startMinutes + l.durationMinutes),
         title: l.title || "",
-        teacher: l.teacher || "",
-        reservedBy: "",
-        reservedEmail: "",
-        kind: ""
-      }))
-      : [];
+        teacher: l.teacher || ""
+      }));
+      return { filename: "lessons.csv", csv: stringifyCsv(lessonsCsvHeaders, rows) };
+    }
 
-    const reservationRows = reservationsBase
-      .filter((r) => {
-        const kind = r.kind || "regular";
-        if (kind === "regular") return scheduleCsvTypes.reservations;
-        if (kind === "special") return scheduleCsvTypes.special;
-        return scheduleCsvTypes.closed;
-      })
-      .map((r) => {
-        const kind = r.kind || "regular";
-        return {
-          type: kind === "regular" ? "reservation" : kind,
-          semester: "",
-          day: "",
+    if (csvTable === "reservations") {
+      const rows = reservationList
+        .filter((r) => !r.kind)
+        .map((r) => ({
           date: r.date,
           roomId: r.roomId,
           startTime: toTimeInput(r.time),
-          durationMinutes: r.durationMinutes || 60,
-          title: "",
-          teacher: "",
+          endTime: toTimeInput(r.time + (r.durationMinutes || 60)),
           reservedBy: r.reservedBy || "",
-          reservedEmail: kind === "regular" ? (r.reservedEmail || "") : "",
-          kind
-        };
-      });
+          reservedEmail: r.reservedEmail || ""
+        }));
+      return { filename: "reservations.csv", csv: stringifyCsv(reservationsCsvHeaders, rows) };
+    }
 
-    const rows = [...lessonRows, ...reservationRows];
-    return { filename: "schedule.csv", csv: stringifyCsv(scheduleCsvHeaders, rows) };
-  }, [activeSemester, activeTool, exportLessonsView, exportReservationsView, exportScope, exportUsersView, lessonsAll, reservationList, scheduleCsvTypes, users]);
+    if (csvTable === "special") {
+      const rows = reservationList
+        .filter((r) => r.kind === "special")
+        .map((r) => ({
+          date: r.date,
+          roomId: r.roomId,
+          startTime: toTimeInput(r.time),
+          endTime: toTimeInput(r.time + (r.durationMinutes || 60)),
+          label: r.reservedBy || ""
+        }));
+      return { filename: "special.csv", csv: stringifyCsv(specialCsvHeaders, rows) };
+    }
+
+    const rows = reservationList
+      .filter((r) => r.kind === "closed")
+      .map((r) => ({
+        date: r.date,
+        roomId: r.roomId,
+        startTime: toTimeInput(r.time),
+        endTime: toTimeInput(r.time + (r.durationMinutes || 60)),
+        label: r.reservedBy || ""
+      }));
+    return { filename: "closed.csv", csv: stringifyCsv(closedCsvHeaders, rows) };
+  }, [
+    activeSemester,
+    activeTool,
+    csvTable,
+    lessonsAll,
+    reservationList,
+    users
+  ]);
 
   const downloadTextFile = (filename: string, content: string, mime = "text/csv;charset=utf-8") => {
     const blob = new Blob([content], { type: mime });
@@ -536,22 +435,10 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     URL.revokeObjectURL(url);
   };
 
-  const copyToClipboard = async (text: string) => {
-    try {
-      if (!navigator.clipboard?.writeText) {
-        showToast("העתקה לא נתמכת בדפדפן הזה.", "error");
-        return;
-      }
-      await navigator.clipboard.writeText(text);
-      showToast("הועתק ללוח.");
-    } catch {
-      showToast("העתקה נכשלה.", "error");
-    }
-  };
-
   const handleImportFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    setImportFileName(file.name || "");
     file.text().then((text) => {
       setImportText(text);
       setImportMessage("");
@@ -618,121 +505,158 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const lessonIdFromRow = (semester: SemesterKey, day: LessonRecord["day"], roomId: string, startMinutes: number) =>
     `lesson_${semester}_${day}_${roomId}_${startMinutes}`;
 
-  const importScheduleFromCsv = (text: string) => {
+  const parseEndMinutesFromRow = (
+    row: Record<string, string>,
+    idx: number,
+    startMinutes: number,
+    defaultDuration: number
+  ) => {
+    const endText = (row.endTime || "").trim();
+    if (endText) {
+      const endMinutes = parseTimeStrict(endText);
+      if (endMinutes === null) {
+        return { endMinutes: null, error: `שורה ${idx + 2}: endTime לא תקין (HH:MM)` };
+      }
+      if (endMinutes <= startMinutes) {
+        return { endMinutes: null, error: `שורה ${idx + 2}: endTime חייב להיות אחרי startTime` };
+      }
+      return { endMinutes, error: "" };
+    }
+
+    // Backward compatible: durationMinutes (optional).
+    const durationMinutes = row.durationMinutes ? Number(row.durationMinutes) : defaultDuration;
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+      return { endMinutes: null, error: `שורה ${idx + 2}: durationMinutes לא תקין` };
+    }
+    return { endMinutes: startMinutes + durationMinutes, error: "" };
+  };
+
+  const importLessonsFromCsv = (text: string) => {
     const { rows } = parseCsvAsObjects(text);
     const errors: string[] = [];
     const lessonsNext: LessonRecord[] = [];
-    const reservationsNext: Reservation[] = [];
     const seenLessons = new Set<string>();
-    const seenReservations = new Set<string>();
-
-    const reservationIdFromRow = (date: string, roomId: string, timeMinutes: number) =>
-      `res_${date}_${roomId}_${timeMinutes}`;
+    const semesters = new Set<SemesterKey>();
 
     rows.forEach((row, idx) => {
-      const typeRaw = (row.type || "").trim().toLowerCase();
-      const hasLessonFields = Boolean(row.semester || row.day || row.title || row.teacher);
-      const hasReservationFields = Boolean(row.date || row.reservedBy || row.reservedEmail || row.kind);
-      const type =
-        typeRaw === "lesson" || typeRaw === "reservation" || typeRaw === "special" || typeRaw === "closed"
-          ? typeRaw
-          : hasLessonFields
-            ? "lesson"
-            : hasReservationFields
-              ? "reservation"
-              : "";
-
-      if (type === "lesson") {
-        const semesterRaw = (row.semester || "").trim().toUpperCase();
-        const semester = semesterRaw === "A" || semesterRaw === "B" ? (semesterRaw as SemesterKey) : null;
-        if (!semester) {
-          errors.push(`שורה ${idx + 2}: semester לא תקין (A/B)`);
-          return;
-        }
-        const day = (row.day || "").trim() as LessonRecord["day"];
-        if (!day) {
-          errors.push(`שורה ${idx + 2}: חסר day`);
-          return;
-        }
-        const roomId = (row.roomId || "").trim();
-        if (!roomId) {
-          errors.push(`שורה ${idx + 2}: חסר roomId`);
-          return;
-        }
-        const startMinutes = parseTimeStrict(row.startTime || "");
-        if (startMinutes === null) {
-          errors.push(`שורה ${idx + 2}: startTime לא תקין (HH:MM)`);
-          return;
-        }
-        const durationMinutes = row.durationMinutes ? Number(row.durationMinutes) : rimonScheduleConfig.academicHourMinutes;
-        if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
-          errors.push(`שורה ${idx + 2}: durationMinutes לא תקין`);
-          return;
-        }
-        const id = lessonIdFromRow(semester, day, roomId, startMinutes);
-        if (seenLessons.has(id)) return;
-        seenLessons.add(id);
-        lessonsNext.push({
-          id,
-          semester,
-          day,
-          roomId,
-          startMinutes,
-          durationMinutes,
-          title: row.title || "",
-          teacher: row.teacher || ""
-        });
+      const semesterRaw = (row.semester || "").trim().toUpperCase();
+      const semester = semesterRaw
+        ? (semesterRaw === "A" || semesterRaw === "B" ? (semesterRaw as SemesterKey) : null)
+        : activeSemester;
+      if (!semester) {
+        errors.push(`שורה ${idx + 2}: semester לא תקין (A/B)`);
         return;
       }
+      const day = (row.day || "").trim() as LessonRecord["day"];
+      if (!day) {
+        errors.push(`שורה ${idx + 2}: חסר day`);
+        return;
+      }
+      if (day !== "sun" && day !== "mon" && day !== "tue" && day !== "wed" && day !== "thu") {
+        errors.push(`שורה ${idx + 2}: day לא תקין (sun/mon/tue/wed/thu)`);
+        return;
+      }
+      const roomId = (row.roomId || "").trim();
+      if (!roomId) {
+        errors.push(`שורה ${idx + 2}: חסר roomId`);
+        return;
+      }
+      const startMinutes = parseTimeStrict(row.startTime || "");
+      if (startMinutes === null) {
+        errors.push(`שורה ${idx + 2}: startTime לא תקין (HH:MM)`);
+        return;
+      }
+      const endRes = parseEndMinutesFromRow(row, idx, startMinutes, rimonScheduleConfig.academicHourMinutes);
+      if (endRes.error) {
+        errors.push(endRes.error);
+        return;
+      }
+      const durationMinutes = (endRes.endMinutes as number) - startMinutes;
+      const key = `${semester}|${day}|${roomId}|${startMinutes}`;
+      if (seenLessons.has(key)) return;
+      seenLessons.add(key);
+      semesters.add(semester);
+      lessonsNext.push({
+        id: lessonIdFromRow(semester, day, roomId, startMinutes),
+        semester,
+        day,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        title: row.title || "",
+        teacher: row.teacher || ""
+      });
+    });
 
-      if (type === "reservation" || type === "special" || type === "closed") {
-        const date = (row.date || "").trim();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          errors.push(`שורה ${idx + 2}: date לא תקין (YYYY-MM-DD)`);
-          return;
-        }
-        const roomId = (row.roomId || "").trim();
-        if (!roomId) {
-          errors.push(`שורה ${idx + 2}: חסר roomId`);
-          return;
-        }
-        const timeMinutes = parseTimeStrict(row.startTime || "");
-        if (timeMinutes === null) {
-          errors.push(`שורה ${idx + 2}: startTime לא תקין (HH:MM)`);
-          return;
-        }
-        const durationMinutes = row.durationMinutes ? Number(row.durationMinutes) : 60;
-        if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
-          errors.push(`שורה ${idx + 2}: durationMinutes לא תקין`);
-          return;
-        }
-        const kindRaw = (row.kind || "").trim().toLowerCase();
-        const kindFromKind = kindRaw === "special" || kindRaw === "closed" ? (kindRaw as "special" | "closed") : undefined;
-        const kind = type === "special" ? "special" : type === "closed" ? "closed" : kindFromKind;
-        const id = reservationIdFromRow(date, roomId, timeMinutes);
-        if (seenReservations.has(id)) return;
-        seenReservations.add(id);
-        reservationsNext.push({
-          id,
+    return { table: "lessons" as const, lessons: lessonsNext, errors, semesters };
+  };
+
+  const reservationIdFromRow = (date: string, roomId: string, timeMinutes: number) =>
+    `res_${date}_${roomId}_${timeMinutes}`;
+
+  const importReservationsFromCsv = (text: string, kind: "regular" | "special" | "closed") => {
+    const { rows } = parseCsvAsObjects(text);
+    const errors: string[] = [];
+    const next: Reservation[] = [];
+    const seen = new Set<string>();
+    const dates = new Set<string>();
+
+    rows.forEach((row, idx) => {
+      const date = (row.date || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        errors.push(`שורה ${idx + 2}: date לא תקין (YYYY-MM-DD)`);
+        return;
+      }
+      const roomId = (row.roomId || "").trim();
+      if (!roomId) {
+        errors.push(`שורה ${idx + 2}: חסר roomId`);
+        return;
+      }
+      const startMinutes = parseTimeStrict(row.startTime || "");
+      if (startMinutes === null) {
+        errors.push(`שורה ${idx + 2}: startTime לא תקין (HH:MM)`);
+        return;
+      }
+      const endRes = parseEndMinutesFromRow(row, idx, startMinutes, 60);
+      if (endRes.error) {
+        errors.push(endRes.error);
+        return;
+      }
+      const durationMinutes = (endRes.endMinutes as number) - startMinutes;
+
+      const key = `${date}|${roomId}|${startMinutes}|${kind}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dates.add(date);
+
+      if (kind === "regular") {
+        next.push({
+          id: reservationIdFromRow(date, roomId, startMinutes),
           date,
-          time: timeMinutes,
+          time: startMinutes,
           durationMinutes,
           roomId,
           reservedBy: row.reservedBy || "",
-          reservedEmail: type === "reservation" ? (row.reservedEmail || "") : "",
-          kind
+          reservedEmail: row.reservedEmail || ""
         });
         return;
       }
 
-      if (typeRaw) {
-        errors.push(`שורה ${idx + 2}: type לא מוכר (${row.type})`);
-      } else {
-        errors.push(`שורה ${idx + 2}: חסר type`);
-      }
+      const label = (row.label || row.reservedBy || "").trim();
+      next.push({
+        id: reservationIdFromRow(date, roomId, startMinutes),
+        date,
+        time: startMinutes,
+        durationMinutes,
+        roomId,
+        reservedBy: label,
+        reservedEmail: "",
+        kind: kind === "special" ? "special" : "closed"
+      });
     });
 
-    return { lessons: lessonsNext, reservations: reservationsNext, errors };
+    const table = kind === "regular" ? "reservations" : kind;
+    return { table: table as "reservations" | "special" | "closed", kind, reservations: next, errors, dates };
   };
 
   if (!isAdmin) {
@@ -834,51 +758,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     }
   };
 
-  const handleClearReservations = async () => {
-    if (!db) {
-      setClearMessage("Firestore לא מוגדר.");
-      showToast("Firestore לא מוגדר.", "error");
-      return;
-    }
-    if (!clearRange.start || !clearRange.end) {
-      setClearMessage("יש לבחור טווח תאריכים מלא.");
-      showToast("יש לבחור טווח תאריכים מלא.", "error");
-      return;
-    }
-    if (clearRange.start > clearRange.end) {
-      setClearMessage("תאריך ההתחלה מאוחר מתאריך הסיום.");
-      showToast("תאריך ההתחלה מאוחר מתאריך הסיום.", "error");
-      return;
-    }
-    try {
-      const snapshot = await getDocs(collection(db, "reservations"));
-      const refs = snapshot.docs
-        .map((docSnap) => {
-          const data = docSnap.data() as { date?: string };
-          return data.date ? { ref: docSnap.ref, date: data.date } : null;
-        })
-        .filter((entry): entry is { ref: typeof snapshot.docs[number]["ref"]; date: string } => Boolean(entry))
-        .filter((entry) => entry.date >= clearRange.start && entry.date <= clearRange.end)
-        .map((entry) => entry.ref);
-      if (!refs.length) {
-        setClearMessage("לא נמצאו שריונים בטווח הזה.");
-        showToast("לא נמצאו שריונים בטווח הזה.");
-        return;
-      }
-      let deleted = 0;
-      for (let i = 0; i < refs.length; i += 450) {
-        const batch = writeBatch(db);
-        const chunk = refs.slice(i, i + 450);
-        chunk.forEach((ref) => batch.delete(ref));
-        await batch.commit();
-        deleted += chunk.length;
-      }
-      setClearMessage(`נמחקו ${deleted} שריונים.`);
-      showToast(`נמחקו ${deleted} שריונים.`);
-    } catch {
-      showToast("מחיקת שריונים נכשלה.", "error");
-    }
-  };
+  // Reservation cleanup tool removed; admins can bulk-delete filtered results.
 
   const menuItems: { key: AdminSection; label: string; icon: JSX.Element }[] = [
     { key: "users", label: "משתמשים", icon: <UserIcon /> },
@@ -970,60 +850,15 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     </div>
   );
 
-  const clearReservationsToolContent = (
-    <div className="admin-tool-content">
-      <p className="admin-meta">פעולה זו מוחקת שריונים קיימים בין התאריכים שנבחרו (כולל).</p>
-      <div className="admin-form-grid">
-        <label>
-          מתאריך
-          <input
-            type="date"
-            value={clearRange.start}
-            onChange={(event) => setClearRange((prev) => ({ ...prev, start: event.target.value }))}
-          />
-        </label>
-        <label>
-          עד תאריך
-          <input
-            type="date"
-            value={clearRange.end}
-            onChange={(event) => setClearRange((prev) => ({ ...prev, end: event.target.value }))}
-          />
-        </label>
-      </div>
-      {clearMessage ? <p className="admin-meta">{clearMessage}</p> : null}
-      <div className="admin-actions">
-        <button
-          className="secondary"
-          type="button"
-          onClick={() => {
-            setClearRange({ start: "", end: "" });
-            setClearMessage("");
-          }}
-        >
-          איפוס
-        </button>
-        <button className="primary" type="button" onClick={handleClearReservations}>
-          מחיקת שריונים
-        </button>
-      </div>
-    </div>
-  );
-
   const importPreview = useMemo(() => {
     if (!activeTool || activeTool.kind !== "csv") return null;
     if (!importText.trim()) return null;
     if (activeTool.section === "users") return importUsersFromCsv(importText);
-    const parsed = importScheduleFromCsv(importText);
-    const lessons = scheduleCsvTypes.lessons ? parsed.lessons : [];
-    const reservations = parsed.reservations.filter((r) => {
-      const kind = r.kind || "regular";
-      if (kind === "regular") return scheduleCsvTypes.reservations;
-      if (kind === "special") return scheduleCsvTypes.special;
-      return scheduleCsvTypes.closed;
-    });
-    return { lessons, reservations, errors: parsed.errors };
-  }, [activeTool, importText, scheduleCsvTypes]);
+    if (csvTable === "lessons") return importLessonsFromCsv(importText);
+    if (csvTable === "reservations") return importReservationsFromCsv(importText, "regular");
+    if (csvTable === "special") return importReservationsFromCsv(importText, "special");
+    return importReservationsFromCsv(importText, "closed");
+  }, [activeTool, csvTable, importText]);
 
   type CsvImportPlan =
     | {
@@ -1035,16 +870,23 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         toWrite: DirectoryUser[];
       }
     | {
-        section: "schedule";
+        section: "lessons";
         mode: typeof importMode;
-        addsLessons: number;
-        updatesLessons: number;
-        deletesLessons: number;
-        addsReservations: number;
-        updatesReservations: number;
-        deletesReservations: number;
-        toWriteLessons: LessonRecord[];
-        toWriteReservations: Reservation[];
+        adds: number;
+        updates: number;
+        deletes: number;
+        toWrite: LessonRecord[];
+        deleteIds: string[];
+      }
+    | {
+        section: "reservations";
+        kind: "regular" | "special" | "closed";
+        mode: typeof importMode;
+        adds: number;
+        updates: number;
+        deletes: number;
+        toWrite: Reservation[];
+        deleteIds: string[];
       };
 
   const canonicalUser = (u: DirectoryUser) => ({
@@ -1056,7 +898,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   });
 
   const canonicalLesson = (l: LessonRecord) => ({
-    id: l.id,
     semester: l.semester,
     day: l.day,
     roomId: l.roomId,
@@ -1067,7 +908,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   });
 
   const canonicalReservation = (r: Reservation) => ({
-    id: r.id,
     date: r.date,
     time: r.time,
     durationMinutes: r.durationMinutes || 60,
@@ -1121,96 +961,105 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       return { section: "users", mode: importMode, adds, updates, deletes: 0, toWrite };
     }
 
-    const existingLessonsById = new Map(lessonsAll.map((l) => [l.id, canonicalLesson(l)]));
-    const existingReservations = reservationList.filter((r) => {
-      const kind = r.kind === "special" || r.kind === "closed" ? r.kind : "regular";
-      if (kind === "regular") return scheduleCsvTypes.reservations;
-      if (kind === "special") return scheduleCsvTypes.special;
-      return scheduleCsvTypes.closed;
-    });
-    const existingReservationsById = new Map(existingReservations.map((r) => [r.id, canonicalReservation(r)]));
+    if (preview.table === "lessons") {
+      const lessonKey = (l: LessonRecord) => `${l.semester}|${l.day}|${l.roomId}|${l.startMinutes}`;
+      const existingByKey = new Map(
+        lessonsAll.map((l) => [lessonKey(l), { id: l.id, canonical: canonicalLesson(l), semester: l.semester }])
+      );
 
-    let addsLessons = 0;
-    let updatesLessons = 0;
-    const toWriteLessons: LessonRecord[] = [];
-    preview.lessons.forEach((l) => {
-      const existing = existingLessonsById.get(l.id);
-      if (!existing) {
-        if (importMode === "add" || importMode === "diff") {
-          addsLessons += 1;
-          toWriteLessons.push(l);
+      let adds = 0;
+      let updates = 0;
+      const toWrite: LessonRecord[] = [];
+      const seen = new Set<string>();
+
+      preview.lessons.forEach((l) => {
+        const key = lessonKey(l);
+        if (seen.has(key)) return;
+        seen.add(key);
+        const existing = existingByKey.get(key);
+        const next: LessonRecord = { ...l, id: existing?.id || l.id };
+        if (!existing) {
+          if (importMode !== "add" && importMode !== "diff" && importMode !== "override") return;
+          adds += 1;
+          toWrite.push(next);
+          return;
         }
-        return;
-      }
-      if (importMode === "add") return;
-      const next = canonicalLesson(l);
-      const changed =
-        existing.semester !== next.semester
-        || existing.day !== next.day
-        || existing.roomId !== next.roomId
-        || existing.startMinutes !== next.startMinutes
-        || existing.durationMinutes !== next.durationMinutes
-        || existing.title !== next.title
-        || existing.teacher !== next.teacher;
-      if (!changed) return;
-      updatesLessons += 1;
-      toWriteLessons.push(l);
-    });
+        if (importMode === "add") return;
+        const changed = JSON.stringify(existing.canonical) !== JSON.stringify(canonicalLesson(next));
+        if (!changed) return;
+        updates += 1;
+        toWrite.push(next);
+      });
 
-    let addsReservations = 0;
-    let updatesReservations = 0;
-    const toWriteReservations: Reservation[] = [];
+      if (importMode === "override") {
+        const deleteIds = lessonsAll
+          .filter((l) => preview.semesters.has(l.semester))
+          .map((l) => l.id);
+        return {
+          section: "lessons",
+          mode: importMode,
+          adds: preview.lessons.length,
+          updates: 0,
+          deletes: deleteIds.length,
+          toWrite: preview.lessons,
+          deleteIds
+        };
+      }
+
+      return { section: "lessons", mode: importMode, adds, updates, deletes: 0, toWrite, deleteIds: [] };
+    }
+
+    const kind = preview.kind;
+    const relevantExisting = reservationList.filter((r) => {
+      const k = r.kind === "special" || r.kind === "closed" ? r.kind : "regular";
+      return k === kind;
+    });
+    const resKey = (r: Reservation) => `${r.date}|${r.roomId}|${r.time}|${kind}`;
+    const existingByKey = new Map(
+      relevantExisting.map((r) => [resKey(r), { id: r.id, canonical: canonicalReservation(r) }])
+    );
+
+    let adds = 0;
+    let updates = 0;
+    const toWrite: Reservation[] = [];
+    const seen = new Set<string>();
     preview.reservations.forEach((r) => {
-      const existing = existingReservationsById.get(r.id);
+      const key = resKey(r);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const existing = existingByKey.get(key);
+      const next: Reservation = { ...r, id: existing?.id || r.id };
       if (!existing) {
         if (importMode === "add" || importMode === "diff") {
-          addsReservations += 1;
-          toWriteReservations.push(r);
+          adds += 1;
+          toWrite.push(next);
         }
         return;
       }
       if (importMode === "add") return;
-      const next = canonicalReservation(r);
-      const changed =
-        existing.date !== next.date
-        || existing.time !== next.time
-        || existing.durationMinutes !== next.durationMinutes
-        || existing.roomId !== next.roomId
-        || existing.reservedBy !== next.reservedBy
-        || existing.reservedEmail !== next.reservedEmail
-        || existing.kind !== next.kind;
+      const changed = JSON.stringify(existing.canonical) !== JSON.stringify(canonicalReservation(next));
       if (!changed) return;
-      updatesReservations += 1;
-      toWriteReservations.push(r);
+      updates += 1;
+      toWrite.push(next);
     });
 
     if (importMode === "override") {
+      const deleteIds = relevantExisting
+        .filter((r) => preview.dates.has(r.date))
+        .map((r) => r.id);
       return {
-        section: "schedule",
+        section: "reservations",
+        kind,
         mode: importMode,
-        addsLessons: preview.lessons.length,
-        updatesLessons: 0,
-        deletesLessons: scheduleCsvTypes.lessons ? lessonsAll.length : 0,
-        addsReservations: preview.reservations.length,
-        updatesReservations: 0,
-        deletesReservations: existingReservations.length,
-        toWriteLessons: preview.lessons,
-        toWriteReservations: preview.reservations
+        adds: preview.reservations.length,
+        updates: 0,
+        deletes: deleteIds.length,
+        toWrite: preview.reservations,
+        deleteIds
       };
     }
 
-    return {
-      section: "schedule",
-      mode: importMode,
-      addsLessons,
-      updatesLessons,
-      deletesLessons: 0,
-      addsReservations,
-      updatesReservations,
-      deletesReservations: 0,
-      toWriteLessons,
-      toWriteReservations
-    };
+    return { section: "reservations", kind, mode: importMode, adds, updates, deletes: 0, toWrite, deleteIds: [] };
   };
 
   const importPlan = useMemo(() => {
@@ -1218,10 +1067,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     if (!importPreview) return null;
     if (importPreview.errors.length) return null;
     return buildCsvImportPlan(importPreview);
-  }, [activeTool, importMode, importPreview, lessonsAll, reservationList, scheduleCsvTypes, users]);
+  }, [activeTool, importMode, importPreview, lessonsAll, reservationList, users]);
 
   const handleRunCsvImport = async () => {
-    if (!db) {
+    const firestore = db;
+    if (!firestore) {
       showToast("Firestore לא מוגדר.", "error");
       return;
     }
@@ -1242,22 +1092,26 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       try {
         if (importMode === "override") {
           // Avoid a full collection scan: we already have the list in state.
-          const refs = users.map((u) => doc(db, "users", u.email.toLowerCase()));
+          const refs = users.map((u) => doc(firestore, "users", u.email.toLowerCase()));
           for (let i = 0; i < refs.length; i += 450) {
-            const batch = writeBatch(db);
+            const batch = writeBatch(firestore);
             refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
             await batch.commit();
           }
         }
         for (let i = 0; i < toWrite.length; i += 450) {
-          const batch = writeBatch(db);
+          const batch = writeBatch(firestore);
           toWrite.slice(i, i + 450).forEach((u) => {
-            batch.set(doc(db, "users", u.email.toLowerCase()), {
-              ...u,
-              email: u.email.toLowerCase(),
-              phone: u.phone || "",
-              cohortStartYear: u.cohortStartYear ?? null
-            });
+            batch.set(
+              doc(firestore, "users", u.email.toLowerCase()),
+              {
+                ...u,
+                email: u.email.toLowerCase(),
+                phone: u.phone || "",
+                cohortStartYear: u.cohortStartYear ?? null
+              },
+              { merge: importMode !== "override" }
+            );
           });
           await batch.commit();
         }
@@ -1268,59 +1122,58 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       }
       return;
     }
-    if (importPlan.section !== "schedule") return;
-    const lessonsToWrite = importPlan.toWriteLessons;
-    const reservationsToWrite = importPlan.toWriteReservations;
-
     try {
-      if (importMode === "override") {
-        if (scheduleCsvTypes.lessons) {
-          // Avoid a full collection scan: we already have the list in state.
-          const lessonsRefs = lessonsAll.map((l) => doc(db, "lessons", l.id));
-          for (let i = 0; i < lessonsRefs.length; i += 450) {
-            const batch = writeBatch(db);
-            lessonsRefs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
+      if (importPlan.section === "lessons") {
+        if (importMode === "override" && importPlan.deleteIds.length) {
+          const refs = importPlan.deleteIds.map((id) => doc(firestore, "lessons", id));
+          for (let i = 0; i < refs.length; i += 450) {
+            const batch = writeBatch(firestore);
+            refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
             await batch.commit();
           }
         }
+        const toWrite = importPlan.toWrite;
+        for (let i = 0; i < toWrite.length; i += 450) {
+          const batch = writeBatch(firestore);
+          toWrite
+            .slice(i, i + 450)
+            .forEach((l) => batch.set(doc(firestore, "lessons", l.id), stripUndefined(l as unknown as Record<string, unknown>)));
+          await batch.commit();
+        }
+        setImportMessage(`עודכנו/נוספו ${toWrite.length} שיעורים.`);
+        showToast("ייבוא שיעורים הושלם.");
+        return;
+      }
 
-        if (scheduleCsvTypes.reservations || scheduleCsvTypes.special || scheduleCsvTypes.closed) {
-          // Avoid a full collection scan: we already have the list in state.
-          const reservationsRefs = reservationList
-            .filter((r) => {
-              const kind = r.kind === "special" || r.kind === "closed" ? r.kind : "regular";
-              if (kind === "regular") return scheduleCsvTypes.reservations;
-              if (kind === "special") return scheduleCsvTypes.special;
-              return scheduleCsvTypes.closed;
-            })
-            .map((r) => doc(db, "reservations", r.id));
-          for (let i = 0; i < reservationsRefs.length; i += 450) {
-            const batch = writeBatch(db);
-            reservationsRefs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
+      if (importPlan.section === "reservations") {
+        if (importMode === "override" && importPlan.deleteIds.length) {
+          const refs = importPlan.deleteIds.map((id) => doc(firestore, "reservations", id));
+          for (let i = 0; i < refs.length; i += 450) {
+            const batch = writeBatch(firestore);
+            refs.slice(i, i + 450).forEach((ref) => batch.delete(ref));
             await batch.commit();
           }
         }
+        const toWrite = importPlan.toWrite;
+        for (let i = 0; i < toWrite.length; i += 450) {
+          const batch = writeBatch(firestore);
+          toWrite
+            .slice(i, i + 450)
+            .forEach((r) => batch.set(doc(firestore, "reservations", r.id), stripUndefined(r as unknown as Record<string, unknown>)));
+          await batch.commit();
+        }
+        const label =
+          importPlan.kind === "regular"
+            ? "שריונים"
+            : importPlan.kind === "special"
+              ? "אירועים"
+              : "סגירות";
+        setImportMessage(`עודכנו/נוספו ${toWrite.length} ${label}.`);
+        showToast(`ייבוא ${label} הושלם.`);
+        return;
       }
-
-      for (let i = 0; i < lessonsToWrite.length; i += 450) {
-        const batch = writeBatch(db);
-        lessonsToWrite
-          .slice(i, i + 450)
-          .forEach((l) => batch.set(doc(db, "lessons", l.id), stripUndefined(l as unknown as Record<string, unknown>)));
-        await batch.commit();
-      }
-      for (let i = 0; i < reservationsToWrite.length; i += 450) {
-        const batch = writeBatch(db);
-        reservationsToWrite
-          .slice(i, i + 450)
-          .forEach((r) => batch.set(doc(db, "reservations", r.id), stripUndefined(r as unknown as Record<string, unknown>)));
-        await batch.commit();
-      }
-
-      setImportMessage(`עודכנו/נוספו ${lessonsToWrite.length} שיעורים ו-${reservationsToWrite.length} שריונים/אירועים/סגירות.`);
-      showToast("ייבוא מערכת שעות הושלם.");
     } catch {
-      showToast("ייבוא מערכת שעות נכשל.", "error");
+      showToast("ייבוא נכשל.", "error");
     }
   };
 
@@ -1330,60 +1183,33 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       ? `ייבוא וייצוא · ${activeTool.section === "users" ? "משתמשים" : "מערכת שעות"}`
       : activeTool.kind === "semesters"
         ? "טווחי סמסטר"
-        : "ניקוי שריונים";
+        : "";
 
-  const scheduleFilterLabel =
-    scheduleFilter === "all"
-      ? "הכל"
-      : scheduleFilter === "lessons"
-        ? "שיעורים"
-        : scheduleFilter === "regular"
-          ? "שריונים"
-          : scheduleFilter === "special"
-            ? "אירועים"
-            : "סגירות";
-
-  const csvHasTableStep = Boolean(
-    activeTool && activeTool.kind === "csv" && activeTool.section === "schedule" && scheduleFilter === "all"
-  );
-
-  const csvStepTotal = csvHasTableStep ? 4 : 3;
-  const csvStepNumber = !activeTool || activeTool.kind !== "csv"
-    ? 1
-    : csvHasTableStep
-      ? csvStep
-      : Math.max(2, csvStep) - 1;
+  const csvStepTotal = 4;
+  const csvStepNumber = csvStep;
 
   const csvTableLabel = !activeTool || activeTool.kind !== "csv"
     ? ""
     : activeTool.section === "users"
       ? "משתמשים"
-      : scheduleFilter !== "all"
-        ? scheduleFilterLabel
-        : csvTable === "schedule_all"
-          ? "מערכת שעות (הכל)"
-          : csvTable === "lessons"
-            ? "שיעורים"
-            : csvTable === "reservations"
-              ? "שריונים"
-              : csvTable === "special"
-                ? "אירועים"
-                : "סגירות";
+      : csvTable === "lessons"
+        ? "שיעורים"
+        : csvTable === "reservations"
+          ? "שריונים"
+          : csvTable === "special"
+            ? "אירועים"
+            : "סגירות";
 
   const csvDistinctHelp = useMemo(() => {
     if (!activeTool || activeTool.kind !== "csv") return "";
     if (activeTool.section === "users") return "email";
-    const parts: string[] = [];
-    if (scheduleCsvTypes.lessons) parts.push("שיעורים: semester + day + roomId + startTime");
-    if (scheduleCsvTypes.reservations || scheduleCsvTypes.special || scheduleCsvTypes.closed) {
-      parts.push("שריונים/אירועים/סגירות: date + roomId + startTime");
-    }
-    return parts.join(" · ");
-  }, [activeTool, scheduleCsvTypes]);
+    if (csvTable === "lessons") return "semester + day + roomId + startTime";
+    return "date + roomId + startTime";
+  }, [activeTool, csvTable]);
 
-  const exportUsersCount = exportScope === "filtered" && exportUsersView ? exportUsersView.length : users.length;
-  const exportLessonsBase = exportScope === "filtered" && exportLessonsView ? exportLessonsView : lessonsAll;
-  const exportReservationsBase = exportScope === "filtered" && exportReservationsView ? exportReservationsView : reservationList;
+  const exportUsersCount = users.length;
+  const exportLessonsBase = lessonsAll;
+  const exportReservationsBase = reservationList;
   const exportReservationCounts = useMemo(() => {
     const base = { regular: 0, special: 0, closed: 0, all: exportReservationsBase.length };
     exportReservationsBase.forEach((r) => {
@@ -1397,52 +1223,47 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const exportScheduleCountLabel = useMemo(() => {
     if (!activeTool || activeTool.kind !== "csv") return "";
     if (activeTool.section !== "schedule") return "";
-    const parts: string[] = [];
-    if (scheduleCsvTypes.lessons) parts.push(`שיעורים: ${exportLessonsBase.length}`);
-    if (scheduleCsvTypes.reservations) parts.push(`שריונים: ${exportReservationCounts.regular}`);
-    if (scheduleCsvTypes.special) parts.push(`אירועים: ${exportReservationCounts.special}`);
-    if (scheduleCsvTypes.closed) parts.push(`סגירות: ${exportReservationCounts.closed}`);
-    return parts.join(" · ");
-  }, [activeTool, exportLessonsBase.length, exportReservationCounts, scheduleCsvTypes]);
-
-  const scheduleSelectionEmpty = !scheduleCsvTypes.lessons
-    && !scheduleCsvTypes.reservations
-    && !scheduleCsvTypes.special
-    && !scheduleCsvTypes.closed;
+    if (csvTable === "lessons") return `שיעורים: ${exportLessonsBase.length}`;
+    if (csvTable === "reservations") return `שריונים: ${exportReservationCounts.regular}`;
+    if (csvTable === "special") return `אירועים: ${exportReservationCounts.special}`;
+    return `סגירות: ${exportReservationCounts.closed}`;
+  }, [activeTool, csvTable, exportLessonsBase.length, exportReservationCounts]);
 
   const overlayContent = !activeTool ? null : activeTool.kind === "csv" ? (
     <div className="admin-tool-content">
       <div className="admin-csv-wizard">
-        <p className="admin-meta">
-          שלב {csvStepNumber}/{csvStepTotal} · טבלה: {csvTableLabel}
-          {activeTool.section === "schedule" ? ` · מסנן במסך: ${scheduleFilterLabel}` : ""}
-        </p>
+        <p className="admin-meta">שלב {csvStepNumber}/{csvStepTotal} · טבלה: {csvTableLabel}</p>
 
-        {csvHasTableStep && csvStep === 1 ? (
+        {csvStep === 1 ? (
           <>
             <p className="admin-meta">בחר טבלה לעבודה:</p>
             <div className="admin-inline" style={{ flexWrap: "wrap", gap: 10 }}>
               {(
-                [
-                  { key: "schedule_all", label: "מערכת שעות (הכל)" },
-                  { key: "lessons", label: "שיעורים" },
-                  { key: "reservations", label: "שריונים" },
-                  { key: "special", label: "אירועים" },
-                  { key: "closed", label: "סגירות" }
-                ] as const
+                activeTool.section === "users"
+                  ? ([{ key: "users", label: "משתמשים" }] as const)
+                  : ([
+                      { key: "lessons", label: "שיעורים" },
+                      { key: "reservations", label: "שריונים" },
+                      { key: "special", label: "אירועים" },
+                      { key: "closed", label: "סגירות" }
+                    ] as const)
               ).map((opt) => (
                 <button
                   key={opt.key}
                   type="button"
                   className={`chip${csvTable === opt.key ? " active" : ""}`}
-                  onClick={() => {
-                    setCsvTable(opt.key);
-                    setCsvStep(2);
-                  }}
+                  onClick={() => setCsvTable(opt.key)}
                 >
                   {opt.label}
                 </button>
               ))}
+            </div>
+
+            <div className="admin-actions">
+              <span style={{ flex: 1 }} />
+              <button className="primary" type="button" onClick={() => setCsvStep(2)}>
+                המשך
+              </button>
             </div>
           </>
         ) : null}
@@ -1451,62 +1272,24 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           <>
             <p className="admin-meta">ייצוא (הורדה):</p>
             <div className="admin-filters">
-              <button
-                type="button"
-                className={`chip small${exportScope === "filtered" ? " active" : ""}`}
-                onClick={() => setExportScope("filtered")}
-              >
-                לפי המסנן הנוכחי
-              </button>
-              <button
-                type="button"
-                className={`chip small${exportScope === "all" ? " active" : ""}`}
-                onClick={() => setExportScope("all")}
-              >
-                כל הנתונים
-              </button>
-                <span className="chip small ghost">
-                  {activeTool.section === "users"
-                    ? `${exportUsersCount} משתמשים`
-                  : exportScheduleCountLabel}
-                </span>
-              {csvHasTableStep ? (
-                <button type="button" className="chip small" onClick={() => setCsvStep(1)}>
-                  שינוי טבלה
-                </button>
-              ) : null}
+              <span className="chip small ghost">
+                {activeTool.section === "users" ? `${exportUsersCount} משתמשים` : exportScheduleCountLabel}
+              </span>
             </div>
 
             {activeTool.section === "users" ? usersCsvHelp : null}
             {activeTool.section === "schedule" && (lessonsAllError || reservationsError) ? (
               <p className="admin-error">{lessonsAllError || reservationsError}</p>
             ) : null}
-            {activeTool.section === "schedule" ? scheduleCsvHelp : null}
-
-            {exportPayload ? (
-              <details>
-                <summary className="admin-meta" style={{ cursor: "pointer" }}>תצוגה מקדימה</summary>
-                <textarea
-                  className="admin-csv-preview"
-                  readOnly
-                  value={
-                    exportPayload.csv.length > 9000
-                      ? `${exportPayload.csv.slice(0, 9000)}\n...\n`
-                      : exportPayload.csv
-                  }
-                />
-              </details>
-            ) : null}
+            {activeTool.section === "schedule"
+              ? scheduleCsvHelp(csvTable as "lessons" | "reservations" | "special" | "closed")
+              : null}
 
             <div className="admin-actions">
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => exportPayload && void copyToClipboard(exportPayload.csv)}
-                disabled={!exportPayload || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
-              >
-                העתקה
+              <button className="secondary" type="button" onClick={() => setCsvStep(1)}>
+                חזרה
               </button>
+              <span style={{ flex: 1 }} />
               <button
                 className="primary"
                 type="button"
@@ -1514,12 +1297,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                   if (!exportPayload) return;
                   downloadTextFile(exportPayload.filename, exportPayload.csv);
                 }}
-                disabled={!exportPayload || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
+                disabled={!exportPayload}
               >
                 <DownloadIcon />
                 הורדה
               </button>
-              <span style={{ flex: 1 }} />
               <button className="primary" type="button" onClick={() => setCsvStep(3)}>
                 המשך לייבוא
               </button>
@@ -1530,23 +1312,33 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         {csvStep === 3 ? (
           <>
             <p className="admin-meta">ייבוא:</p>
-            <div className="admin-import-modes">
+
+            <div className="admin-import-options">
               <label>
-                <input type="radio" name="importMode" checked={importMode === "add"} onChange={() => setImportMode("add")} />
-                הוספת חדשים בלבד
-                <span className="admin-radio-help">- לא משנה רשומות קיימות</span>
+                <input type="checkbox" checked disabled />
+                הוספת רשומות חדשות
+                <span className="admin-radio-help">· מוסיף רשומות שלא קיימות במערכת</span>
               </label>
               <label>
-                <input type="radio" name="importMode" checked={importMode === "diff"} onChange={() => setImportMode("diff")} />
-                הוספה + עדכון לפי diff
-                <span className="admin-radio-help">- מוסיף חדשים ומעדכן קיימים רק אם השתנו</span>
+                <input
+                  type="checkbox"
+                  checked={importMode !== "add"}
+                  onChange={(event) => setImportMode(event.target.checked ? "diff" : "add")}
+                />
+                עדכון רשומות קיימות
+                <span className="admin-radio-help">· מעדכן רק אם הנתונים השתנו</span>
               </label>
               <label>
-                <input type="radio" name="importMode" checked={importMode === "override"} onChange={() => setImportMode("override")} />
+                <input
+                  type="checkbox"
+                  checked={importMode === "override"}
+                  onChange={(event) => setImportMode(event.target.checked ? "override" : "diff")}
+                />
                 דריסה מלאה (כולל מחיקות)
-                <span className="admin-radio-help">- מוחק את הטבלה הנבחרת ומייבא מחדש</span>
+                <span className="admin-radio-help">· מוחק רשומות קיימות בתחום הקובץ (סמסטרים/תאריכים), ואז מייבא מחדש</span>
               </label>
             </div>
+
             <p className="admin-meta">זיהוי רשומות לפי: {csvDistinctHelp}</p>
 
             <div className="admin-form-grid">
@@ -1555,35 +1347,23 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 <input type="file" accept=".csv" onChange={handleImportFile} />
               </label>
             </div>
-            <label>
-              תוכן CSV (אפשר להדביק/לערוך)
-              <textarea
-                className="admin-csv-preview"
-                value={importText}
-                placeholder="הדבק כאן CSV או בחר קובץ…"
-                onChange={(event) => {
-                  setImportText(event.target.value);
-                  setImportMessage("");
-                }}
-              />
-            </label>
+            {importFileName ? <p className="admin-meta">קובץ נבחר: {importFileName}</p> : null}
 
             {importPreview ? (
               <p className="admin-meta">
                 נמצאו{" "}
                 {"users" in importPreview
                   ? importPreview.users.length
-                  : `${importPreview.lessons.length} שיעורים ו-${importPreview.reservations.length} שריונים/אירועים/סגירות`}
+                  : importPreview.table === "lessons"
+                    ? `${importPreview.lessons.length} שיעורים`
+                    : `${importPreview.reservations.length} רשומות`}
                 {importPreview.errors.length ? ` · שגיאות: ${importPreview.errors.length}` : ""}
               </p>
             ) : null}
             {importPreview?.errors?.length ? (
-              <details>
-                <summary className="admin-error" style={{ cursor: "pointer" }}>הצג שגיאות</summary>
-                <div className="admin-csv-preview" style={{ whiteSpace: "pre-wrap" }}>
-                  {importPreview.errors.slice(0, 30).join("\n")}
-                </div>
-              </details>
+              <div className="admin-csv-preview" style={{ whiteSpace: "pre-wrap" }}>
+                {importPreview.errors.slice(0, 30).join("\n")}
+              </div>
             ) : null}
 
             <div className="admin-actions">
@@ -1595,6 +1375,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 type="button"
                 onClick={() => {
                   setImportText("");
+                  setImportFileName("");
                   setImportMessage("");
                 }}
                 disabled={!importText.trim()}
@@ -1606,7 +1387,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 className="primary"
                 type="button"
                 onClick={() => setCsvStep(4)}
-                disabled={!importText.trim() || !importPreview || Boolean(importPreview.errors.length) || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
+                disabled={!importText.trim() || !importPreview || Boolean(importPreview.errors.length)}
               >
                 המשך לאישור
               </button>
@@ -1618,20 +1399,27 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           <>
             <p className="admin-meta">אישור פעולות:</p>
             {importPlan ? (
-              <div className="admin-csv-confirm">
-                {importPlan.section === "users" ? (
-                  <p className="admin-meta">
-                    {importPlan.mode === "override"
-                      ? `מחיקה: ${importPlan.deletes} · ייבוא: ${importPlan.adds}`
-                      : `חדשים: ${importPlan.adds} · עדכונים: ${importPlan.updates}`}
+              <div className="admin-csv-confirm-card">
+                <div className="admin-csv-confirm-title">תצוגה מקדימה</div>
+                <div className="admin-csv-confirm-grid">
+                  <div className="admin-csv-confirm-stat">
+                    <div className="label">חדשים</div>
+                    <div className="value">{importPlan.adds}</div>
+                  </div>
+                  <div className="admin-csv-confirm-stat">
+                    <div className="label">עדכונים</div>
+                    <div className="value">{importPlan.updates}</div>
+                  </div>
+                  <div className="admin-csv-confirm-stat">
+                    <div className="label">מחיקות</div>
+                    <div className="value">{importPlan.deletes}</div>
+                  </div>
+                </div>
+                {importMode === "override" ? (
+                  <p className="admin-meta" style={{ margin: 0 }}>
+                    שים לב: דריסה מלאה מבצעת גם מחיקות בתחום הקובץ.
                   </p>
-                ) : (
-                  <p className="admin-meta">
-                    {importPlan.mode === "override"
-                      ? `מחיקת שיעורים: ${importPlan.deletesLessons} · מחיקת שריונים/אירועים/סגירות: ${importPlan.deletesReservations}`
-                      : `שיעורים: +${importPlan.addsLessons} / ~${importPlan.updatesLessons} · שריונים/אירועים/סגירות: +${importPlan.addsReservations} / ~${importPlan.updatesReservations}`}
-                  </p>
-                )}
+                ) : null}
               </div>
             ) : (
               <p className="admin-error">אין תצוגת ייבוא תקינה (בדוק שאין שגיאות וחזור לשלב הקודם).</p>
@@ -1644,12 +1432,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 חזרה
               </button>
               <span style={{ flex: 1 }} />
-              <button
-                className="primary"
-                type="button"
-                onClick={handleRunCsvImport}
-                disabled={!importPlan || (activeTool.section === "schedule" && scheduleSelectionEmpty)}
-              >
+              <button className="primary" type="button" onClick={handleRunCsvImport} disabled={!importPlan}>
                 <UploadIcon />
                 ביצוע ייבוא
               </button>
@@ -1660,9 +1443,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     </div>
   ) : activeTool.kind === "semesters" ? (
     semestersToolContent
-  ) : (
-    clearReservationsToolContent
-  );
+  ) : null;
 
   const mobileMenu = isNarrow && mobileMenuOpen ? (
     <div
@@ -1754,9 +1535,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv" ? " active" : ""}`}
                     onClick={() => toolToggle({ section: "users", kind: "csv" })}
                   >
-                    <UploadIcon />
-                    <DownloadIcon />
-                    ייבוא וייצוא
+                    <span className="admin-toolbar-icon-row" aria-hidden="true">
+                      <UploadIcon />
+                      <DownloadIcon />
+                    </span>
+                    <span>ייבוא וייצוא</span>
                   </button>
                 </>
               ) : null}
@@ -1767,9 +1550,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "csv" ? " active" : ""}`}
                     onClick={() => toolToggle({ section: "schedule", kind: "csv" })}
                   >
-                    <UploadIcon />
-                    <DownloadIcon />
-                    ייבוא וייצוא
+                    <span className="admin-toolbar-icon-row" aria-hidden="true">
+                      <UploadIcon />
+                      <DownloadIcon />
+                    </span>
+                    <span>ייבוא וייצוא</span>
                   </button>
                   <button
                     type="button"
@@ -1777,15 +1562,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     onClick={() => toolToggle({ section: "schedule", kind: "semesters" })}
                   >
                     <CalendarIcon />
-                    סמסטרים
-                  </button>
-                  <button
-                    type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "clear_reservations" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "schedule", kind: "clear_reservations" })}
-                  >
-                    <ReleaseIcon />
-                    ניקוי שריונים
+                    <span>סמסטרים</span>
                   </button>
                 </>
               ) : null}
@@ -1799,18 +1576,23 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                       onToggle={bulkState.selectAll.onToggle}
                     />
                   ) : null}
-                  {bulkState.actions.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      className={`admin-toolbar-chip admin-bulk-action${action.tone === "danger" ? " danger" : ""}`}
-                      onClick={action.onClick}
-                      disabled={action.disabled}
-                    >
-                      {action.icon ? action.icon : null}
-                      {action.label}
-                    </button>
-                  ))}
+                  {bulkState.actions
+                    .filter((action) => {
+                      if (bulkState.selectedCount === 0) return action.id === "new";
+                      return action.id !== "new";
+                    })
+                    .map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className={`admin-toolbar-chip admin-bulk-action${action.tone === "danger" ? " danger" : ""}`}
+                        onClick={action.onClick}
+                        disabled={action.disabled}
+                      >
+                        {action.icon ? action.icon : null}
+                        <span>{action.label}</span>
+                      </button>
+                    ))}
                 </>
               ) : null}
             </div>
@@ -1842,7 +1624,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 cohortStartYear: currentAcademicYear
               })
             }
-            onFilteredUsersChange={setExportUsersView}
             onBulkStateChange={setBulkState}
           />
         ) : null}
@@ -1865,8 +1646,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             onUpdateReservation={upsertReservation}
             onRemoveReservation={(reservation) => { void releaseReservation(reservation.date, reservation.id); }}
             onBulkStateChange={setBulkState}
-            onFilteredLessonsChange={setExportLessonsView}
-            onFilteredReservationsChange={setExportReservationsView}
           />
         ) : null}
 

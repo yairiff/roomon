@@ -27,15 +27,28 @@ export function useDirectoryUsers(enabled = true) {
       (snapshot) => {
         const next: DirectoryUser[] = [];
         snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as Partial<DirectoryUser>;
+          const raw = docSnap.data() as Record<string, unknown>;
+          const data = raw as Partial<DirectoryUser>;
           const email = (data.email || docSnap.id || "").toLowerCase();
           if (!email) return;
           const cohortStartYear = typeof data.cohortStartYear === "number" ? data.cohortStartYear : undefined;
+          const phone =
+            typeof raw.phone === "string"
+              ? raw.phone
+              : typeof raw.phoneNumber === "string"
+                ? raw.phoneNumber
+                : typeof raw.phone_number === "string"
+                  ? raw.phone_number
+                  : typeof raw.mobile === "string"
+                    ? raw.mobile
+                    : typeof raw.tel === "string"
+                      ? raw.tel
+                      : "";
           next.push({
             email,
             name: data.name || "",
             role: data.role || "pending",
-            phone: data.phone || "",
+            phone: phone || (data.phone || ""),
             cohortStartYear,
             notes: data.notes || ""
           });
@@ -64,12 +77,16 @@ export function useDirectoryUsers(enabled = true) {
     if (!db) return;
     const email = user.email.toLowerCase();
     if (!email) return;
-    await setDoc(doc(db, "users", email), {
-      ...user,
-      email,
-      phone: user.phone || "",
-      cohortStartYear: user.cohortStartYear ?? null
-    });
+    await setDoc(
+      doc(db, "users", email),
+      {
+        ...user,
+        email,
+        phone: user.phone || "",
+        cohortStartYear: user.cohortStartYear ?? null
+      },
+      { merge: true }
+    );
   };
 
   const removeUser = async (email: string) => {

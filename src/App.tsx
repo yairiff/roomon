@@ -50,13 +50,9 @@ export default function App() {
   const [isStandalone, setIsStandalone] = useState(false);
 
   const reservationsCount = useMemo(() => {
+    // Kept for potential future UI.
     if (!user) return 0;
-    return Object.entries(reservationMap)
-      .flatMap(([dateKey, entries]) =>
-        entries
-          .filter((entry) => entry.reservedEmail === user.email)
-          .map((entry) => entry.id)
-      )
+    return Object.values(reservationMap).flatMap((entries) => entries).filter((entry) => entry.reservedEmail === user.email)
       .length;
   }, [reservationMap, user]);
 
@@ -168,8 +164,6 @@ export default function App() {
         onClose={() => setAuthOpen(false)}
         onSignOut={handleSignOut}
         onLoginClick={handleLoginClick}
-        reservationsCount={reservationsCount}
-        onOpenReservations={() => setRequestedView("reservations")}
         onOpenMySchedule={() => setRequestedView("mySchedule")}
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}

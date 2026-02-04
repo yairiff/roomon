@@ -8,8 +8,6 @@ export type AuthMenuProps = {
   onClose: () => void;
   onSignOut: () => void;
   onLoginClick: () => void;
-  reservationsCount?: number;
-  onOpenReservations?: () => void;
   onOpenMySchedule?: () => void;
   adminMode?: boolean;
   onToggleAdminMode?: () => void;
@@ -24,8 +22,6 @@ export default function AuthMenu({
   onClose,
   onSignOut,
   onLoginClick,
-  reservationsCount = 0,
-  onOpenReservations,
   onOpenMySchedule,
   adminMode = false,
   onToggleAdminMode,
@@ -37,28 +33,44 @@ export default function AuthMenu({
 
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
 
+  const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+  const isIOS = /iPad|iPhone|iPod/i.test(ua);
+  const isAndroid = /Android/i.test(ua);
+
   useEffect(() => {
     if (!open) return;
     setInstallHelpOpen(false);
   }, [open]);
 
-  const installHint = useMemo(() => {
-    const ua = navigator.userAgent || "";
-    const isIOS = /iPad|iPhone|iPod/i.test(ua);
-    const isAndroid = /Android/i.test(ua);
+  const installHintTitle = useMemo(() => {
+    if (isIOS) return "הוספה למסך הבית (iPhone/iPad)";
+    if (isAndroid) return "התקנה (Android)";
+    return "התקנה";
+  }, [isAndroid, isIOS]);
+
+  const installHintBody = useMemo(() => {
     if (isIOS) {
-      return 'ב־Safari: לחצו על "שיתוף" ואז "הוספה למסך הבית".';
+      return [
+        'לחצו על כפתור "שיתוף" (ריבוע עם חץ למעלה).',
+        'בחרו "הוספה למסך הבית".',
+        "אשרו."
+      ];
     }
     if (isAndroid) {
-      return 'ב־Chrome/Edge: תפריט ⋮ ואז "הוספה למסך הבית".';
+      return [
+        'פתחו את תפריט הדפדפן (⋮).',
+        'בחרו "התקנת אפליקציה" או "הוספה למסך הבית".',
+        "אשרו."
+      ];
     }
-    return 'בדפדפן: תפריט ואז "הוספה למסך הבית" / "Install app".';
-  }, []);
+    return ['פתחו את תפריט הדפדפן.', 'בחרו "Install app" / "הוספה למסך הבית".'];
+  }, [isAndroid, isIOS]);
 
   const handleInstall = () => {
     if (isStandalone) return;
     if (installAvailable && onInstall) {
       onInstall();
+      onClose();
       return;
     }
     setInstallHelpOpen((prev) => !prev);
@@ -151,20 +163,6 @@ export default function AuthMenu({
               className="secondary auth-reservations-button"
               type="button"
               onClick={() => {
-                onOpenReservations?.();
-                onClose();
-              }}
-            >
-              <BookmarkIcon />
-              <span>השעות שלי</span>
-              {reservationsCount > 0 ? (
-                <span className="auth-reservations-count">{reservationsCount}</span>
-              ) : null}
-            </button>
-            <button
-              className="secondary auth-reservations-button"
-              type="button"
-              onClick={() => {
                 onOpenMySchedule?.();
                 onClose();
               }}
@@ -180,10 +178,22 @@ export default function AuthMenu({
                   onClick={handleInstall}
                 >
                   <ShortcutIcon />
-                  <span>הוספה למסך הבית</span>
+                  <span>{installAvailable ? "התקן אפליקציה" : "הוספה למסך הבית"}</span>
                 </button>
                 {installHelpOpen && !installAvailable ? (
-                  <div className="auth-install-hint">{installHint}</div>
+                  <div className="auth-install-hint" role="note" aria-label="התקנה">
+                    <div className="auth-install-hint-title">{installHintTitle}</div>
+                    <ol className="auth-install-hint-steps">
+                      {installHintBody.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ol>
+                    {isIOS ? (
+                      <div className="auth-install-hint-foot">
+                        אם לא מופיע, ודאו שאתם לא במצב גלישה פרטית.
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </>
             ) : null}
@@ -197,10 +207,22 @@ export default function AuthMenu({
               <>
                 <button className="secondary auth-install-button" type="button" onClick={handleInstall}>
                   <ShortcutIcon />
-                  <span>הוספה למסך הבית</span>
+                  <span>{installAvailable ? "התקן אפליקציה" : "הוספה למסך הבית"}</span>
                 </button>
                 {installHelpOpen && !installAvailable ? (
-                  <div className="auth-install-hint">{installHint}</div>
+                  <div className="auth-install-hint" role="note" aria-label="התקנה">
+                    <div className="auth-install-hint-title">{installHintTitle}</div>
+                    <ol className="auth-install-hint-steps">
+                      {installHintBody.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ol>
+                    {isIOS ? (
+                      <div className="auth-install-hint-foot">
+                        אם לא מופיע, ודאו שאתם לא במצב גלישה פרטית.
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </>
             ) : null}

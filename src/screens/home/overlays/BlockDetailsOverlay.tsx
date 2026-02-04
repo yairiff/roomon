@@ -28,20 +28,20 @@ export default function BlockDetailsOverlay({
   return (
     <div className="reserve-overlay" onClick={onClose}>
       <div className="reserve-menu" onClick={(event) => event.stopPropagation()}>
+        {onTogglePin ? (
+          <button
+            type="button"
+            className="reserve-pin"
+            aria-label={pinned ? "הוסר מהמערכת שלי" : "הוסף למערכת שלי"}
+            aria-pressed={pinned}
+            onClick={onTogglePin}
+          >
+            {pinned ? <PinOnIcon /> : <PinAddIcon />}
+          </button>
+        ) : null}
         <div>
           <div className="reserve-title-row">
             <p className="reserve-title">{title}</p>
-            {onTogglePin ? (
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={pinned ? "הוסר מהמערכת שלי" : "הוסף למערכת שלי"}
-                aria-pressed={pinned}
-                onClick={onTogglePin}
-              >
-                {pinned ? <PinOnIcon /> : <PinAddIcon />}
-              </button>
-            ) : null}
           </div>
           <p className="reserve-room">{room}</p>
         </div>

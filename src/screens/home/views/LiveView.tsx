@@ -206,7 +206,14 @@ export default function LiveView({
         {roomStates.map(({ room, status, busyUntil, nextEvent }) => {
           const nextBusyMinutes = busyUntil ? formatDiffMinutes(busyUntil) : "";
           const nextEventMinutes = nextEvent ? formatDiffMinutes(nextEvent.start) : "";
-          const details = [status.detailPrimary, status.detailSecondary].filter(Boolean).join(" · ");
+          const nextText = busyUntil
+            ? `פנוי ב־${formatMinutes(busyUntil)} · ${nextBusyMinutes}`
+            : nextEvent
+              ? `הבא ב־${formatMinutes(nextEvent.start)} · ${nextEventMinutes}`
+              : "";
+          const detailsBase = [status.detailPrimary, status.detailSecondary].filter(Boolean).join(" · ");
+          const details = detailsBase || (status.status === "empty" ? nextEvent?.label || "" : "");
+
           return (
             <button
               key={room.id}
@@ -214,27 +221,17 @@ export default function LiveView({
               onClick={() => onRoomSelect(room.id)}
               type="button"
             >
-              <div className="live-top">
-                <p className="live-room">{room.name}</p>
-                <p className="live-status">
+              <p className="live-room">{room.name}</p>
+
+              <div className="live-subline">
+                <span className="live-status">
                   <span className={`status-dot ${status.status}`} />
                   {status.label}
-                </p>
+                </span>
+                {nextText ? <span className="live-next">{nextText}</span> : <span className="live-next empty" />}
               </div>
-              {details ? (
-                <p className="live-details">{details}</p>
-              ) : null}
-              {busyUntil ? (
-                <div className="live-eta">
-                  <p className="live-eta-label">פנוי בעוד {nextBusyMinutes}</p>
-                  <p className="live-eta-time">ב־{formatMinutes(busyUntil)}</p>
-                </div>
-              ) : nextEvent ? (
-                <div className="live-eta">
-                  <p className="live-eta-label">הבא בעוד {nextEventMinutes}</p>
-                  <p className="live-eta-time">{formatMinutes(nextEvent.start)} · {nextEvent.label}</p>
-                </div>
-              ) : null}
+
+              {details ? <p className="live-details">{details}</p> : <span className="live-details empty" />}
             </button>
           );
         })}

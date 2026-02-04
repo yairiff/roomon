@@ -10,6 +10,7 @@ import { AddIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../componen
 import ConfirmDialog from "../components/ConfirmDialog";
 import type { BulkState } from "../bulk";
 import PropsOverlay from "../components/PropsOverlay";
+import FilterChip, { closeFilterChip } from "../components/FilterChip";
 
 type UsersSectionProps = {
   users: DirectoryUser[];
@@ -223,11 +224,18 @@ export default function UsersSection({
   };
 
   const bulkToggleAll = () => {
-    if (selectedInView.length && selectedInView.length === filteredUsers.length) {
-      setSelectedEmails(new Set());
-      return;
-    }
-    setSelectedEmails(new Set(filteredUsers.map((u) => u.email)));
+    setSelectedEmails((prev) => {
+      const emailsInView = filteredUsers.map((u) => u.email);
+      if (!emailsInView.length) return prev;
+      const allSelected = emailsInView.every((email) => prev.has(email));
+      const next = new Set(prev);
+      if (allSelected) {
+        emailsInView.forEach((email) => next.delete(email));
+      } else {
+        emailsInView.forEach((email) => next.add(email));
+      }
+      return next;
+    });
   };
 
   const bulkEdit = () => {
@@ -296,6 +304,35 @@ export default function UsersSection({
     setIsEditing(false);
     setIsNewEntry(false);
     onReset();
+  };
+
+  const sortLabel: Record<UserSort, string> = {
+    name: "שם",
+    email: "אימייל",
+    role: "הרשאה",
+    cohort: "שנתון"
+  };
+
+  const roleFilterLabel: Record<UserFilter, string> = {
+    all: "הכל",
+    pending: "ממתינים",
+    student: "משתמשים",
+    moderator: "מתאמים",
+    admin: "מנהלים"
+  };
+
+  const gradeFilterLabel: Record<GradeFilter, string> = {
+    all: "הכל",
+    A: "א׳",
+    B: "ב׳",
+    C: "ג׳",
+    STAFF: "צוות"
+  };
+
+  const phoneFilterLabel: Record<PhoneFilter, string> = {
+    all: "הכל",
+    has: "קיים",
+    missing: "חסר"
   };
 
   return (
@@ -417,124 +454,129 @@ export default function UsersSection({
         </div>
       </PropsOverlay>
       <div className="admin-section-toolbar">
-        <div className="admin-filters-stack">
-          <div className="admin-filters">
-            <button
-              type="button"
-              className={`chip small${filter === "all" ? " active" : ""}`}
-              onClick={() => setFilter("all")}
-            >
-              הכל ({counts.all})
-            </button>
-            <button
-              type="button"
-              className={`chip small${filter === "pending" ? " active" : ""}`}
-              onClick={() => setFilter("pending")}
-            >
-              ממתינים ({counts.pending})
-            </button>
-            <button
-              type="button"
-              className={`chip small${filter === "student" ? " active" : ""}`}
-              onClick={() => setFilter("student")}
-            >
-              משתמשים ({counts.student})
-            </button>
-            <button
-              type="button"
-              className={`chip small${filter === "moderator" ? " active" : ""}`}
-              onClick={() => setFilter("moderator")}
-            >
-              מתאמים ({counts.moderator})
-            </button>
-            <button
-              type="button"
-              className={`chip small${filter === "admin" ? " active" : ""}`}
-              onClick={() => setFilter("admin")}
-            >
-              מנהלים ({counts.admin})
-            </button>
+        <div className="admin-filter-bar" aria-label="סינון ומיון">
+          <div className="admin-filter-group scroll" aria-label="סינונים">
+            <FilterChip label="הרשאה" value={roleFilterLabel[filter]}>
+              <div className="admin-filter-options">
+                {(
+                  [
+                    { key: "all" as const, label: `הכל (${counts.all})` },
+                    { key: "pending" as const, label: `ממתינים (${counts.pending})` },
+                    { key: "student" as const, label: `משתמשים (${counts.student})` },
+                    { key: "moderator" as const, label: `מתאמים (${counts.moderator})` },
+                    { key: "admin" as const, label: `מנהלים (${counts.admin})` }
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={`admin-filter-option${filter === opt.key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setFilter(opt.key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <FilterChip label="שנתון" value={gradeFilterLabel[gradeFilter]}>
+              <div className="admin-filter-options">
+                {(
+                  [
+                    { key: "all" as const, label: `הכל (${gradeCounts.all})` },
+                    { key: "A" as const, label: `א׳ (${gradeCounts.A})` },
+                    { key: "B" as const, label: `ב׳ (${gradeCounts.B})` },
+                    { key: "C" as const, label: `ג׳ (${gradeCounts.C})` },
+                    { key: "STAFF" as const, label: `צוות (${gradeCounts.STAFF})` }
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={`admin-filter-option${gradeFilter === opt.key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setGradeFilter(opt.key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <FilterChip label="טלפון" value={phoneFilterLabel[phoneFilter]}>
+              <div className="admin-filter-options">
+                {(
+                  [
+                    { key: "all" as const, label: `הכל (${phoneCounts.all})` },
+                    { key: "has" as const, label: `קיים (${phoneCounts.has})` },
+                    { key: "missing" as const, label: `חסר (${phoneCounts.missing})` }
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={`admin-filter-option${phoneFilter === opt.key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setPhoneFilter(opt.key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <FilterChip label="חיפוש" value={query.trim() ? query.trim() : "ללא"}>
+              <div className="admin-filter-pop-grid">
+                <input
+                  className="admin-filter-input"
+                  type="search"
+                  value={query}
+                  placeholder="שם / אימייל / טלפון"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <div className="admin-filter-pop-actions">
+                  <button
+                    type="button"
+                    className="admin-filter-option subtle"
+                    onClick={(event) => {
+                      setQuery("");
+                      closeFilterChip(event);
+                    }}
+                  >
+                    נקה
+                  </button>
+                </div>
+              </div>
+            </FilterChip>
           </div>
-          <div className="admin-filters">
-            <button
-              type="button"
-              className={`chip small${gradeFilter === "all" ? " active" : ""}`}
-              onClick={() => setGradeFilter("all")}
-            >
-              שנתון: הכל ({gradeCounts.all})
-            </button>
-            <button
-              type="button"
-              className={`chip small${gradeFilter === "A" ? " active" : ""}`}
-              onClick={() => setGradeFilter("A")}
-            >
-              א׳ ({gradeCounts.A})
-            </button>
-            <button
-              type="button"
-              className={`chip small${gradeFilter === "B" ? " active" : ""}`}
-              onClick={() => setGradeFilter("B")}
-            >
-              ב׳ ({gradeCounts.B})
-            </button>
-            <button
-              type="button"
-              className={`chip small${gradeFilter === "C" ? " active" : ""}`}
-              onClick={() => setGradeFilter("C")}
-            >
-              ג׳ ({gradeCounts.C})
-            </button>
-            <button
-              type="button"
-              className={`chip small${gradeFilter === "STAFF" ? " active" : ""}`}
-              onClick={() => setGradeFilter("STAFF")}
-            >
-              צוות ({gradeCounts.STAFF})
-            </button>
-          </div>
-          <div className="admin-filters">
-            <button
-              type="button"
-              className={`chip small${phoneFilter === "all" ? " active" : ""}`}
-              onClick={() => setPhoneFilter("all")}
-            >
-              טלפון: הכל ({phoneCounts.all})
-            </button>
-            <button
-              type="button"
-              className={`chip small${phoneFilter === "has" ? " active" : ""}`}
-              onClick={() => setPhoneFilter("has")}
-            >
-              קיים ({phoneCounts.has})
-            </button>
-            <button
-              type="button"
-              className={`chip small${phoneFilter === "missing" ? " active" : ""}`}
-              onClick={() => setPhoneFilter("missing")}
-            >
-              חסר ({phoneCounts.missing})
-            </button>
-          </div>
-          <div className="admin-filter-controls">
-            <label>
-              חיפוש
-              <input
-                type="search"
-                value={query}
-                placeholder="שם / אימייל / טלפון"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-            <label>
-              מיון
-              <select value={sortBy} onChange={(event) => setSortBy(event.target.value as UserSort)}>
-                <option value="name">שם</option>
-                <option value="email">אימייל</option>
-                <option value="role">הרשאה</option>
-                <option value="cohort">שנתון</option>
-              </select>
-            </label>
-            <div className="admin-filter-meta" aria-label="כמות תוצאות">
+
+          <div className="admin-filter-group" aria-label="מיון">
+            <FilterChip label="מיון" value={sortLabel[sortBy]}>
+              <div className="admin-filter-options">
+                {(Object.keys(sortLabel) as UserSort[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`admin-filter-option${sortBy === key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setSortBy(key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {sortLabel[key]}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <div className="admin-filter-count" aria-label="כמות תוצאות">
               {filteredUsersCount} תוצאות
             </div>
           </div>
@@ -543,100 +585,95 @@ export default function UsersSection({
       </div>
       <div className="admin-section-body">
         <div className="admin-list">
-          <div className="admin-card list-card">
-            <div className="admin-card-header">
-              <h3>רשימת משתמשים</h3>
-            </div>
-            {filteredUsers.length ? (
-              <div className="admin-table scroll tall">
-                {filteredUsers.map((user) => (
-                  <div
-                    key={user.email}
-                    className={`admin-row clickable${selectedEmail === user.email ? " selected" : ""}${user.role === "pending" ? " pending" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleSelect(user)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        handleSelect(user);
-                      }
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="admin-row-check"
-                      checked={selectedEmails.has(user.email)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() =>
-                        setSelectedEmails((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(user.email)) next.delete(user.email);
-                          else next.add(user.email);
-                          return next;
-                        })
-                      }
-                      aria-label="בחר משתמש"
-                    />
-                    <div className="admin-row-main">
-                      <p className="admin-row-title">{user.name || user.email}</p>
-                      <p className="admin-row-meta">
-                        {user.phone ? user.phone : "טלפון לא צויין"} ·{" "}
-                        {isStaffUser(user)
-                          ? "צוות"
-                          : user.cohortStartYear
-                            ? `שנתון ${gradeLabelFromCohort(user.cohortStartYear)}`
-                            : "שנתון לא הוגדר"}
-                      </p>
-                      <p className="admin-row-meta">{user.email}</p>
-                    </div>
-                    <div className="admin-row-actions">
-                      <div className="admin-row-buttons">
-                        <button
-                          type="button"
-                          className="admin-mini-action"
-                          aria-label="עריכה"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelect(user);
-                          }}
-                        >
-                          <EditIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-mini-action"
-                          aria-label="שכפול"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            duplicateUser(user);
-                          }}
-                        >
-                          <DuplicateIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-mini-action danger"
-                          aria-label="מחיקה"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDeleteEmails([user.email]);
-                          }}
-                        >
-                          <ReleaseIcon />
-                        </button>
-                      </div>
-                      <span className={`chip small${user.role === "pending" ? " active" : " ghost"}`}>
-                        {roleLabel(user.role)}
-                      </span>
-                    </div>
+          {filteredUsers.length ? (
+            <div className="admin-table scroll tall">
+              {filteredUsers.map((user) => (
+                <div
+                  key={user.email}
+                  className={`admin-row clickable${selectedEmail === user.email ? " selected" : ""}${user.role === "pending" ? " pending" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleSelect(user)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleSelect(user);
+                    }
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    className="admin-row-check"
+                    checked={selectedEmails.has(user.email)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() =>
+                      setSelectedEmails((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(user.email)) next.delete(user.email);
+                        else next.add(user.email);
+                        return next;
+                      })
+                    }
+                    aria-label="בחר משתמש"
+                  />
+                  <div className="admin-row-main">
+                    <p className="admin-row-title">{user.name || user.email}</p>
+                    <p className="admin-row-meta">
+                      {user.phone ? user.phone : "טלפון לא צויין"} ·{" "}
+                      {isStaffUser(user)
+                        ? "צוות"
+                        : user.cohortStartYear
+                          ? `שנתון ${gradeLabelFromCohort(user.cohortStartYear)}`
+                          : "שנתון לא הוגדר"}
+                    </p>
+                    <p className="admin-row-meta">{user.email}</p>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="admin-meta">אין משתמשים במסנן הזה.</p>
-            )}
-          </div>
+                  <div className="admin-row-actions">
+                    <div className="admin-row-buttons">
+                      <button
+                        type="button"
+                        className="admin-mini-action"
+                        aria-label="עריכה"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelect(user);
+                        }}
+                      >
+                        <EditIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="admin-mini-action"
+                        aria-label="שכפול"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          duplicateUser(user);
+                        }}
+                      >
+                        <DuplicateIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="admin-mini-action danger"
+                        aria-label="מחיקה"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteEmails([user.email]);
+                        }}
+                      >
+                        <ReleaseIcon />
+                      </button>
+                    </div>
+                    <span className={`chip small${user.role === "pending" ? " active" : " ghost"}`}>
+                      {roleLabel(user.role)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="admin-meta">אין משתמשים במסנן הזה.</p>
+          )}
         </div>
       </div>
     </section>

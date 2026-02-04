@@ -1,13 +1,25 @@
+import { useMemo } from "react";
 import type { WeekDate } from "../../../lib/date";
-import type { ReservationMap } from "../../../types/reservations";
+import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, parseDateKey } from "../../../lib/date";
+import type { ReservationMap, Reservation } from "../../../types/reservations";
 import type { User } from "../../../types/auth";
-import type { Room } from "../../../types/schedule";
+import type { DayKey, Lesson, Room, TimeSlot } from "../../../types/schedule";
 import type { MySchedulePin } from "../../../types/mySchedule";
+import ScheduleGrid from "./ScheduleGrid";
+import Legend from "./Legend";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import { formatShortDate, getDayKeyFromDateKey } from "../../../lib/date";
 import { weekDays } from "../../../config";
 
+type MyScheduleMode = "day" | "week" | "agenda";
+
 type MyScheduleViewProps = {
+  mode: MyScheduleMode;
+  onModeChange: (mode: MyScheduleMode) => void;
+  selectedDate: string;
+  onSelectedDateChange: (dateKey: string) => void;
+  agendaDays: number;
+  onAgendaLoadMore: () => void;
+  todayDateKey: string;
   weekDates: WeekDate[];
   rooms: Room[];
   reservationMap: ReservationMap;
@@ -15,147 +27,533 @@ type MyScheduleViewProps = {
   pins: MySchedulePin[];
   onEditReservation: (dateKey: string, reservationId: string) => void;
   onOpenPinned: (pin: MySchedulePin) => void;
+  getScheduleLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
+  timeSlots: TimeSlot[];
+  startHour: number;
+  endHour: number;
 };
 
-type MyScheduleEntry =
+const MY_ROOM_ID = "__my_schedule__";
+
+type AgendaEntry =
   | {
-      type: "reservation";
+      kind: "reservation";
       id: string;
       dateKey: string;
+      roomId: string;
       startMinutes: number;
       durationMinutes: number;
-      roomId: string;
+      title: string;
+      meta: string;
+      clickable: true;
+      onClick: () => void;
     }
   | {
-      type: "pin";
-      pin: MySchedulePin;
+      kind: "pin";
+      id: string;
+      dateKey: string;
+      roomId: string;
+      startMinutes: number;
+      durationMinutes: number;
+      title: string;
+      meta: string;
+      type: MySchedulePin["kind"];
+      clickable: true;
+      onClick: () => void;
     };
 
 export default function MyScheduleView({
+  mode,
+  onModeChange,
+  selectedDate,
+  onSelectedDateChange,
+  agendaDays,
+  onAgendaLoadMore,
+  todayDateKey,
   weekDates,
   rooms,
   reservationMap,
   currentUser,
   pins,
   onEditReservation,
-  onOpenPinned
+  onOpenPinned,
+  getScheduleLessonsForDate,
+  timeSlots,
+  startHour,
+  endHour
 }: MyScheduleViewProps) {
-  const email = currentUser?.email || "";
+  const email = (currentUser?.email || "").trim().toLowerCase();
 
   const roomName = (roomId: string) => rooms.find((r) => r.id === roomId)?.name || roomId;
-
-  const entriesForDate = (dateKey: string): MyScheduleEntry[] => {
-    const mine =
-      email
-        ? (reservationMap[dateKey] || [])
-            .filter((entry) => entry.reservedEmail === email)
-            .map((entry) => ({
-              type: "reservation" as const,
-              id: entry.id,
-              dateKey,
-              startMinutes: entry.time,
-              durationMinutes: entry.durationMinutes,
-              roomId: entry.roomId
-            }))
-        : [];
-
-    const pinned = pins
-      .filter((pin) => pin.dateKey === dateKey)
-      .map((pin) => ({
-        type: "pin" as const,
-        pin
-      }));
-
-    return [...mine, ...pinned].sort((a, b) => {
-      const aStart = a.type === "pin" ? a.pin.startMinutes : a.startMinutes;
-      const bStart = b.type === "pin" ? b.pin.startMinutes : b.startMinutes;
-      return aStart - bStart;
-    });
+  const whoLabel = (reservedEmail?: string, fallback?: string) => {
+    const normalized = (reservedEmail || "").trim().toLowerCase();
+    if (email && normalized && normalized === email) return "אני";
+    return (fallback || "").trim();
   };
 
-  return (
-    <section className="finder reservations my-schedule">
-      <ul className="my-schedule-week">
-        {weekDates.map((day) => {
-          const dayEntries = entriesForDate(day.dateKey);
-          const weekdayLabel =
-            weekDays.find((d) => d.key === getDayKeyFromDateKey(day.dateKey))?.label || day.label || "";
-          return (
-            <li key={day.dateKey} className="my-schedule-day">
-              <div className="my-schedule-day-header">
-                <span className="my-schedule-day-name">{weekdayLabel}</span>
-                <span className="my-schedule-day-date">{formatShortDate(day.dateKey)}</span>
-              </div>
-              {dayEntries.length ? (
-                <ul className="finder-result-list">
-                  {dayEntries.map((entry) => {
-                    if (entry.type === "reservation") {
-                      const end = entry.startMinutes + entry.durationMinutes;
-                      return (
-                        <li
-                          key={`r:${entry.id}`}
-                          className="finder-result reserved clickable"
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => onEditReservation(entry.dateKey, entry.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              onEditReservation(entry.dateKey, entry.id);
-                            }
-                          }}
-                        >
-                          <div>
-                            <p className="finder-result-title">
-                              <span className="dot reserved" /> {roomName(entry.roomId)}
-                            </p>
-                            <p className="finder-result-meta">
-                              {formatMinutes(entry.startMinutes)}–{formatMinutes(end)}
-                            </p>
-                          </div>
-                        </li>
-                      );
-                    }
+  const pinBySyntheticId = useMemo(() => {
+    const map = new Map<string, MySchedulePin>();
+    pins.forEach((pin) => map.set(`pin:${pin.id}`, pin));
+    return map;
+  }, [pins]);
 
-                    const dotClass =
-                      entry.pin.kind === "lesson" ? "lesson" : entry.pin.kind === "special" ? "special" : "closed";
-                    const blockClass =
-                      entry.pin.kind === "lesson" ? "lesson" : entry.pin.kind === "special" ? "special" : "closed";
-                    const pinEnd = entry.pin.startMinutes + entry.pin.durationMinutes;
-                    return (
+  const myScheduleRoom = useMemo<Room>(() => ({ id: MY_ROOM_ID, name: "המערכת שלי", shortName: "שלי" }), []);
+
+  const syntheticReservations = useMemo<ReservationMap>(() => {
+    const out: ReservationMap = {};
+
+    const add = (entry: Reservation) => {
+      if (!out[entry.date]) out[entry.date] = [];
+      out[entry.date].push(entry);
+    };
+
+    // Pinned blocks (all types except "lesson") become reservations in the synthetic view.
+    pins.forEach((pin) => {
+      if (pin.kind === "lesson") return;
+      const id = `pin:${pin.id}`;
+      const roomLine = roomName(pin.roomId);
+      if (pin.kind === "special") {
+        add({
+          id,
+          date: pin.dateKey,
+          time: pin.startMinutes,
+          durationMinutes: pin.durationMinutes,
+          roomId: MY_ROOM_ID,
+          reservedBy: `${pin.title}${pin.meta ? ` · ${pin.meta}` : ""}\n${roomLine}`,
+          reservedEmail: "",
+          kind: "special"
+        });
+        return;
+      }
+      if (pin.kind === "closed") {
+        add({
+          id,
+          date: pin.dateKey,
+          time: pin.startMinutes,
+          durationMinutes: pin.durationMinutes,
+          roomId: MY_ROOM_ID,
+          reservedBy: `${pin.title}${pin.meta ? ` · ${pin.meta}` : ""}\n${roomLine}`,
+          reservedEmail: "",
+          kind: "closed"
+        });
+        return;
+      }
+      if (
+        email &&
+        (reservationMap[pin.dateKey] || []).some(
+          (entry) =>
+            !entry.kind &&
+            entry.roomId === pin.roomId &&
+            entry.time === pin.startMinutes &&
+            entry.durationMinutes === pin.durationMinutes &&
+            (entry.reservedEmail || "").trim().toLowerCase() === email
+        )
+      ) {
+        // Avoid duplicating a pinned copy of my own reservation; it already shows up from Firestore.
+        return;
+      }
+      const reservedBy = whoLabel(pin.reservedEmail, pin.title === "שמור" ? pin.meta : pin.meta || pin.title);
+      add({
+        id,
+        date: pin.dateKey,
+        time: pin.startMinutes,
+        durationMinutes: pin.durationMinutes,
+        roomId: MY_ROOM_ID,
+        reservedBy: `${reservedBy || "ללא שם"}\n${roomLine}`,
+        reservedEmail: pin.reservedEmail || ""
+      });
+    });
+
+    // My real reservations (merged into the synthetic column).
+    if (email) {
+      Object.entries(reservationMap).forEach(([dateKey, entries]) => {
+        entries.forEach((entry) => {
+          if (entry.kind) return;
+          if ((entry.reservedEmail || "").trim().toLowerCase() !== email) return;
+          const roomLine = roomName(entry.roomId);
+          add({
+            ...entry,
+            date: dateKey,
+            roomId: MY_ROOM_ID,
+            reservedBy: `אני\n${roomLine}`
+          });
+        });
+      });
+    }
+
+    Object.values(out).forEach((list) => list.sort((a, b) => a.time - b.time));
+    return out;
+  }, [email, pins, reservationMap, roomName]);
+
+  const getPinnedLessonsForDate = useMemo(() => {
+    const byDate = new Map<string, MySchedulePin[]>();
+    const recurringIds = new Set<string>();
+    pins.forEach((pin) => {
+      if (pin.kind !== "lesson") return;
+      if (pin.lessonId) {
+        recurringIds.add(pin.lessonId);
+        return;
+      }
+      const list = byDate.get(pin.dateKey) || [];
+      list.push(pin);
+      byDate.set(pin.dateKey, list);
+    });
+    byDate.forEach((list) => list.sort((a, b) => a.startMinutes - b.startMinutes));
+
+    return (dateKey: string, dayKey: DayKey): Lesson[] => {
+      const out: Lesson[] = [];
+
+      // Legacy (date-specific) pins.
+      (byDate.get(dateKey) || []).forEach((pin) => {
+        out.push({
+          id: `pin:${pin.id}`,
+          title: pin.title,
+          teacher: `${(pin.meta || "ללא מרצה").trim()}\n${roomName(pin.roomId)}`.trim(),
+          day: dayKey,
+          roomId: MY_ROOM_ID,
+          startMinutes: pin.startMinutes,
+          durationMinutes: pin.durationMinutes
+        });
+      });
+
+      // Recurring lesson pins, resolved from the schedule (with overrides applied upstream).
+      if (recurringIds.size && getScheduleLessonsForDate) {
+        getScheduleLessonsForDate(dateKey, dayKey).forEach((lesson) => {
+          if (!recurringIds.has(lesson.id)) return;
+          const teacherLine = `${(lesson.teacher || "ללא מרצה").trim()}\n${roomName(lesson.roomId)}`.trim();
+          out.push({
+            id: `lesson:${lesson.id}`,
+            title: lesson.title,
+            teacher: teacherLine,
+            day: dayKey,
+            roomId: MY_ROOM_ID,
+            startMinutes: lesson.startMinutes,
+            durationMinutes: lesson.durationMinutes
+          });
+        });
+      }
+
+      out.sort((a, b) => a.startMinutes - b.startMinutes);
+      return out;
+    };
+  }, [getScheduleLessonsForDate, pins, roomName]);
+
+  const agendaDateKeys = useMemo(() => {
+    const start = parseDateKey(todayDateKey);
+    const count = Math.max(1, Math.min(agendaDays, 120));
+    return Array.from({ length: count }, (_, i) => formatDateKey(addDays(start, i)));
+  }, [agendaDays, todayDateKey]);
+
+  const agendaDateSet = useMemo(() => new Set(agendaDateKeys), [agendaDateKeys]);
+
+  const agendaEntriesByDate = useMemo(() => {
+    const byDate = new Map<string, AgendaEntry[]>();
+    const add = (entry: AgendaEntry) => {
+      const list = byDate.get(entry.dateKey) || [];
+      list.push(entry);
+      byDate.set(entry.dateKey, list);
+    };
+
+    if (email) {
+      agendaDateKeys.forEach((dateKey) => {
+        (reservationMap[dateKey] || []).forEach((entry) => {
+          if (entry.kind) return;
+          if ((entry.reservedEmail || "").trim().toLowerCase() !== email) return;
+          const start = entry.time;
+          const end = entry.time + entry.durationMinutes;
+          add({
+            kind: "reservation",
+            id: `r:${entry.id}`,
+            dateKey,
+            roomId: entry.roomId,
+            startMinutes: start,
+            durationMinutes: entry.durationMinutes,
+            title: "שמור",
+            meta: `${roomName(entry.roomId)} · ${formatMinutes(start)}–${formatMinutes(end)}`,
+            clickable: true,
+            onClick: () => onEditReservation(dateKey, entry.id)
+          });
+        });
+      });
+    }
+
+    pins.forEach((pin) => {
+      // Recurring lesson pins are expanded per-date below (so they don't show as a single one-off pin).
+      if (pin.kind === "lesson" && pin.lessonId) return;
+      if (!agendaDateSet.has(pin.dateKey)) return;
+      if (
+        pin.kind === "reservation" &&
+        email &&
+        (reservationMap[pin.dateKey] || []).some(
+          (entry) =>
+            !entry.kind &&
+            entry.roomId === pin.roomId &&
+            entry.time === pin.startMinutes &&
+            entry.durationMinutes === pin.durationMinutes &&
+            (entry.reservedEmail || "").trim().toLowerCase() === email
+        )
+      ) {
+        return;
+      }
+      const start = pin.startMinutes;
+      const end = pin.startMinutes + pin.durationMinutes;
+      const meta =
+        `${roomName(pin.roomId)} · ${formatMinutes(start)}–${formatMinutes(end)}` +
+        (pin.meta ? ` · ${pin.meta}` : "");
+      add({
+        kind: "pin",
+        id: `p:${pin.id}`,
+        dateKey: pin.dateKey,
+        roomId: pin.roomId,
+        startMinutes: pin.startMinutes,
+        durationMinutes: pin.durationMinutes,
+        title: pin.title,
+        meta,
+        type: pin.kind,
+        clickable: true,
+        onClick: () => onOpenPinned(pin)
+      });
+    });
+
+    // Recurring lesson pins: expand into each date in the agenda window.
+    const recurringLessonIds = new Set(
+      pins.filter((pin) => pin.kind === "lesson" && pin.lessonId).map((pin) => pin.lessonId as string)
+    );
+    if (recurringLessonIds.size && getScheduleLessonsForDate) {
+      agendaDateKeys.forEach((dateKey) => {
+        const dayKey = getDayKeyFromDateKey(dateKey);
+        getScheduleLessonsForDate(dateKey, dayKey).forEach((lesson) => {
+          if (!recurringLessonIds.has(lesson.id)) return;
+          const start = lesson.startMinutes;
+          const end = lesson.startMinutes + lesson.durationMinutes;
+          const meta = `${roomName(lesson.roomId)} · ${formatMinutes(start)}–${formatMinutes(end)}` +
+            (lesson.teacher ? ` · ${lesson.teacher}` : "");
+          add({
+            kind: "pin",
+            id: `l:${dateKey}:${lesson.id}`,
+            dateKey,
+            roomId: lesson.roomId,
+            startMinutes: start,
+            durationMinutes: lesson.durationMinutes,
+            title: lesson.title,
+            meta,
+            type: "lesson",
+            clickable: true,
+            onClick: () =>
+              onOpenPinned({
+                id: `lesson:${lesson.id}`,
+                kind: "lesson",
+                lessonId: lesson.id,
+                dateKey,
+                roomId: lesson.roomId,
+                startMinutes: lesson.startMinutes,
+                durationMinutes: lesson.durationMinutes,
+                title: lesson.title,
+                meta: lesson.teacher || "ללא מרצה",
+                createdAt: 0
+              })
+          });
+        });
+      });
+    }
+
+    byDate.forEach((list, key) => {
+      list.sort((a, b) => a.startMinutes - b.startMinutes);
+      // Stable sort for same start time.
+      byDate.set(key, list);
+    });
+    return byDate;
+  }, [agendaDateKeys, agendaDateSet, email, onEditReservation, onOpenPinned, pins, reservationMap, roomName]);
+
+  if (mode === "agenda") {
+    const today = parseDateKey(todayDateKey);
+    const weekdayLabel = new Intl.DateTimeFormat("he-IL", { weekday: "long" }).format(today);
+    const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(today);
+    const nonEmptyDates = agendaDateKeys.filter((dateKey) => (agendaEntriesByDate.get(dateKey) || []).length > 0);
+
+    return (
+      <section className="finder reservations my-schedule">
+        <div className="my-schedule-agenda-note">
+          מהיום · {weekdayLabel} {dateLabel}
+        </div>
+        <ul className="my-schedule-week">
+          {nonEmptyDates.map((dateKey) => {
+            const entries = agendaEntriesByDate.get(dateKey) || [];
+            const weekday =
+              weekDays.find((d) => d.key === getDayKeyFromDateKey(dateKey))?.label || "";
+          return (
+            <li key={dateKey} className="my-schedule-day">
+              <div
+                className="my-schedule-day-header clickable"
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  onSelectedDateChange(dateKey);
+                  onModeChange("day");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectedDateChange(dateKey);
+                    onModeChange("day");
+                  }
+                }}
+              >
+                <span className="my-schedule-day-name">{weekday}</span>
+                <span className="my-schedule-day-date">{formatShortDate(dateKey)}</span>
+              </div>
+              {entries.length ? (
+                <ul className="finder-result-list">
+                    {entries.map((entry) => (
                       <li
-                        key={`p:${entry.pin.id}`}
-                        className={`finder-result ${blockClass} clickable`}
+                        key={entry.id}
+                        className={`finder-result ${
+                          entry.kind === "reservation"
+                            ? "reserved"
+                            : entry.type === "reservation"
+                              ? "reserved"
+                              : entry.type
+                        } clickable`}
                         role="button"
                         tabIndex={0}
-                        onClick={() => onOpenPinned(entry.pin)}
+                        onClick={() => {
+                          onSelectedDateChange(entry.dateKey);
+                          entry.onClick();
+                        }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            onOpenPinned(entry.pin);
+                            onSelectedDateChange(entry.dateKey);
+                            entry.onClick();
                           }
                         }}
                       >
                         <div>
                           <p className="finder-result-title">
-                            <span className={`dot ${dotClass}`} /> {entry.pin.title}
+                            <span
+                              className={`dot ${
+                                entry.kind === "reservation"
+                                  ? "reserved"
+                                  : entry.type === "reservation"
+                                    ? "reserved"
+                                    : entry.type
+                              }`}
+                            />{" "}
+                            {entry.title}
                           </p>
-                          <p className="finder-result-meta">
-                            {roomName(entry.pin.roomId)} · {formatMinutes(entry.pin.startMinutes)}–{formatMinutes(pinEnd)}
-                            {entry.pin.meta ? ` · ${entry.pin.meta}` : ""}
-                          </p>
+                          <p className="finder-result-meta">{entry.meta}</p>
                         </div>
                       </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <div className="my-schedule-empty">אין רשומות.</div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        {!nonEmptyDates.length ? <div className="my-schedule-empty">אין רשומות לתצוגה.</div> : null}
+        <div className="my-schedule-load">
+          <button type="button" className="primary" onClick={onAgendaLoadMore}>
+            טען עוד
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const selectedDayKey = getDayKeyFromDateKey(selectedDate);
+  const gridProps = {
+    rooms: [myScheduleRoom],
+    reservationMap: syntheticReservations,
+    currentUser,
+    onReserve: () => {},
+    onRelease: () => {},
+    interactive: false as const,
+    startHour,
+    endHour,
+    timeSlots,
+    roomMeta: undefined,
+    lessons: [] as Lesson[],
+    getLessonsForDate: getPinnedLessonsForDate,
+    onEditReservation,
+    onLessonDetails: (lessonId: string, dateKey: string) => {
+      if (lessonId.startsWith("pin:")) {
+        const pin = pinBySyntheticId.get(lessonId);
+        if (!pin) return;
+        onOpenPinned(pin);
+        onSelectedDateChange(dateKey);
+        return;
+      }
+      if (!lessonId.startsWith("lesson:")) return;
+      if (!getScheduleLessonsForDate) return;
+      const baseId = lessonId.slice("lesson:".length);
+      const dayKey = getDayKeyFromDateKey(dateKey);
+      const lesson = getScheduleLessonsForDate(dateKey, dayKey).find((entry) => entry.id === baseId);
+      if (!lesson) return;
+      onOpenPinned({
+        id: `lesson:${lesson.id}`,
+        kind: "lesson",
+        lessonId: lesson.id,
+        dateKey,
+        roomId: lesson.roomId,
+        startMinutes: lesson.startMinutes,
+        durationMinutes: lesson.durationMinutes,
+        title: lesson.title,
+        meta: lesson.teacher || "ללא מרצה",
+        createdAt: 0
+      });
+      onSelectedDateChange(dateKey);
+    },
+    onSpecialDetails: (reservationId: string, dateKey: string) => {
+      const pin = pinBySyntheticId.get(reservationId);
+      if (!pin) return;
+      onOpenPinned(pin);
+      onSelectedDateChange(dateKey);
+    },
+    onClosedDetails: (reservationId: string, dateKey: string) => {
+      const pin = pinBySyntheticId.get(reservationId);
+      if (!pin) return;
+      onOpenPinned(pin);
+      onSelectedDateChange(dateKey);
+    },
+    onReservationClick: (reservationId: string, dateKey: string) => {
+      const pin = pinBySyntheticId.get(reservationId);
+      if (!pin) return;
+      onOpenPinned(pin);
+      onSelectedDateChange(dateKey);
+    }
+  };
+
+  return (
+    <section className="my-schedule-grid">
+      {mode === "day" ? (
+        <ScheduleGrid
+          {...gridProps}
+          view="daily"
+          weekDates={weekDates}
+          selectedDate={selectedDate}
+          selectedDayKey={selectedDayKey}
+          selectedRoom={MY_ROOM_ID}
+          showHeaders={false}
+          footer={<Legend />}
+        />
+      ) : (
+        <ScheduleGrid
+          {...gridProps}
+          view="room"
+          weekDates={weekDates}
+          selectedDate={selectedDate}
+          selectedDayKey={selectedDayKey}
+          selectedRoom={MY_ROOM_ID}
+          showHeaders
+          compact
+          onDateSelect={(dateKey) => {
+            onSelectedDateChange(dateKey);
+            onModeChange("day");
+          }}
+          footer={<Legend />}
+        />
+      )}
     </section>
   );
 }

@@ -9,8 +9,10 @@ import { AddIcon, CloseIcon, DuplicateIcon, EditIcon, ReleaseIcon, TuneIcon } fr
 import ConfirmDialog from "../components/ConfirmDialog";
 import PropsOverlay from "../components/PropsOverlay";
 import { useLessonOverrides } from "../../../hooks/useLessonOverrides";
+import FilterChip, { closeFilterChip } from "../components/FilterChip";
 
 type ScheduleFilter = "all" | "lessons" | "regular" | "special" | "closed";
+type ScheduleSort = "time" | "room" | "title";
 
 type ScheduleSectionProps = {
   scheduleFilter: ScheduleFilter;
@@ -79,6 +81,7 @@ export default function ScheduleSection({
   const [dayFilter, setDayFilter] = useState<LessonRecord["day"] | "all">("all");
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
+  const [sortBy, setSortBy] = useState<ScheduleSort>("time");
   const [selectedKeys, setSelectedKeys] = useState<Set<ItemKey>>(() => new Set());
   const [confirmDeleteKeys, setConfirmDeleteKeys] = useState<ItemKey[] | null>(null);
   const [lessonOverridesOpen, setLessonOverridesOpen] = useState(false);
@@ -109,6 +112,12 @@ export default function ScheduleSection({
   const includesReservations =
     scheduleFilter === "all" || scheduleFilter === "regular" || scheduleFilter === "special" || scheduleFilter === "closed";
 
+  const sortLabel: Record<ScheduleSort, string> = {
+    time: "זמן",
+    room: "חדר",
+    title: "כותרת"
+  };
+
   const filteredLessons = useMemo(() => {
     if (!includesLessons) return [];
     let list = lessons;
@@ -123,10 +132,18 @@ export default function ScheduleSection({
       });
     }
     const dayIndex = (dayKey: LessonRecord["day"]) => weekDays.findIndex((day) => day.key === dayKey);
-    return [...list].sort((a, b) =>
-      dayIndex(a.day) - dayIndex(b.day) || a.startMinutes - b.startMinutes || a.title.localeCompare(b.title, "he")
-    );
-  }, [dayFilter, dayLabel, includesLessons, lessons, query, roomFilter, roomLookup]);
+    const roomName = (lesson: LessonRecord) => (roomLookup[lesson.roomId] || lesson.roomId).trim();
+    const byTime = (a: LessonRecord, b: LessonRecord) =>
+      dayIndex(a.day) - dayIndex(b.day) || a.startMinutes - b.startMinutes;
+    const byTitle = (a: LessonRecord, b: LessonRecord) => a.title.localeCompare(b.title, "he");
+    const byRoom = (a: LessonRecord, b: LessonRecord) => roomName(a).localeCompare(roomName(b), "he");
+
+    return [...list].sort((a, b) => {
+      if (sortBy === "room") return byRoom(a, b) || byTime(a, b) || byTitle(a, b);
+      if (sortBy === "title") return byTitle(a, b) || byTime(a, b) || byRoom(a, b);
+      return byTime(a, b) || byRoom(a, b) || byTitle(a, b);
+    });
+  }, [dayFilter, dayLabel, includesLessons, lessons, query, roomFilter, roomLookup, sortBy]);
 
   const filteredReservations = useMemo(() => {
     if (!includesReservations) return [];
@@ -162,8 +179,18 @@ export default function ScheduleSection({
       });
     }
 
-    return [...list].sort((a, b) => a.date.localeCompare(b.date) || a.time - b.time || a.roomId.localeCompare(b.roomId));
-  }, [dateEnd, dateStart, includesReservations, query, reservations, roomFilter, roomLookup, scheduleFilter]);
+    const roomName = (reservation: Reservation) => (roomLookup[reservation.roomId] || reservation.roomId).trim();
+    const byTime = (a: Reservation, b: Reservation) => a.date.localeCompare(b.date) || a.time - b.time;
+    const byTitle = (a: Reservation, b: Reservation) =>
+      (a.reservedBy || "").localeCompare(b.reservedBy || "", "he") || kindLabel(a).localeCompare(kindLabel(b), "he");
+    const byRoom = (a: Reservation, b: Reservation) => roomName(a).localeCompare(roomName(b), "he");
+
+    return [...list].sort((a, b) => {
+      if (sortBy === "room") return byRoom(a, b) || byTime(a, b) || byTitle(a, b);
+      if (sortBy === "title") return byTitle(a, b) || byTime(a, b) || byRoom(a, b);
+      return byTime(a, b) || byRoom(a, b) || byTitle(a, b);
+    });
+  }, [dateEnd, dateStart, includesReservations, query, reservations, roomFilter, roomLookup, scheduleFilter, sortBy]);
 
   useEffect(() => {
     onFilteredLessonsChange?.(filteredLessons);
@@ -177,33 +204,8 @@ export default function ScheduleSection({
     const next: ScheduleItem[] = [];
     filteredLessons.forEach((lesson) => next.push({ key: `lesson:${lesson.id}`, kind: "lesson", lesson }));
     filteredReservations.forEach((reservation) => next.push({ key: `reservation:${reservation.id}`, kind: "reservation", reservation }));
-
-    if (includesLessons && includesReservations) {
-      const dayIndex = (dayKey: LessonRecord["day"]) => weekDays.findIndex((day) => day.key === dayKey);
-      next.sort((a, b) => {
-        if (a.kind !== b.kind) return a.kind === "lesson" ? -1 : 1;
-        if (a.kind === "lesson" && b.kind === "lesson") {
-          return (
-            dayIndex(a.lesson.day) - dayIndex(b.lesson.day) ||
-            a.lesson.startMinutes - b.lesson.startMinutes ||
-            a.lesson.title.localeCompare(b.lesson.title, "he")
-          );
-        }
-        if (a.kind === "reservation" && b.kind === "reservation") {
-          return (
-            a.reservation.date.localeCompare(b.reservation.date) ||
-            a.reservation.time - b.reservation.time ||
-            (roomLookup[a.reservation.roomId] || a.reservation.roomId).localeCompare(
-              roomLookup[b.reservation.roomId] || b.reservation.roomId,
-              "he"
-            )
-          );
-        }
-        return 0;
-      });
-    }
     return next;
-  }, [filteredLessons, filteredReservations, includesLessons, includesReservations, roomLookup]);
+  }, [filteredLessons, filteredReservations]);
 
   const itemsByKey = useMemo(() => {
     const map = new Map<ItemKey, ScheduleItem>();
@@ -218,11 +220,18 @@ export default function ScheduleSection({
 
   const toggleAll = useCallback(() => {
     setSelectedKeys((prev) => {
-      const allSelected = items.length > 0 && selectedInView.length === items.length;
-      if (allSelected) return new Set();
-      return new Set(items.map((item) => item.key));
+      const keysInView = items.map((item) => item.key);
+      if (!keysInView.length) return prev;
+      const allSelected = keysInView.every((key) => prev.has(key));
+      const next = new Set(prev);
+      if (allSelected) {
+        keysInView.forEach((key) => next.delete(key));
+      } else {
+        keysInView.forEach((key) => next.add(key));
+      }
+      return next;
     });
-  }, [items, selectedInView.length]);
+  }, [items]);
 
   const selectOne = useCallback((item: ScheduleItem) => {
     if (item.kind === "lesson") {
@@ -506,8 +515,6 @@ export default function ScheduleSection({
     setConfirmDeleteKeys([key]);
   };
 
-  const headerTitle = "מערכת שעות";
-
   return (
     <section className="admin-section">
       <ConfirmDialog
@@ -562,6 +569,11 @@ export default function ScheduleSection({
                     </select>
                   </label>
                 </div>
+                <p className="admin-meta" style={{ margin: "-2px 0 10px" }}>
+                  עריכה כאן משנה את הסדרה הקבועה (כל שבוע).
+                  <br />
+                  לשינוי חד-פעמי בתאריך מסוים: השתמש/י ב״הצג החרגות״.
+                </p>
                 <div className="admin-form-grid">
                   <label>
                     שם שיעור
@@ -797,6 +809,10 @@ export default function ScheduleSection({
                 </div>
               </div>
             </div>
+            <p className="admin-meta" style={{ marginTop: -4 }}>
+              החרגה חלה על תאריך ספציפי בלבד, ולא משנה את הסדרה הקבועה.
+              אפשר לעדכן, למחוק ליום הזה, או להוסיף מופע חד-פעמי.
+            </p>
 
             {lessonOverrides.length ? (
               <div className="admin-table">
@@ -839,6 +855,9 @@ export default function ScheduleSection({
                   <h3>עריכת החרגה</h3>
                   <span className="admin-meta">{overrideDraft.id}</span>
                 </div>
+                <p className="admin-meta" style={{ margin: "0 0 8px" }}>
+                  עדכון: משנה את השיעור בתאריך הזה · מחיקה: מסתיר את השיעור בתאריך הזה · הוספה: מוסיף שיעור חדש בתאריך הזה.
+                </p>
                 <div className="admin-form-grid">
                   <label>
                     תאריך
@@ -1005,109 +1024,220 @@ export default function ScheduleSection({
       ) : null}
 
       <div className="admin-section-toolbar">
-        <div className="admin-filters-stack">
-          <div className="admin-filters">
-            <button
-              type="button"
-              className={`chip small${scheduleFilter === "all" ? " active" : ""}`}
-              onClick={() => setScheduleFilter("all")}
+        <div className="admin-filter-bar" aria-label="סינון ומיון">
+          <div className="admin-filter-group scroll" aria-label="סינונים">
+            <FilterChip
+              label="סוג"
+              value={
+                scheduleFilter === "all"
+                  ? "הכל"
+                  : scheduleFilter === "lessons"
+                    ? "שיעורים"
+                    : scheduleFilter === "regular"
+                      ? "שריונים"
+                      : scheduleFilter === "special"
+                        ? "אירועים"
+                        : "סגירות"
+              }
             >
-              הכל
-            </button>
-            <button
-              type="button"
-              className={`chip small${scheduleFilter === "lessons" ? " active" : ""}`}
-              onClick={() => setScheduleFilter("lessons")}
-            >
-              שיעורים
-            </button>
-            <button
-              type="button"
-              className={`chip small${scheduleFilter === "regular" ? " active" : ""}`}
-              onClick={() => setScheduleFilter("regular")}
-            >
-              שריונים
-            </button>
-            <button
-              type="button"
-              className={`chip small${scheduleFilter === "special" ? " active" : ""}`}
-              onClick={() => setScheduleFilter("special")}
-            >
-              אירועים
-            </button>
-            <button
-              type="button"
-              className={`chip small${scheduleFilter === "closed" ? " active" : ""}`}
-              onClick={() => setScheduleFilter("closed")}
-            >
-              סגירות
-            </button>
-          </div>
-          {includesLessons ? (
-            <div className="admin-filters">
-              <button
-                type="button"
-                className={`chip small${activeSemester === "A" ? " active" : ""}`}
-                onClick={() => setActiveSemester("A")}
-              >
-                סמסטר א׳
-              </button>
-              <button
-                type="button"
-                className={`chip small${activeSemester === "B" ? " active" : ""}`}
-                onClick={() => setActiveSemester("B")}
-              >
-                סמסטר ב׳
-              </button>
-            </div>
-          ) : null}
-          <div className="admin-filter-controls">
-            <label>
-              חיפוש
-              <input
-                type="search"
-                value={query}
-                placeholder="כותרת / שם / אימייל / חדר"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-            {includesLessons ? (
-              <label>
-                יום
-                <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value as typeof dayFilter)}>
-                  <option value="all">כל הימים</option>
-                  {weekDays.map((day) => (
-                    <option key={day.key} value={day.key}>
-                      {day.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label>
-              חדר
-              <select value={roomFilter} onChange={(event) => setRoomFilter(event.target.value)}>
-                <option value="all">כל החדרים</option>
-                {roomsRaw.map((room) => (
-                  <option key={room.id} value={room.id}>
-                    {room.name}
-                  </option>
+              <div className="admin-filter-options">
+                {(
+                  [
+                    { key: "all" as const, label: "הכל" },
+                    { key: "lessons" as const, label: "שיעורים" },
+                    { key: "regular" as const, label: "שריונים" },
+                    { key: "special" as const, label: "אירועים" },
+                    { key: "closed" as const, label: "סגירות" }
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={`admin-filter-option${scheduleFilter === opt.key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setScheduleFilter(opt.key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
                 ))}
-              </select>
-            </label>
-            {includesReservations ? (
-              <>
-                <label>
-                  מתאריך
-                  <input type="date" value={dateStart} onChange={(event) => setDateStart(event.target.value)} />
-                </label>
-                <label>
-                  עד תאריך
-                  <input type="date" value={dateEnd} onChange={(event) => setDateEnd(event.target.value)} />
-                </label>
-              </>
+              </div>
+            </FilterChip>
+
+            {includesLessons ? (
+              <FilterChip label="סמסטר" value={activeSemester === "A" ? "א׳" : "ב׳"}>
+                <div className="admin-filter-options">
+                  {(
+                    [
+                      { key: "A" as const, label: "סמסטר א׳" },
+                      { key: "B" as const, label: "סמסטר ב׳" }
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      className={`admin-filter-option${activeSemester === opt.key ? " active" : ""}`}
+                      onClick={(event) => {
+                        setActiveSemester(opt.key);
+                        closeFilterChip(event);
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </FilterChip>
             ) : null}
-            <div className="admin-filter-meta" aria-label="כמות תוצאות">
+
+            {includesLessons ? (
+              <FilterChip label="יום" value={dayFilter === "all" ? "כל הימים" : dayLabel(dayFilter)}>
+                <div className="admin-filter-options">
+                  <button
+                    type="button"
+                    className={`admin-filter-option${dayFilter === "all" ? " active" : ""}`}
+                    onClick={(event) => {
+                      setDayFilter("all");
+                      closeFilterChip(event);
+                    }}
+                  >
+                    כל הימים
+                  </button>
+                  {weekDays.map((day) => (
+                    <button
+                      key={day.key}
+                      type="button"
+                      className={`admin-filter-option${dayFilter === day.key ? " active" : ""}`}
+                      onClick={(event) => {
+                        setDayFilter(day.key);
+                        closeFilterChip(event);
+                      }}
+                    >
+                      {day.label}
+                    </button>
+                  ))}
+                </div>
+              </FilterChip>
+            ) : null}
+
+            <FilterChip label="חדר" value={roomFilter === "all" ? "כל החדרים" : (roomLookup[roomFilter] || roomFilter)}>
+              <div className="admin-filter-options">
+                <button
+                  type="button"
+                  className={`admin-filter-option${roomFilter === "all" ? " active" : ""}`}
+                  onClick={(event) => {
+                    setRoomFilter("all");
+                    closeFilterChip(event);
+                  }}
+                >
+                  כל החדרים
+                </button>
+                {roomsRaw.map((room) => (
+                  <button
+                    key={room.id}
+                    type="button"
+                    className={`admin-filter-option${roomFilter === room.id ? " active" : ""}`}
+                    onClick={(event) => {
+                      setRoomFilter(room.id);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {room.name}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            {includesReservations ? (
+              <FilterChip
+                label="תאריכים"
+                value={
+                  dateStart || dateEnd
+                    ? `${dateStart ? dateStart : "..."}–${dateEnd ? dateEnd : "..."}`
+                    : "הכל"
+                }
+              >
+                <div className="admin-filter-pop-grid">
+                  <label className="admin-filter-field">
+                    מתאריך
+                    <input
+                      className="admin-filter-input"
+                      type="date"
+                      value={dateStart}
+                      onChange={(event) => setDateStart(event.target.value)}
+                    />
+                  </label>
+                  <label className="admin-filter-field">
+                    עד תאריך
+                    <input
+                      className="admin-filter-input"
+                      type="date"
+                      value={dateEnd}
+                      onChange={(event) => setDateEnd(event.target.value)}
+                    />
+                  </label>
+                  <div className="admin-filter-pop-actions">
+                    <button
+                      type="button"
+                      className="admin-filter-option subtle"
+                      onClick={(event) => {
+                        setDateStart("");
+                        setDateEnd("");
+                        closeFilterChip(event);
+                      }}
+                    >
+                      נקה
+                    </button>
+                  </div>
+                </div>
+              </FilterChip>
+            ) : null}
+
+            <FilterChip label="חיפוש" value={query.trim() ? query.trim() : "ללא"}>
+              <div className="admin-filter-pop-grid">
+                <input
+                  className="admin-filter-input"
+                  type="search"
+                  value={query}
+                  placeholder="כותרת / שם / אימייל / חדר"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <div className="admin-filter-pop-actions">
+                  <button
+                    type="button"
+                    className="admin-filter-option subtle"
+                    onClick={(event) => {
+                      setQuery("");
+                      closeFilterChip(event);
+                    }}
+                  >
+                    נקה
+                  </button>
+                </div>
+              </div>
+            </FilterChip>
+          </div>
+
+          <div className="admin-filter-group" aria-label="מיון">
+            <FilterChip label="מיון" value={sortLabel[sortBy]}>
+              <div className="admin-filter-options">
+                {(Object.keys(sortLabel) as ScheduleSort[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`admin-filter-option${sortBy === key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setSortBy(key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {sortLabel[key]}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <div className="admin-filter-count" aria-label="כמות תוצאות">
               {items.length} תוצאות
             </div>
           </div>
@@ -1117,106 +1247,100 @@ export default function ScheduleSection({
 
       <div className="admin-section-body">
         <div className="admin-list">
-          <div className="admin-card list-card">
-            <div className="admin-card-header">
-              <h3>{headerTitle}</h3>
-            </div>
+          {items.length ? (
+            <div className="admin-table scroll tall">
+              {items.map((item) => {
+                const checked = selectedKeys.has(item.key);
+                const title =
+                  item.kind === "lesson"
+                    ? item.lesson.title || "שיעור"
+                    : item.reservation.reservedBy || item.reservation.reservedEmail || "ללא שם";
+                const meta =
+                  item.kind === "lesson"
+                    ? `שיעור · ${dayLabel(item.lesson.day)} · ${toTimeInput(item.lesson.startMinutes)} · ${item.lesson.durationMinutes} דק׳ · ${roomLookup[item.lesson.roomId] || item.lesson.roomId} · ${(item.lesson.teacher || "").trim() || "ללא מרצה"}`
+                    : `${kindLabel(item.reservation)} · ${item.reservation.date} · ${toTimeInput(item.reservation.time)} · ${(item.reservation.durationMinutes || 60)} דק׳ · ${roomLookup[item.reservation.roomId] || item.reservation.roomId}`;
 
-            {items.length ? (
-              <div className="admin-table scroll tall">
-                {items.map((item) => {
-                  const checked = selectedKeys.has(item.key);
-                  const title =
-                    item.kind === "lesson"
-                      ? item.lesson.title || "שיעור"
-                      : item.reservation.reservedBy || item.reservation.reservedEmail || "ללא שם";
-                  const meta =
-                    item.kind === "lesson"
-                      ? `שיעור · ${dayLabel(item.lesson.day)} · ${toTimeInput(item.lesson.startMinutes)} · ${item.lesson.durationMinutes} דק׳ · ${roomLookup[item.lesson.roomId] || item.lesson.roomId} · ${(item.lesson.teacher || "").trim() || "ללא מרצה"}`
-                      : `${kindLabel(item.reservation)} · ${item.reservation.date} · ${toTimeInput(item.reservation.time)} · ${(item.reservation.durationMinutes || 60)} דק׳ · ${roomLookup[item.reservation.roomId] || item.reservation.roomId}`;
-
-                  return (
-                    <div
-                      key={item.key}
-                      className="admin-row clickable"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => selectOne(item)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          selectOne(item);
-                        }
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        className="admin-row-check"
-                        checked={checked}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={() =>
-                          setSelectedKeys((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(item.key)) next.delete(item.key);
-                            else next.add(item.key);
-                            return next;
-                          })
-                        }
-                        aria-label="בחר רשומה"
-                      />
-                      <div className="admin-row-main">
-                        <p className="admin-row-title">{title}</p>
-                        <p className="admin-row-meta">{meta}</p>
-                        {item.kind === "reservation" && item.reservation.reservedEmail ? (
-                          <p className="admin-row-meta">{item.reservation.reservedEmail}</p>
-                        ) : null}
-                      </div>
-                      <div className="admin-row-actions">
-                        <div className="admin-row-buttons">
-                          <button
-                            type="button"
-                            className="admin-mini-action"
-                            aria-label="עריכה"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              selectOne(item);
-                            }}
-                          >
-                            <EditIcon />
-                          </button>
-                          <button
-                            type="button"
-                            className="admin-mini-action"
-                            aria-label="שכפול"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (item.kind === "lesson") duplicateLesson(item.lesson);
-                              else duplicateReservation(item.reservation);
-                            }}
-                          >
-                            <DuplicateIcon />
-                          </button>
-                          <button
-                            type="button"
-                            className="admin-mini-action danger"
-                            aria-label="מחיקה"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmDeleteKeys([item.key]);
-                            }}
-                          >
-                            <ReleaseIcon />
-                          </button>
-                        </div>
+                return (
+                  <div
+                    key={item.key}
+                    className="admin-row clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectOne(item)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectOne(item);
+                      }
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      className="admin-row-check"
+                      checked={checked}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() =>
+                        setSelectedKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(item.key)) next.delete(item.key);
+                          else next.add(item.key);
+                          return next;
+                        })
+                      }
+                      aria-label="בחר רשומה"
+                    />
+                    <div className="admin-row-main">
+                      <p className="admin-row-title">{title}</p>
+                      <p className="admin-row-meta">{meta}</p>
+                      {item.kind === "reservation" && item.reservation.reservedEmail ? (
+                        <p className="admin-row-meta">{item.reservation.reservedEmail}</p>
+                      ) : null}
+                    </div>
+                    <div className="admin-row-actions">
+                      <div className="admin-row-buttons">
+                        <button
+                          type="button"
+                          className="admin-mini-action"
+                          aria-label="עריכה"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectOne(item);
+                          }}
+                        >
+                          <EditIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-mini-action"
+                          aria-label="שכפול"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (item.kind === "lesson") duplicateLesson(item.lesson);
+                            else duplicateReservation(item.reservation);
+                          }}
+                        >
+                          <DuplicateIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-mini-action danger"
+                          aria-label="מחיקה"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteKeys([item.key]);
+                          }}
+                        >
+                          <ReleaseIcon />
+                        </button>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="admin-meta">אין רשומות להצגה.</p>
-            )}
-          </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="admin-meta">אין רשומות להצגה.</p>
+          )}
         </div>
       </div>
     </section>

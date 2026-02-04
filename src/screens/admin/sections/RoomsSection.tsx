@@ -5,6 +5,7 @@ import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../.
 import type { BulkState } from "../bulk";
 import ConfirmDialog from "../components/ConfirmDialog";
 import PropsOverlay from "../components/PropsOverlay";
+import FilterChip, { closeFilterChip } from "../components/FilterChip";
 
 type RoomsSectionProps = {
   roomsRaw: RoomRecord[];
@@ -94,6 +95,40 @@ export default function RoomsSection({
     return base;
   }, [roomsRaw]);
 
+  const statusCounts = useMemo(() => {
+    const base = { all: roomsRaw.length, open: 0, closed: 0 };
+    roomsRaw.forEach((room) => {
+      if (room.isClosed) base.closed += 1;
+      else base.open += 1;
+    });
+    return base;
+  }, [roomsRaw]);
+
+  const filterLabel: Record<RoomFilter, string> = useMemo(
+    () => ({
+      all: `הכל (${statusCounts.all})`,
+      open: `פתוחים (${statusCounts.open})`,
+      closed: `סגורים (${statusCounts.closed})`
+    }),
+    [statusCounts]
+  );
+
+  const shortFilterLabel: Record<RoomShortFilter, string> = useMemo(
+    () => ({
+      all: `הכל (${shortCounts.all})`,
+      has: `קיים (${shortCounts.has})`,
+      missing: `חסר (${shortCounts.missing})`
+    }),
+    [shortCounts]
+  );
+
+  const sortLabel: Record<RoomSort, string> = {
+    order: "סדר תצוגה",
+    name: "שם",
+    open_time: "שעת פתיחה",
+    closed_first: "סגורים קודם"
+  };
+
   const selectedRoom = useMemo(() =>
     (selectedRoomId ? roomsRaw.find((room) => room.id === selectedRoomId) || null : null),
   [roomsRaw, selectedRoomId]);
@@ -133,11 +168,18 @@ export default function RoomsSection({
   };
 
   const bulkToggleAll = () => {
-    if (selectedCount && selectedCount === filteredRooms.length) {
-      setSelectedIds(new Set());
-      return;
-    }
-    setSelectedIds(new Set(filteredRooms.map((r) => r.id)));
+    setSelectedIds((prev) => {
+      const idsInView = filteredRooms.map((r) => r.id);
+      if (!idsInView.length) return prev;
+      const allSelected = idsInView.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) {
+        idsInView.forEach((id) => next.delete(id));
+      } else {
+        idsInView.forEach((id) => next.add(id));
+      }
+      return next;
+    });
   };
 
   const bulkEdit = () => {
@@ -314,73 +356,89 @@ export default function RoomsSection({
         </div>
       </PropsOverlay>
       <div className="admin-section-toolbar">
-        <div className="admin-filters-stack">
-          <div className="admin-filters">
-            <button
-              type="button"
-              className={`chip small${filter === "all" ? " active" : ""}`}
-              onClick={() => setFilter("all")}
-            >
-              הכל ({roomsRaw.length})
-            </button>
-            <button
-              type="button"
-              className={`chip small${filter === "open" ? " active" : ""}`}
-              onClick={() => setFilter("open")}
-            >
-              פתוחים ({roomsRaw.filter((room) => !room.isClosed).length})
-            </button>
-            <button
-              type="button"
-              className={`chip small${filter === "closed" ? " active" : ""}`}
-              onClick={() => setFilter("closed")}
-            >
-              סגורים ({roomsRaw.filter((room) => room.isClosed).length})
-            </button>
+        <div className="admin-filter-bar" aria-label="סינון ומיון">
+          <div className="admin-filter-group scroll" aria-label="סינונים">
+            <FilterChip label="סטטוס" value={filterLabel[filter]}>
+              <div className="admin-filter-options">
+                {(Object.keys(filterLabel) as RoomFilter[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`admin-filter-option${filter === key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setFilter(key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {filterLabel[key]}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <FilterChip label="קיצור" value={shortFilterLabel[shortFilter]}>
+              <div className="admin-filter-options">
+                {(Object.keys(shortFilterLabel) as RoomShortFilter[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`admin-filter-option${shortFilter === key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setShortFilter(key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {shortFilterLabel[key]}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <FilterChip label="חיפוש" value={query.trim() ? query.trim() : "ללא"}>
+              <div className="admin-filter-pop-grid">
+                <input
+                  className="admin-filter-input"
+                  type="search"
+                  value={query}
+                  placeholder="שם / קיצור / מזהה"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <div className="admin-filter-pop-actions">
+                  <button
+                    type="button"
+                    className="admin-filter-option subtle"
+                    onClick={(event) => {
+                      setQuery("");
+                      closeFilterChip(event);
+                    }}
+                  >
+                    נקה
+                  </button>
+                </div>
+              </div>
+            </FilterChip>
           </div>
-          <div className="admin-filters">
-            <button
-              type="button"
-              className={`chip small${shortFilter === "all" ? " active" : ""}`}
-              onClick={() => setShortFilter("all")}
-            >
-              קיצור: הכל ({shortCounts.all})
-            </button>
-            <button
-              type="button"
-              className={`chip small${shortFilter === "has" ? " active" : ""}`}
-              onClick={() => setShortFilter("has")}
-            >
-              קיים ({shortCounts.has})
-            </button>
-            <button
-              type="button"
-              className={`chip small${shortFilter === "missing" ? " active" : ""}`}
-              onClick={() => setShortFilter("missing")}
-            >
-              חסר ({shortCounts.missing})
-            </button>
-          </div>
-          <div className="admin-filter-controls">
-            <label>
-              חיפוש
-              <input
-                type="search"
-                value={query}
-                placeholder="שם / קיצור / מזהה"
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </label>
-            <label>
-              מיון
-              <select value={sortBy} onChange={(event) => setSortBy(event.target.value as RoomSort)}>
-                <option value="order">סדר תצוגה</option>
-                <option value="name">שם</option>
-                <option value="open_time">שעת פתיחה</option>
-                <option value="closed_first">סגורים קודם</option>
-              </select>
-            </label>
-            <div className="admin-filter-meta" aria-label="כמות תוצאות">
+
+          <div className="admin-filter-group" aria-label="מיון">
+            <FilterChip label="מיון" value={sortLabel[sortBy]}>
+              <div className="admin-filter-options">
+                {(Object.keys(sortLabel) as RoomSort[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`admin-filter-option${sortBy === key ? " active" : ""}`}
+                    onClick={(event) => {
+                      setSortBy(key);
+                      closeFilterChip(event);
+                    }}
+                  >
+                    {sortLabel[key]}
+                  </button>
+                ))}
+              </div>
+            </FilterChip>
+
+            <div className="admin-filter-count" aria-label="כמות תוצאות">
               {filteredRooms.length} תוצאות
             </div>
           </div>
@@ -389,95 +447,90 @@ export default function RoomsSection({
       </div>
       <div className="admin-section-body">
         <div className="admin-list">
-          <div className="admin-card list-card">
-            <div className="admin-card-header">
-              <h3>רשימת חדרים</h3>
-            </div>
-            {filteredRooms.length ? (
-              <div className="admin-table scroll tall">
-                {filteredRooms.map((room) => (
-                  <div
-                    key={room.id}
-                    className={`admin-row clickable${selectedRoomId === room.id ? " selected" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleSelect(room)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        handleSelect(room);
-                      }
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="admin-row-check"
-                      checked={selectedIds.has(room.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() =>
-                        setSelectedIds((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(room.id)) next.delete(room.id);
-                          else next.add(room.id);
-                          return next;
-                        })
-                      }
-                      aria-label="בחר חדר"
-                    />
-                    <div className="admin-row-main">
-                      <p className="admin-row-title">{room.name}</p>
-                      <p className="admin-row-meta">
-                        {room.shortName} · {toTimeInput(room.openMinutes || 0)}-{toTimeInput(room.closeMinutes || 0)}
-                        {room.isClosed ? " · סגור" : ""}
-                      </p>
-                    </div>
-                    <div className="admin-row-actions">
-                      <div className="admin-row-buttons">
-                        <button
-                          type="button"
-                          className="admin-mini-action"
-                          aria-label="עריכה"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelect(room);
-                          }}
-                        >
-                          <EditIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-mini-action"
-                          aria-label="שכפול"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            duplicateRoom(room);
-                          }}
-                        >
-                          <DuplicateIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-mini-action danger"
-                          aria-label="מחיקה"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDeleteIds([room.id]);
-                          }}
-                        >
-                          <ReleaseIcon />
-                        </button>
-                      </div>
-                      <span className={`chip small${room.isClosed ? " active" : " ghost"}`}>
-                        {room.isClosed ? "סגור" : "פתוח"}
-                      </span>
-                    </div>
+          {filteredRooms.length ? (
+            <div className="admin-table scroll tall">
+              {filteredRooms.map((room) => (
+                <div
+                  key={room.id}
+                  className={`admin-row clickable${selectedRoomId === room.id ? " selected" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleSelect(room)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleSelect(room);
+                    }
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    className="admin-row-check"
+                    checked={selectedIds.has(room.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() =>
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(room.id)) next.delete(room.id);
+                        else next.add(room.id);
+                        return next;
+                      })
+                    }
+                    aria-label="בחר חדר"
+                  />
+                  <div className="admin-row-main">
+                    <p className="admin-row-title">{room.name}</p>
+                    <p className="admin-row-meta">
+                      {room.shortName} · {toTimeInput(room.openMinutes || 0)}-{toTimeInput(room.closeMinutes || 0)}
+                      {room.isClosed ? " · סגור" : ""}
+                    </p>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="admin-meta">אין חדרים במסנן הזה.</p>
-            )}
-          </div>
+                  <div className="admin-row-actions">
+                    <div className="admin-row-buttons">
+                      <button
+                        type="button"
+                        className="admin-mini-action"
+                        aria-label="עריכה"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelect(room);
+                        }}
+                      >
+                        <EditIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="admin-mini-action"
+                        aria-label="שכפול"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          duplicateRoom(room);
+                        }}
+                      >
+                        <DuplicateIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="admin-mini-action danger"
+                        aria-label="מחיקה"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteIds([room.id]);
+                        }}
+                      >
+                        <ReleaseIcon />
+                      </button>
+                    </div>
+                    <span className={`chip small${room.isClosed ? " active" : " ghost"}`}>
+                      {room.isClosed ? "סגור" : "פתוח"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="admin-meta">אין חדרים במסנן הזה.</p>
+          )}
         </div>
       </div>
     </section>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import type { ReserveRequest } from "../../types/reservations";
+import type { ReserveRequest } from "../../../types/reservations";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 export type ReserveConfirmOverlayProps = {
@@ -80,7 +80,7 @@ export default function ReserveConfirmOverlay({
       options.push({
         end,
         duration,
-        label: `${formatMinutes(end)} (${formatDurationLabel(duration)})`
+        label: `${formatMinutes(end)}`
       });
     }
     return options;
@@ -155,10 +155,10 @@ export default function ReserveConfirmOverlay({
               >
                 <InfoOutlinedIcon fontSize="small" />
               </button>
-            </div>
-            <div className={`reserve-tooltip${infoOpen ? " open" : ""}`} role="tooltip">
-              <div>שמירת חדרים מוגבלת ל-3 שעות לחדר ליום.</div>
-              <div>להחרגה יש לפנות למנהל מורשה.</div>
+              <div className={`reserve-tooltip${infoOpen ? " open" : ""}`} role="tooltip">
+                <div>שמירת חדרים מוגבלת ל-3 שעות לחדר ליום.</div>
+                <div>להחרגה יש לפנות למנהל מורשה.</div>
+              </div>
             </div>
             <select
               value={endMinutes}
@@ -175,6 +175,8 @@ export default function ReserveConfirmOverlay({
             </select>
           </div>
         </div>
+
+        <p className="reserve-duration">משך: {formatDurationLabel(durationMinutes)}</p>
 
         <div className="reserve-actions">
           {mode === "edit" ? (
