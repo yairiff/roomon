@@ -11,6 +11,8 @@ import ConfirmOverlay from "./overlays/ConfirmOverlay";
 import { useSchedule } from "../../hooks/useSchedule";
 import { useLessonOverrides } from "../../hooks/useLessonOverrides";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../lib/firebase";
 import {
   addDays,
   buildWeekDates,
@@ -176,6 +178,8 @@ export default function HomeScreen({
   const [reservationUserQuery, setReservationUserQuery] = useState("");
   const [reservationUserOpen, setReservationUserOpen] = useState(false);
   const lastValidReservationUser = useRef<{ label: string; email: string; name: string } | null>(null);
+  const contactCacheRef = useRef<Map<string, { name: string; phone: string }>>(new Map());
+  const [detailsContact, setDetailsContact] = useState<{ name: string; phone: string } | null>(null);
   const lastWindowKeyRef = useRef<string>("");
   const [finderWindow, setFinderWindow] = useState<{ startDate: string; endDate: string }>(() => {
     const today = new Date();
@@ -1604,9 +1608,46 @@ export default function HomeScreen({
     : "";
 
   const detailsReservation = reservationDetails?.reservation || null;
-  const detailsUser = detailsReservation
-    ? users.find((u) => u.email === detailsReservation.reservedEmail) || null
-    : null;
+  useEffect(() => {
+    const email = (detailsReservation?.reservedEmail || "").trim().toLowerCase();
+    if (!email) {
+      setDetailsContact(null);
+      return;
+    }
+    const cached = contactCacheRef.current.get(email);
+    if (cached) {
+      setDetailsContact(cached);
+      return;
+    }
+    if (!db) {
+      setDetailsContact(null);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(db, "users", email))
+      .then((snap) => {
+        if (cancelled) return;
+        if (!snap.exists()) {
+          setDetailsContact(null);
+          return;
+        }
+        const data = snap.data() as { name?: unknown; phone?: unknown };
+        const contact = {
+          name: typeof data.name === "string" ? data.name : "",
+          phone: typeof data.phone === "string" ? data.phone : ""
+        };
+        contactCacheRef.current.set(email, contact);
+        setDetailsContact(contact);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDetailsContact(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailsReservation?.reservedEmail]);
+
   const detailsRoomName = detailsReservation
     ? rooms.find((room) => room.id === detailsReservation.roomId)?.name || detailsReservation.roomId
     : "";
@@ -1622,9 +1663,9 @@ export default function HomeScreen({
       `${formatMinutes(detailsReservation.time + detailsDuration)} · ` +
       `${formatDurationLabel(detailsDuration)}`
     : "";
-  const detailsName = detailsReservation?.reservedBy || detailsUser?.name || "";
-  const detailsEmail = detailsReservation?.reservedEmail || detailsUser?.email || "";
-  const detailsPhone = detailsUser?.phone || "";
+  const detailsName = detailsReservation?.reservedBy || detailsContact?.name || "";
+  const detailsEmail = detailsReservation?.reservedEmail || "";
+  const detailsPhone = detailsContact?.phone || "";
 
   const adminDateLabel = adminDraft
     ? `יום ${weekDays.find((day) => day.key === adminDraft.dayKey)?.label || ""} ${formatShortDate(adminDraft.dateKey)}`
