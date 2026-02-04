@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import HomeScreen from "./screens/home/HomeScreen";
 import { useAuth } from "./hooks/useAuth";
-import { useReservations } from "./hooks/useReservations";
+import { useReservations, type ReservationsWindow } from "./hooks/useReservations";
 import TopBar from "./components/TopBar";
 import AuthMenu from "./components/AuthMenu";
 import BottomNav from "./components/BottomNav";
@@ -10,6 +10,8 @@ import LoginOverlay from "./components/LoginOverlay";
 import type { ViewMode } from "./types/ui";
 import AdminScreen from "./screens/admin/AdminScreen";
 import SignupOverlay from "./components/SignupOverlay";
+import { addDays, formatDateKey, getWeekStart } from "./lib/date";
+import { weekDays } from "./config";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
@@ -28,7 +30,14 @@ export default function App() {
     googleButtonRef,
     signOut
   } = useAuth({ clientId: CLIENT_ID });
-  const { reservationMap, addReservation, upsertReservation, releaseReservation } = useReservations();
+  const [reservationsWindow, setReservationsWindow] = useState<ReservationsWindow>(() => {
+    const todayKey = formatDateKey(new Date());
+    const weekStart = getWeekStart(todayKey);
+    const startKey = formatDateKey(weekStart);
+    const endKey = formatDateKey(addDays(weekStart, weekDays.length - 1));
+    return { startDate: startKey, endDate: endKey };
+  });
+  const { reservationMap, addReservation, upsertReservation, releaseReservation } = useReservations(reservationsWindow);
   const [authOpen, setAuthOpen] = useState(false);
   const [topBar, setTopBar] = useState<TopBarContext>({ title: "עכשיו" });
   const [loginPromptOpen, setLoginPromptOpen] = useState(true);
@@ -173,6 +182,7 @@ export default function App() {
           currentUser={user}
           setAuthError={(message) => setAuthError(message)}
           onContextChange={setTopBar}
+          onReservationWindowChange={setReservationsWindow}
           reservationMap={reservationMap}
           addReservation={addReservation}
           upsertReservation={upsertReservation}

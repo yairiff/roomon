@@ -3,12 +3,18 @@ import { useEffect, useMemo, useState } from "react";
 import { db } from "../lib/firebase";
 import type { DirectoryUser } from "../types/admin";
 
-export function useDirectoryUsers() {
+export function useDirectoryUsers(enabled = true) {
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [usersReady, setUsersReady] = useState<boolean>(!db);
   const [usersError, setUsersError] = useState<string>("");
 
   useEffect(() => {
+    if (!enabled) {
+      setUsers([]);
+      setUsersError("");
+      setUsersReady(true);
+      return;
+    }
     if (!db) {
       setUsersError("Firestore is not configured.");
       setUsersReady(true);
@@ -45,7 +51,7 @@ export function useDirectoryUsers() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [enabled]);
 
   const userMap = useMemo(() => {
     const map = new Map<string, DirectoryUser>();

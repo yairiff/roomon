@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { stripUndefined } from "../lib/stripUndefined";
 import type { Reservation, ReservationMap } from "../types/reservations";
 
-export function useReservations() {
+export type ReservationsWindow = { startDate: string; endDate: string } | null;
+
+export function useReservations(window: ReservationsWindow = null) {
   const [reservationMap, setReservationMap] = useState<ReservationMap>({});
   const [reservationsReady, setReservationsReady] = useState<boolean>(!db);
   const [reservationsError, setReservationsError] = useState<string>("");
@@ -16,9 +18,18 @@ export function useReservations() {
       return;
     }
 
+    setReservationsReady(false);
     const reservationsRef = collection(db, "reservations");
+    const q = window
+      ? query(
+        reservationsRef,
+        where("date", ">=", window.startDate),
+        where("date", "<=", window.endDate)
+      )
+      : reservationsRef;
+
     const unsubscribe = onSnapshot(
-      reservationsRef,
+      q,
       (snapshot) => {
         const nextMap: ReservationMap = {};
         snapshot.forEach((docSnap) => {
@@ -51,7 +62,7 @@ export function useReservations() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [window?.endDate, window?.startDate]);
 
   const addReservation = async (reservation: Reservation) => {
     if (!db) {

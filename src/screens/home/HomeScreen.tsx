@@ -108,6 +108,7 @@ export type HomeScreenProps = {
   currentUser: User | null;
   setAuthError: (message: string) => void;
   onContextChange?: (context: TopBarContext) => void;
+  onReservationWindowChange?: (window: { startDate: string; endDate: string }) => void;
   reservationMap: ReservationMap;
   addReservation: (reservation: Reservation) => void;
   upsertReservation: (reservation: Reservation) => void;
@@ -136,6 +137,7 @@ export default function HomeScreen({
   currentUser,
   setAuthError,
   onContextChange,
+  onReservationWindowChange,
   reservationMap,
   addReservation,
   upsertReservation,
@@ -174,6 +176,13 @@ export default function HomeScreen({
   const [reservationUserQuery, setReservationUserQuery] = useState("");
   const [reservationUserOpen, setReservationUserOpen] = useState(false);
   const lastValidReservationUser = useRef<{ label: string; email: string; name: string } | null>(null);
+  const lastWindowKeyRef = useRef<string>("");
+  const [finderWindow, setFinderWindow] = useState<{ startDate: string; endDate: string }>(() => {
+    const today = new Date();
+    const start = formatDateKey(today);
+    const end = formatDateKey(addDays(today, 6));
+    return { startDate: start, endDate: end };
+  });
 
   const openDatePicker = () => {
     if (!dateInputRef.current) return;
@@ -254,7 +263,7 @@ export default function HomeScreen({
 
   const { rooms, weekDays, timeSlots, lessons, config, roomMeta } = useSchedule(scheduleDateKey);
   const { overridesByDate, addOverride } = useLessonOverrides();
-  const { users } = useDirectoryUsers();
+  const { users } = useDirectoryUsers(adminMode && isAdmin);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
@@ -341,15 +350,15 @@ export default function HomeScreen({
   const findUserMatch = (value: string) => {
     const raw = value.trim().toLowerCase();
     if (!raw) return null;
-    const exact = users.find((user) => user.email.toLowerCase() === raw);
+    const exact = users.find((u) => u.email.toLowerCase() === raw);
     if (exact) return exact;
-    return users.find((user) => formatUserLabel(user.name || "", user.email).toLowerCase() === raw) || null;
+    return users.find((u) => formatUserLabel(u.name || "", u.email).toLowerCase() === raw) || null;
   };
   const filteredUsers = useMemo(() => {
     const query = reservationUserQuery.trim().toLowerCase();
     if (!query) return users;
-    return users.filter((user) => {
-      const label = formatUserLabel(user.name || "", user.email).toLowerCase();
+    return users.filter((u) => {
+      const label = formatUserLabel(u.name || "", u.email).toLowerCase();
       return label.includes(query);
     });
   }, [reservationUserQuery, users]);
@@ -372,6 +381,11 @@ export default function HomeScreen({
 
   const selectedDayKey = useMemo(() => getDayKeyFromDateKey(selectedDate), [selectedDate]);
   const weekDates = useMemo(() => buildWeekDates(selectedDate, weekDays), [selectedDate, weekDays]);
+  const weekRange = useMemo(() => {
+    const first = weekDates[0]?.dateKey || selectedDate;
+    const last = weekDates[weekDates.length - 1]?.dateKey || selectedDate;
+    return { startDate: first, endDate: last };
+  }, [selectedDate, weekDates]);
   const roomDates = useMemo(() => {
     if (roomMode === "week") return weekDates;
     const match = weekDates.filter((day) => day.key === selectedDayKey);
@@ -383,6 +397,23 @@ export default function HomeScreen({
       dateKey: selectedDate
     }];
   }, [roomMode, weekDates, selectedDayKey, selectedDate]);
+
+  useEffect(() => {
+    if (!onReservationWindowChange) return;
+    const desired =
+      view === "live"
+        ? { startDate: todayDateKey, endDate: todayDateKey }
+        : view === "finder"
+          ? finderWindow
+          : view === "reservations"
+            ? { startDate: todayDateKey, endDate: formatDateKey(addDays(parseDateKey(todayDateKey), 21)) }
+            : weekRange;
+
+    const key = `${desired.startDate}|${desired.endDate}`;
+    if (key === lastWindowKeyRef.current) return;
+    lastWindowKeyRef.current = key;
+    onReservationWindowChange(desired);
+  }, [finderWindow, onReservationWindowChange, todayDateKey, view, weekRange]);
 
   useEffect(() => {
     if (!rooms.length) return;
@@ -1398,6 +1429,7 @@ export default function HomeScreen({
           getLessonsForDate={getLessonsForDate}
           onReserve={handleReserve}
           onOpenSchedule={(roomId, dateKey) => handleRoomSelect(roomId, dateKey)}
+          onDateWindowChange={(startDate, endDate) => setFinderWindow({ startDate, endDate })}
         />
       );
     }
@@ -1573,7 +1605,7 @@ export default function HomeScreen({
 
   const detailsReservation = reservationDetails?.reservation || null;
   const detailsUser = detailsReservation
-    ? users.find((user) => user.email === detailsReservation.reservedEmail) || null
+    ? users.find((u) => u.email === detailsReservation.reservedEmail) || null
     : null;
   const detailsRoomName = detailsReservation
     ? rooms.find((room) => room.id === detailsReservation.roomId)?.name || detailsReservation.roomId
@@ -1983,30 +2015,30 @@ export default function HomeScreen({
                       />
                       {reservationUserOpen && filteredUsers.length ? (
                         <div className="admin-user-options">
-                          {filteredUsers.map((user) => {
-                            const label = formatUserLabel(user.name || "", user.email);
+                          {filteredUsers.map((u) => {
+                            const label = formatUserLabel(u.name || "", u.email);
                             return (
                               <button
                                 type="button"
-                                key={user.email}
+                                key={u.email}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => {
                                   lastValidReservationUser.current = {
                                     label,
-                                    email: user.email,
-                                    name: user.name || ""
+                                    email: u.email,
+                                    name: u.name || ""
                                   };
                                   setReservationUserQuery(label);
                                   setAdminDraft((prev) =>
                                     prev && prev.type === "reservation"
-                                      ? { ...prev, reservedEmail: user.email, reservedBy: user.name || "" }
+                                      ? { ...prev, reservedEmail: u.email, reservedBy: u.name || "" }
                                       : prev
                                   );
                                   setReservationUserOpen(false);
                                 }}
                               >
-                                <span className="admin-user-name">{user.name || "ללא שם"}</span>
-                                <span className="admin-user-email">{user.email}</span>
+                                <span className="admin-user-name">{u.name || "ללא שם"}</span>
+                                <span className="admin-user-email">{u.email}</span>
                               </button>
                             );
                           })}

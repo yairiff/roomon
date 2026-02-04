@@ -16,6 +16,7 @@ export type BookingFinderProps = {
   getLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
   onReserve: (request: ReserveRequest) => void;
   onOpenSchedule: (roomId: string, dateKey: string) => void;
+  onDateWindowChange?: (startDate: string, endDate: string) => void;
 };
 
 export default function BookingFinder({
@@ -27,7 +28,8 @@ export default function BookingFinder({
   roomMeta,
   getLessonsForDate,
   onReserve,
-  onOpenSchedule
+  onOpenSchedule,
+  onDateWindowChange
 }: BookingFinderProps) {
   const [advancedMode, setAdvancedMode] = useState(false);
   const [startDate, setStartDate] = useState(() => formatDateKey(new Date()));
@@ -70,6 +72,11 @@ export default function BookingFinder({
   );
 
   const durationFilterMinutes = duration ? Number(duration) * 60 : 0;
+
+  useEffect(() => {
+    onDateWindowChange?.(effectiveStartDate, effectiveEndDate);
+  }, [effectiveEndDate, effectiveStartDate, onDateWindowChange]);
+
   const results = useMemo(() => {
     const start = parseDateKey(effectiveStartDate);
     const end = parseDateKey(effectiveEndDate);
