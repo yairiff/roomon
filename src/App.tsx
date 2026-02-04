@@ -14,6 +14,11 @@ import SignupOverlay from "./components/SignupOverlay";
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 export default function App() {
   const {
     user,
@@ -32,6 +37,8 @@ export default function App() {
   const isAdminRoute = window.location.pathname.startsWith("/admin");
   const needsSignup = Boolean(user && user.role === "pending");
   const [adminMode, setAdminMode] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   const reservationsCount = useMemo(() => {
     if (!user) return 0;
@@ -49,6 +56,41 @@ export default function App() {
       setLoginPromptOpen(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    const mq = window.matchMedia?.("(display-mode: standalone)");
+    const update = () => {
+      const nav = navigator as unknown as { standalone?: boolean };
+      setIsStandalone(Boolean(mq?.matches || nav.standalone));
+    };
+    update();
+    mq?.addEventListener?.("change", update);
+    return () => mq?.removeEventListener?.("change", update);
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeInstall = (event: Event) => {
+      (event as unknown as { preventDefault?: () => void }).preventDefault?.();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => setInstallPrompt(null);
+    window.addEventListener("beforeinstallprompt", handleBeforeInstall as EventListener);
+    window.addEventListener("appinstalled", handleInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstall as EventListener);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    try {
+      await installPrompt.userChoice;
+    } finally {
+      setInstallPrompt(null);
+    }
+  };
 
   const handleAuthClick = () => {
     setAuthOpen((open) => !open);
@@ -121,6 +163,9 @@ export default function App() {
         onOpenReservations={() => setRequestedView("reservations")}
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}
+        installAvailable={Boolean(installPrompt)}
+        isStandalone={isStandalone}
+        onInstall={() => { void handleInstall(); }}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen

@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { RoomRecord } from "../../../types/admin";
 import { rimonScheduleConfig } from "../../../config";
 import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
+import type { BulkState } from "../bulk";
 import ConfirmDialog from "../components/ConfirmDialog";
+import PropsOverlay from "../components/PropsOverlay";
 
 type RoomsSectionProps = {
   roomsRaw: RoomRecord[];
@@ -14,6 +16,7 @@ type RoomsSectionProps = {
   onUpsert: (room: RoomRecord) => void;
   onRemove: (roomId: string) => void;
   onReset: () => void;
+  onBulkStateChange?: (state: BulkState | null) => void;
 };
 
 type RoomFilter = "all" | "open" | "closed";
@@ -29,7 +32,8 @@ export default function RoomsSection({
   parseTimeInput,
   onUpsert,
   onRemove,
-  onReset
+  onReset,
+  onBulkStateChange
 }: RoomsSectionProps) {
   const [filter, setFilter] = useState<RoomFilter>("all");
   const [shortFilter, setShortFilter] = useState<RoomShortFilter>("all");
@@ -37,7 +41,6 @@ export default function RoomsSection({
   const [sortBy, setSortBy] = useState<RoomSort>("order");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [confirmDeleteIds, setConfirmDeleteIds] = useState<string[] | null>(null);
-  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [isNewEntry, setIsNewEntry] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -80,14 +83,6 @@ export default function RoomsSection({
   const selectedInView = useMemo(() => Array.from(selectedIds).filter((id) => filteredById.has(id)), [filteredById, selectedIds]);
 
   const selectedCount = selectedInView.length;
-
-  // Keep indeterminate state on the "select all" checkbox.
-  useEffect(() => {
-    const el = selectAllRef.current;
-    if (!el) return;
-    const total = filteredRooms.length;
-    el.indeterminate = selectedCount > 0 && selectedCount < total;
-  }, [filteredRooms.length, selectedCount]);
 
   const shortCounts = useMemo(() => {
     const base = { all: roomsRaw.length, has: 0, missing: 0 };
@@ -164,6 +159,30 @@ export default function RoomsSection({
     setConfirmDeleteIds(selectedInView);
   };
 
+  const bulkState = useMemo<BulkState>(() => {
+    const total = filteredRooms.length;
+    return {
+      selectAll: {
+        checked: total > 0 && selectedCount === total,
+        indeterminate: selectedCount > 0 && selectedCount < total,
+        onToggle: bulkToggleAll
+      },
+      selectedCount,
+      totalCount: total,
+      actions: [
+        { id: "new", label: "הוספה", icon: <AddIcon />, onClick: handleNew },
+        { id: "edit", label: "עריכה", icon: <EditIcon />, disabled: selectedCount !== 1, onClick: bulkEdit },
+        { id: "duplicate", label: "שכפול", icon: <DuplicateIcon />, disabled: selectedCount === 0, onClick: bulkDuplicate },
+        { id: "delete", label: "מחיקה", icon: <ReleaseIcon />, tone: "danger", disabled: selectedCount === 0, onClick: bulkDelete }
+      ]
+    };
+  }, [bulkDelete, bulkDuplicate, bulkEdit, bulkToggleAll, filteredRooms.length, handleNew, selectedCount]);
+
+  useEffect(() => {
+    onBulkStateChange?.(bulkState);
+    return () => onBulkStateChange?.(null);
+  }, [bulkState, onBulkStateChange]);
+
   const confirmDelete = () => {
     if (!confirmDeleteIds?.length) return;
     confirmDeleteIds.forEach((id) => onRemove(id));
@@ -188,6 +207,13 @@ export default function RoomsSection({
 
   const roomStatus = isEditing ? (selectedRoom?.name || "חדש") : "";
 
+  const closeEditor = () => {
+    setSelectedRoomId(null);
+    setIsEditing(false);
+    setIsNewEntry(false);
+    onReset();
+  };
+
   return (
     <section className="admin-section">
       <ConfirmDialog
@@ -200,6 +226,93 @@ export default function RoomsSection({
         onConfirm={confirmDelete}
         onCancel={() => setConfirmDeleteIds(null)}
       />
+      <PropsOverlay open={isEditing} title="פרטי חדר" meta={roomStatus || null} onClose={closeEditor}>
+        <div className="admin-card">
+          <div className="admin-card-header">
+            <h3>פרטי חדר</h3>
+            {roomStatus ? <span className="admin-meta">{roomStatus}</span> : null}
+          </div>
+          <fieldset className="admin-fieldset">
+            <div className="admin-form-grid">
+              <label>
+                מזהה
+                <input
+                  type="text"
+                  value={roomDraft.id}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, id: event.target.value }))}
+                  disabled={!isNewEntry}
+                />
+              </label>
+              <label>
+                שם
+                <input
+                  type="text"
+                  value={roomDraft.name}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </label>
+              <label>
+                קיצור
+                <input
+                  type="text"
+                  value={roomDraft.shortName || ""}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, shortName: event.target.value }))}
+                />
+              </label>
+              <label>
+                סדר
+                <input
+                  type="number"
+                  value={roomDraft.sortOrder ?? 0}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, sortOrder: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                פתיחה
+                <input
+                  type="time"
+                  value={toTimeInput(roomDraft.openMinutes ?? rimonScheduleConfig.startHour * 60)}
+                  onChange={(event) =>
+                    setRoomDraft((prev) => ({ ...prev, openMinutes: parseTimeInput(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                סגירה
+                <input
+                  type="time"
+                  value={toTimeInput(roomDraft.closeMinutes ?? rimonScheduleConfig.endHour * 60)}
+                  onChange={(event) =>
+                    setRoomDraft((prev) => ({ ...prev, closeMinutes: parseTimeInput(event.target.value) }))
+                  }
+                />
+              </label>
+              <label className="admin-checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(roomDraft.isClosed)}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, isClosed: event.target.checked }))}
+                />
+                <span>סגור</span>
+              </label>
+            </div>
+          </fieldset>
+          <div className="admin-actions">
+            <button className="primary" type="button" onClick={() => onUpsert(roomDraft)} disabled={!roomDraft.id || !roomDraft.name}>
+              <ApproveIcon />
+              {isNewEntry ? "הוספה" : "עדכון"}
+            </button>
+            <button className="secondary" type="button" onClick={() => (selectedRoom ? duplicateRoom(selectedRoom) : null)} disabled={!selectedRoom}>
+              <DuplicateIcon />
+              שכפול
+            </button>
+            <button className="danger" type="button" onClick={handleDelete} disabled={!selectedRoomId}>
+              <ReleaseIcon />
+              מחיקה
+            </button>
+          </div>
+        </div>
+      </PropsOverlay>
       <div className="admin-section-toolbar">
         <div className="admin-filters-stack">
           <div className="admin-filters">
@@ -275,132 +388,10 @@ export default function RoomsSection({
         {roomsError ? <span className="admin-error">{roomsError}</span> : null}
       </div>
       <div className="admin-section-body">
-        <aside className="admin-properties">
-          <div className="admin-card">
-            <div className="admin-card-header">
-              <h3>פרטי חדר</h3>
-              {roomStatus ? <span className="admin-meta">{roomStatus}</span> : null}
-            </div>
-            <fieldset className="admin-fieldset" disabled={!isEditing}>
-              <div className="admin-form-grid">
-                <label>
-                  מזהה
-                  <input
-                    type="text"
-                    value={roomDraft.id}
-                    onChange={(event) => setRoomDraft((prev) => ({ ...prev, id: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  שם
-                  <input
-                    type="text"
-                    value={roomDraft.name}
-                    onChange={(event) => setRoomDraft((prev) => ({ ...prev, name: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  קיצור
-                  <input
-                    type="text"
-                    value={roomDraft.shortName}
-                    onChange={(event) => setRoomDraft((prev) => ({ ...prev, shortName: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  פתיחה
-                  <input
-                    type="time"
-                    value={toTimeInput(roomDraft.openMinutes ?? rimonScheduleConfig.startHour * 60)}
-                    onChange={(event) =>
-                      setRoomDraft((prev) => ({ ...prev, openMinutes: parseTimeInput(event.target.value) }))
-                    }
-                  />
-                </label>
-                <label>
-                  סגירה
-                  <input
-                    type="time"
-                    value={toTimeInput(roomDraft.closeMinutes ?? rimonScheduleConfig.endHour * 60)}
-                    onChange={(event) =>
-                      setRoomDraft((prev) => ({ ...prev, closeMinutes: parseTimeInput(event.target.value) }))
-                    }
-                  />
-                </label>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={roomDraft.isClosed}
-                    onChange={(event) => setRoomDraft((prev) => ({ ...prev, isClosed: event.target.checked }))}
-                  />
-                  סגור זמנית
-                </label>
-                <label>
-                  סדר תצוגה
-                  <input
-                    type="number"
-                    value={roomDraft.sortOrder}
-                    onChange={(event) => setRoomDraft((prev) => ({ ...prev, sortOrder: Number(event.target.value) }))}
-                  />
-                </label>
-              </div>
-              <div className="admin-actions">
-                <button className="primary" type="button" onClick={() => onUpsert(roomDraft)} disabled={!isEditing}>
-                  <ApproveIcon />
-                  {isNewEntry ? "הוספה" : "עדכון"}
-                </button>
-                <button
-                  className="secondary danger"
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={!isEditing || !selectedRoomId}
-                >
-                  <ReleaseIcon />
-                  מחיקה
-                </button>
-              </div>
-            </fieldset>
-          </div>
-        </aside>
         <div className="admin-list">
           <div className="admin-card list-card">
             <div className="admin-card-header">
               <h3>רשימת חדרים</h3>
-            </div>
-            <div className="admin-list-toolbar">
-              <div className="admin-list-toolbar-left">
-                <label className="admin-select-all">
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
-                    className="admin-row-check"
-                    checked={filteredRooms.length > 0 && selectedCount === filteredRooms.length}
-                    onChange={bulkToggleAll}
-                  />
-                  <span>בחירה</span>
-                </label>
-                <span className="admin-meta">
-                  {selectedCount ? `${selectedCount} נבחרו` : `${filteredRooms.length} תוצאות`}
-                </span>
-              </div>
-              <div className="admin-list-toolbar-right">
-                <button className="admin-card-action" type="button" onClick={handleNew}>
-                  <AddIcon />
-                  הוספה
-                </button>
-                <button className="admin-card-action" type="button" onClick={bulkEdit} disabled={selectedCount !== 1}>
-                  <EditIcon />
-                  עריכה
-                </button>
-                <button className="admin-card-action" type="button" onClick={bulkDuplicate} disabled={!selectedCount}>
-                  <DuplicateIcon />
-                  שכפול
-                </button>
-                <button className="admin-card-action" type="button" onClick={bulkDelete} disabled={!selectedCount}>
-                  <ReleaseIcon />
-                  מחיקה
-                </button>
-              </div>
             </div>
             {filteredRooms.length ? (
               <div className="admin-table scroll tall">

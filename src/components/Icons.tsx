@@ -23,6 +23,7 @@ import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
+import AddToHomeScreenRoundedIcon from "@mui/icons-material/AddToHomeScreenRounded";
 
 export function CalendarIcon() {
   return <CalendarMonthRoundedIcon fontSize="small" />;
@@ -124,4 +125,8 @@ export function UploadIcon() {
 
 export function DownloadIcon() {
   return <FileDownloadRoundedIcon fontSize="small" />;
+}
+
+export function ShortcutIcon() {
+  return <AddToHomeScreenRoundedIcon fontSize="small" />;
 }

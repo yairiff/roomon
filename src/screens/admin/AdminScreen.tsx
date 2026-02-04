@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { collection, doc, getDocs, writeBatch } from "firebase/firestore";
 import { rimonScheduleConfig } from "../../config";
 import { db } from "../../lib/firebase";
@@ -13,13 +13,13 @@ import type { SemesterKey } from "../../types/ui";
 import type { Reservation } from "../../types/reservations";
 import { cohortStartYearFromGrade, getAcademicYearStartYear, gradeValueFromCohort } from "../../lib/academics";
 import type { AdminSection } from "./types";
-import { BookmarkIcon, LessonIcon, RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, ReleaseIcon, CloseIcon, UploadIcon, DownloadIcon } from "../../components/Icons";
+import type { BulkState } from "./bulk";
+import { LessonIcon, RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, ReleaseIcon, CloseIcon, UploadIcon, DownloadIcon } from "../../components/Icons";
 import { parseCsvAsObjects, stringifyCsv } from "../../lib/csv";
 import { stripUndefined } from "../../lib/stripUndefined";
 import UsersSection from "./sections/UsersSection";
-import LessonsSection from "./sections/LessonsSection";
 import RoomsSection from "./sections/RoomsSection";
-import ReservationsSection from "./sections/ReservationsSection";
+import ScheduleSection from "./sections/ScheduleSection";
 
 type AdminScreenProps = {
   currentUser: User | null;
@@ -52,6 +52,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const [isNarrow, setIsNarrow] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" } | null>(null);
+  const [bulkState, setBulkState] = useState<BulkState | null>(null);
   const [exportScope, setExportScope] = useState<"filtered" | "all">("filtered");
   const [exportUsersView, setExportUsersView] = useState<DirectoryUser[] | null>(null);
   const [exportLessonsView, setExportLessonsView] = useState<LessonRecord[] | null>(null);
@@ -81,6 +82,36 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         .join("")
         .toUpperCase() || currentUser.email.charAt(0).toUpperCase()
     : "";
+
+  const BulkSelectAll = ({
+    checked,
+    indeterminate,
+    onToggle
+  }: NonNullable<BulkState["selectAll"]>) => {
+    const ref = useRef<HTMLInputElement | null>(null);
+
+    useEffect(() => {
+      if (!ref.current) return;
+      ref.current.indeterminate = indeterminate;
+    }, [indeterminate]);
+
+    return (
+      <label className="admin-toolbar-chip admin-bulk-select">
+        <input
+          ref={ref}
+          type="checkbox"
+          className="admin-row-check"
+          checked={checked}
+          onChange={onToggle}
+          aria-label="בחר הכל"
+        />
+        <span>בחירה</span>
+        <span className="admin-bulk-count">
+          {bulkState ? `${bulkState.selectedCount}/${bulkState.totalCount}` : ""}
+        </span>
+      </label>
+    );
+  };
 
   const {
     users,
@@ -221,6 +252,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     setClearMessage("");
     setScheduleFilter("all");
     setScheduleCsvTypes({ lessons: true, reservations: true, special: true, closed: true });
+    setBulkState(null);
   }, [activeSection]);
 
   useEffect(() => {
@@ -793,7 +825,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 
   const menuItems: { key: AdminSection; label: string; icon: JSX.Element }[] = [
     { key: "users", label: "משתמשים", icon: <UserIcon /> },
-    { key: "schedule", label: "מערכת שעות", icon: <BookmarkIcon /> },
+    { key: "schedule", label: "מערכת שעות", icon: <CalendarIcon /> },
     { key: "rooms", label: "חדרים", icon: <RoomIcon /> }
   ];
 
@@ -1487,6 +1519,30 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                   </button>
                 </>
               ) : null}
+              {bulkState ? (
+                <>
+                  <span className="admin-toolbar-divider" aria-hidden="true" />
+                  {bulkState.selectAll ? (
+                    <BulkSelectAll
+                      checked={bulkState.selectAll.checked}
+                      indeterminate={bulkState.selectAll.indeterminate}
+                      onToggle={bulkState.selectAll.onToggle}
+                    />
+                  ) : null}
+                  {bulkState.actions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      className={`admin-toolbar-chip admin-bulk-action${action.tone === "danger" ? " danger" : ""}`}
+                      onClick={action.onClick}
+                      disabled={action.disabled}
+                    >
+                      {action.icon ? action.icon : null}
+                      {action.label}
+                    </button>
+                  ))}
+                </>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1518,105 +1574,31 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               })
             }
             onFilteredUsersChange={setExportUsersView}
+            onBulkStateChange={setBulkState}
           />
         ) : null}
 
         {activeSection === "schedule" ? (
-          <>
-            <div className="admin-section-toolbar">
-              <div className="admin-filters">
-                <button
-                  type="button"
-                  className={`chip small${scheduleFilter === "all" ? " active" : ""}`}
-                  onClick={() => setScheduleFilter("all")}
-                >
-                  הכל
-                </button>
-                <button
-                  type="button"
-                  className={`chip small${scheduleFilter === "lessons" ? " active" : ""}`}
-                  onClick={() => setScheduleFilter("lessons")}
-                >
-                  שיעורים
-                </button>
-                <button
-                  type="button"
-                  className={`chip small${scheduleFilter === "regular" ? " active" : ""}`}
-                  onClick={() => setScheduleFilter("regular")}
-                >
-                  שריונים
-                </button>
-                <button
-                  type="button"
-                  className={`chip small${scheduleFilter === "special" ? " active" : ""}`}
-                  onClick={() => setScheduleFilter("special")}
-                >
-                  אירועים
-                </button>
-                <button
-                  type="button"
-                  className={`chip small${scheduleFilter === "closed" ? " active" : ""}`}
-                  onClick={() => setScheduleFilter("closed")}
-                >
-                  סגירות
-                </button>
-              </div>
-              <span />
-            </div>
-            {scheduleFilter === "all" || scheduleFilter === "lessons" ? (
-              <LessonsSection
-                lessons={lessons}
-                lessonsError={lessonsError}
-                activeSemester={activeSemester}
-                setActiveSemester={setActiveSemester}
-                lessonDraft={lessonDraft}
-                setLessonDraft={setLessonDraft}
-                roomsRaw={roomsRaw}
-                toTimeInput={toTimeInput}
-                parseTimeInput={parseTimeInput}
-                onUpsert={handleUpsertLesson}
-                onRemove={handleRemoveLesson}
-                onReset={() =>
-                  setLessonDraft({
-                    id: "",
-                    title: "",
-                    teacher: "",
-                    day: "sun",
-                    roomId: roomsRaw[0]?.id || "",
-                    startMinutes: rimonScheduleConfig.startHour * 60,
-                    durationMinutes: rimonScheduleConfig.academicHourMinutes,
-                    semester: activeSemester
-                  })
-                }
-                onFilteredLessonsChange={setExportLessonsView}
-              />
-            ) : null}
-            {scheduleFilter === "all" ? (
-              <ReservationsSection
-                reservations={reservationList}
-                reservationsError={reservationsError}
-                roomsRaw={roomsRaw}
-                toTimeInput={toTimeInput}
-                forcedFilter="all"
-                showFilters={false}
-                onRemoveReservation={(reservation) => { void releaseReservation(reservation.date, reservation.id); }}
-                onUpdateReservation={upsertReservation}
-                onFilteredReservationsChange={setExportReservationsView}
-              />
-            ) : scheduleFilter === "regular" || scheduleFilter === "special" || scheduleFilter === "closed" ? (
-              <ReservationsSection
-                reservations={reservationList}
-                reservationsError={reservationsError}
-                roomsRaw={roomsRaw}
-                toTimeInput={toTimeInput}
-                forcedFilter={scheduleFilter}
-                showFilters={false}
-                onRemoveReservation={(reservation) => { void releaseReservation(reservation.date, reservation.id); }}
-                onUpdateReservation={upsertReservation}
-                onFilteredReservationsChange={setExportReservationsView}
-              />
-            ) : null}
-          </>
+          <ScheduleSection
+            scheduleFilter={scheduleFilter}
+            setScheduleFilter={setScheduleFilter}
+            activeSemester={activeSemester}
+            setActiveSemester={setActiveSemester}
+            lessons={lessons}
+            lessonsError={lessonsError || lessonsAllError}
+            reservations={reservationList}
+            reservationsError={reservationsError}
+            roomsRaw={roomsRaw}
+            toTimeInput={toTimeInput}
+            parseTimeInput={parseTimeInput}
+            onUpsertLesson={handleUpsertLesson}
+            onRemoveLesson={handleRemoveLesson}
+            onUpdateReservation={upsertReservation}
+            onRemoveReservation={(reservation) => { void releaseReservation(reservation.date, reservation.id); }}
+            onBulkStateChange={setBulkState}
+            onFilteredLessonsChange={setExportLessonsView}
+            onFilteredReservationsChange={setExportReservationsView}
+          />
         ) : null}
 
         {activeSection === "rooms" ? (
@@ -1640,6 +1622,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 sortOrder: 0
               })
             }
+            onBulkStateChange={setBulkState}
           />
         ) : null}
         </div>

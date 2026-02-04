@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { DirectoryUser } from "../../../types/admin";
 import {
   cohortStartYearFromGrade,
@@ -8,6 +8,8 @@ import {
 } from "../../../lib/academics";
 import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
 import ConfirmDialog from "../components/ConfirmDialog";
+import type { BulkState } from "../bulk";
+import PropsOverlay from "../components/PropsOverlay";
 
 type UsersSectionProps = {
   users: DirectoryUser[];
@@ -21,6 +23,7 @@ type UsersSectionProps = {
   onRemove: (email: string) => void;
   onReset: () => void;
   onFilteredUsersChange?: (users: DirectoryUser[]) => void;
+  onBulkStateChange?: (state: BulkState | null) => void;
 };
 
 type UserFilter = "all" | "pending" | "student" | "moderator" | "admin";
@@ -41,7 +44,8 @@ export default function UsersSection({
   onUpsert,
   onRemove,
   onReset,
-  onFilteredUsersChange
+  onFilteredUsersChange,
+  onBulkStateChange
 }: UsersSectionProps) {
   const [filter, setFilter] = useState<UserFilter>("all");
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
@@ -50,7 +54,6 @@ export default function UsersSection({
   const [sortBy, setSortBy] = useState<UserSort>("name");
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(() => new Set());
   const [confirmDeleteEmails, setConfirmDeleteEmails] = useState<string[] | null>(null);
-  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNewEntry, setIsNewEntry] = useState(false);
@@ -155,14 +158,6 @@ export default function UsersSection({
     [filteredByEmail, selectedEmails]
   );
 
-  useEffect(() => {
-    const el = selectAllRef.current;
-    if (!el) return;
-    const total = filteredUsers.length;
-    const selectedCount = selectedInView.length;
-    el.indeterminate = selectedCount > 0 && selectedCount < total;
-  }, [filteredUsers.length, selectedInView.length]);
-
   const phoneCounts = useMemo(() => {
     const base = { all: roleFilteredUsers.length, has: 0, missing: 0 };
     roleFilteredUsers.forEach((user) => {
@@ -237,15 +232,42 @@ export default function UsersSection({
   };
 
   const bulkDuplicate = () => {
-    if (selectedInView.length !== 1) return;
-    const user = filteredByEmail.get(selectedInView[0]);
-    if (user) duplicateUser(user);
+    if (!selectedInView.length) return;
+    selectedInView.forEach((email) => {
+      const user = filteredByEmail.get(email);
+      if (user) duplicateUser(user);
+    });
   };
 
   const bulkDelete = () => {
     if (!selectedInView.length) return;
     setConfirmDeleteEmails(selectedInView);
   };
+
+  const bulkState = useMemo<BulkState>(() => {
+    const total = filteredUsers.length;
+    const selectedCount = selectedInView.length;
+    return {
+      selectAll: {
+        checked: total > 0 && selectedCount === total,
+        indeterminate: selectedCount > 0 && selectedCount < total,
+        onToggle: bulkToggleAll
+      },
+      selectedCount,
+      totalCount: total,
+      actions: [
+        { id: "new", label: "הוספה", icon: <AddIcon />, onClick: handleNew },
+        { id: "edit", label: "עריכה", icon: <EditIcon />, disabled: selectedCount !== 1, onClick: bulkEdit },
+        { id: "duplicate", label: "שכפול", icon: <DuplicateIcon />, disabled: selectedCount === 0, onClick: bulkDuplicate },
+        { id: "delete", label: "מחיקה", icon: <ReleaseIcon />, tone: "danger", disabled: selectedCount === 0, onClick: bulkDelete }
+      ]
+    };
+  }, [bulkDelete, bulkDuplicate, bulkEdit, bulkToggleAll, filteredUsers.length, handleNew, selectedInView.length]);
+
+  useEffect(() => {
+    onBulkStateChange?.(bulkState);
+    return () => onBulkStateChange?.(null);
+  }, [bulkState, onBulkStateChange]);
 
   const confirmDelete = () => {
     if (!confirmDeleteEmails?.length) return;
@@ -264,6 +286,13 @@ export default function UsersSection({
     setConfirmDeleteEmails(null);
   };
 
+  const closeEditor = () => {
+    setSelectedEmail(null);
+    setIsEditing(false);
+    setIsNewEntry(false);
+    onReset();
+  };
+
   return (
     <section className="admin-section">
       <ConfirmDialog
@@ -276,6 +305,124 @@ export default function UsersSection({
         onConfirm={confirmDelete}
         onCancel={() => setConfirmDeleteEmails(null)}
       />
+      <PropsOverlay open={isEditing} title="פרטי משתמש" meta={userStatus || null} onClose={closeEditor}>
+        <div className="admin-card">
+          <div className="admin-card-header">
+            <h3>פרטי משתמש</h3>
+            {userStatus ? <span className="admin-meta">{userStatus}</span> : null}
+          </div>
+          {selectedUser?.role === "pending" ? (
+            <div className="admin-inline">
+              <button className="secondary" type="button" onClick={() => onApprove(selectedUser)}>
+                אישור משתמש
+              </button>
+            </div>
+          ) : null}
+          <fieldset className="admin-fieldset">
+            <div className="admin-form-grid">
+              <label>
+                אימייל
+                <input
+                  type="email"
+                  value={userDraft.email}
+                  onChange={(event) =>
+                    setUserDraft((prev) => ({ ...prev, email: event.target.value.toLowerCase() }))
+                  }
+                  disabled={!isNewEntry}
+                />
+              </label>
+              <label>
+                שם
+                <input
+                  type="text"
+                  value={userDraft.name}
+                  onChange={(event) => setUserDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </label>
+              <label>
+                טלפון
+                <input
+                  type="tel"
+                  value={userDraft.phone || ""}
+                  onChange={(event) => setUserDraft((prev) => ({ ...prev, phone: event.target.value }))}
+                />
+              </label>
+              <label>
+                הרשאה
+                <select
+                  value={userDraft.role}
+                  onChange={(event) =>
+                    setUserDraft((prev) => ({ ...prev, role: event.target.value as DirectoryUser["role"] }))
+                  }
+                >
+                  <option value="student">סטודנט</option>
+                  <option value="moderator">מתאם</option>
+                  <option value="admin">מנהל</option>
+                </select>
+              </label>
+              <label>
+                שנתון
+                <select
+                  value={
+                    userDraft.role === "moderator" && !userDraft.cohortStartYear
+                      ? "STAFF"
+                      : gradeValueFromCohort(userDraft.cohortStartYear)
+                  }
+                  onChange={(event) => {
+                    const value = event.target.value as "A" | "B" | "C" | "STAFF";
+                    if (value === "STAFF") {
+                      setUserDraft((prev) => ({
+                        ...prev,
+                        cohortStartYear: undefined,
+                        role: prev.role === "student" || prev.role === "pending" ? "moderator" : prev.role
+                      }));
+                      return;
+                    }
+                    setUserDraft((prev) => ({
+                      ...prev,
+                      cohortStartYear: cohortStartYearFromGrade(value),
+                      role: prev.role === "pending" ? "student" : prev.role
+                    }));
+                  }}
+                >
+                  <option value="STAFF">צוות</option>
+                  {gradeOptions().map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {userDraft.cohortStartYear || (userDraft.role === "moderator" && !userDraft.cohortStartYear) ? (
+              <p className="admin-meta">
+                סטטוס נוכחי:{" "}
+                {userDraft.role === "moderator" && !userDraft.cohortStartYear
+                  ? "צוות"
+                  : gradeLabelFromCohort(userDraft.cohortStartYear)}
+                {userDraft.cohortStartYear
+                  ? ` · התחלת מחזור ${userDraft.cohortStartYear}-${userDraft.cohortStartYear + 1}`
+                  : ""}
+              </p>
+            ) : null}
+            <div className="admin-actions">
+              <button className="primary" type="button" onClick={() => onUpsert(userDraft)} disabled={!userDraft.email}>
+                <ApproveIcon />
+                {isNewEntry ? "הוספה" : "עדכון"}
+              </button>
+              <button
+                className="secondary danger"
+                type="button"
+                onClick={handleDelete}
+                disabled={!selectedEmail}
+              >
+                <ReleaseIcon />
+                מחיקה
+              </button>
+            </div>
+          </fieldset>
+        </div>
+      </PropsOverlay>
       <div className="admin-section-toolbar">
         <div className="admin-filters-stack">
           <div className="admin-filters">
@@ -402,161 +549,10 @@ export default function UsersSection({
         {usersError ? <span className="admin-error">{usersError}</span> : null}
       </div>
       <div className="admin-section-body">
-        <aside className="admin-properties">
-          <div className="admin-card">
-              <div className="admin-card-header">
-                <h3>פרטי משתמש</h3>
-                {userStatus ? <span className="admin-meta">{userStatus}</span> : null}
-              </div>
-            {selectedUser?.role === "pending" ? (
-              <div className="admin-inline">
-                <button className="primary" type="button" onClick={() => onApprove(selectedUser)}>
-                  אישור משתמש
-                </button>
-              </div>
-            ) : null}
-            <fieldset className="admin-fieldset" disabled={!isEditing}>
-              <div className="admin-form-grid">
-                <label>
-                  אימייל
-                  <input
-                    type="email"
-                    value={userDraft.email}
-                    onChange={(event) =>
-                      setUserDraft((prev) => ({ ...prev, email: event.target.value.toLowerCase() }))
-                    }
-                  />
-                </label>
-                <label>
-                  שם
-                  <input
-                    type="text"
-                    value={userDraft.name}
-                    onChange={(event) => setUserDraft((prev) => ({ ...prev, name: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  טלפון
-                  <input
-                    type="tel"
-                    value={userDraft.phone || ""}
-                    onChange={(event) => setUserDraft((prev) => ({ ...prev, phone: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  הרשאה
-                  <select
-                    value={userDraft.role}
-                    onChange={(event) =>
-                      setUserDraft((prev) => ({ ...prev, role: event.target.value as DirectoryUser["role"] }))
-                    }
-                  >
-                    <option value="student">סטודנט</option>
-                    <option value="moderator">מתאם</option>
-                    <option value="admin">מנהל</option>
-                  </select>
-                </label>
-                <label>
-                  שנתון
-                  <select
-                    value={userDraft.role === "moderator" && !userDraft.cohortStartYear ? "STAFF" : gradeValueFromCohort(userDraft.cohortStartYear)}
-                    onChange={(event) => {
-                      const value = event.target.value as "A" | "B" | "C" | "STAFF";
-                      if (value === "STAFF") {
-                        setUserDraft((prev) => ({
-                          ...prev,
-                          cohortStartYear: undefined,
-                          role: prev.role === "student" || prev.role === "pending" ? "moderator" : prev.role
-                        }));
-                        return;
-                      }
-                      setUserDraft((prev) => ({
-                        ...prev,
-                        cohortStartYear: cohortStartYearFromGrade(value),
-                        role: prev.role === "pending" ? "student" : prev.role
-                      }));
-                    }}
-                  >
-                    <option value="STAFF">צוות</option>
-                    {gradeOptions().map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              {isEditing && (userDraft.cohortStartYear || (userDraft.role === "moderator" && !userDraft.cohortStartYear)) ? (
-                <p className="admin-meta">
-                  סטטוס נוכחי: {userDraft.role === "moderator" && !userDraft.cohortStartYear ? "צוות" : gradeLabelFromCohort(userDraft.cohortStartYear)}
-                  {userDraft.cohortStartYear ? ` · התחלת מחזור ${userDraft.cohortStartYear}-${userDraft.cohortStartYear + 1}` : ""}
-                </p>
-              ) : null}
-              <div className="admin-actions">
-                <button
-                  className="primary"
-                  type="button"
-                  onClick={() => onUpsert(userDraft)}
-                  disabled={!isEditing || !userDraft.email}
-                >
-                  <ApproveIcon />
-                  {isNewEntry ? "הוספה" : "עדכון"}
-                </button>
-                <button
-                  className="secondary danger"
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={!isEditing || !selectedEmail}
-                >
-                  <ReleaseIcon />
-                  מחיקה
-                </button>
-              </div>
-            </fieldset>
-          </div>
-        </aside>
         <div className="admin-list">
           <div className="admin-card list-card">
             <div className="admin-card-header">
               <h3>רשימת משתמשים</h3>
-            </div>
-            <div className="admin-list-toolbar">
-              <div className="admin-list-toolbar-left">
-                <label className="admin-select-all">
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
-                    className="admin-row-check"
-                    checked={filteredUsers.length > 0 && selectedInView.length === filteredUsers.length}
-                    onChange={bulkToggleAll}
-                  />
-                  <span>בחירה</span>
-                </label>
-                <span className="admin-meta">
-                  {selectedInView.length ? `${selectedInView.length} נבחרו` : `${filteredUsersCount} תוצאות`}
-                </span>
-              </div>
-              <div className="admin-list-toolbar-right">
-                <button className="admin-card-action" type="button" onClick={handleNew}>
-                  <AddIcon />
-                  הוספה
-                </button>
-                <button className="admin-card-action" type="button" onClick={bulkEdit} disabled={selectedInView.length !== 1}>
-                  <EditIcon />
-                  עריכה
-                </button>
-                <button
-                  className="admin-card-action"
-                  type="button"
-                  onClick={bulkDuplicate}
-                  disabled={selectedInView.length !== 1}
-                >
-                  <DuplicateIcon />
-                  שכפול
-                </button>
-                <button className="admin-card-action" type="button" onClick={bulkDelete} disabled={!selectedInView.length}>
-                  <ReleaseIcon />
-                  מחיקה
-                </button>
-              </div>
             </div>
             {filteredUsers.length ? (
               <div className="admin-table scroll tall">

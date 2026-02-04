@@ -1,5 +1,6 @@
+import { useEffect, useMemo, useState } from "react";
 import type { User } from "../types/auth";
-import { BookmarkIcon, AdminIcon } from "./Icons";
+import { BookmarkIcon, AdminIcon, ShortcutIcon } from "./Icons";
 
 export type AuthMenuProps = {
   user: User | null;
@@ -11,6 +12,9 @@ export type AuthMenuProps = {
   onOpenReservations?: () => void;
   adminMode?: boolean;
   onToggleAdminMode?: () => void;
+  installAvailable?: boolean;
+  isStandalone?: boolean;
+  onInstall?: () => void;
 };
 
 export default function AuthMenu({
@@ -22,9 +26,42 @@ export default function AuthMenu({
   reservationsCount = 0,
   onOpenReservations,
   adminMode = false,
-  onToggleAdminMode
+  onToggleAdminMode,
+  installAvailable = false,
+  isStandalone = false,
+  onInstall
 }: AuthMenuProps) {
   if (!open) return null;
+
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setInstallHelpOpen(false);
+  }, [open]);
+
+  const installHint = useMemo(() => {
+    const ua = navigator.userAgent || "";
+    const isIOS = /iPad|iPhone|iPod/i.test(ua);
+    const isAndroid = /Android/i.test(ua);
+    if (isIOS) {
+      return 'ב־Safari: לחצו על "שיתוף" ואז "הוספה למסך הבית".';
+    }
+    if (isAndroid) {
+      return 'ב־Chrome/Edge: תפריט ⋮ ואז "הוספה למסך הבית".';
+    }
+    return 'בדפדפן: תפריט ואז "הוספה למסך הבית" / "Install app".';
+  }, []);
+
+  const handleInstall = () => {
+    if (isStandalone) return;
+    if (installAvailable && onInstall) {
+      onInstall();
+      return;
+    }
+    setInstallHelpOpen((prev) => !prev);
+  };
+
   return (
     <div className="auth-overlay" onClick={onClose}>
       <div className="auth-menu" onClick={(event) => event.stopPropagation()}>
@@ -122,12 +159,38 @@ export default function AuthMenu({
                 <span className="auth-reservations-count">{reservationsCount}</span>
               ) : null}
             </button>
+            {!isStandalone ? (
+              <>
+                <button
+                  className="secondary auth-install-button"
+                  type="button"
+                  onClick={handleInstall}
+                >
+                  <ShortcutIcon />
+                  <span>הוספה למסך הבית</span>
+                </button>
+                {installHelpOpen && !installAvailable ? (
+                  <div className="auth-install-hint">{installHint}</div>
+                ) : null}
+              </>
+            ) : null}
             <button className="primary" onClick={onSignOut} type="button">התנתק</button>
           </>
         ) : (
           <>
             <p>התחבר כדי לשריין חדרים</p>
             <button className="primary" onClick={onLoginClick} type="button">התחברות</button>
+            {!isStandalone ? (
+              <>
+                <button className="secondary auth-install-button" type="button" onClick={handleInstall}>
+                  <ShortcutIcon />
+                  <span>הוספה למסך הבית</span>
+                </button>
+                {installHelpOpen && !installAvailable ? (
+                  <div className="auth-install-hint">{installHint}</div>
+                ) : null}
+              </>
+            ) : null}
           </>
         )}
       </div>

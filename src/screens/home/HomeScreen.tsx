@@ -1583,6 +1583,7 @@ export default function HomeScreen({
         name={detailsName}
         email={detailsEmail}
         phone={detailsPhone}
+        pictureUrl={user && detailsEmail && user.email.toLowerCase() === detailsEmail.toLowerCase() ? (user.picture || "") : undefined}
         onClose={() => setReservationDetails(null)}
       />
       <BlockDetailsOverlay
