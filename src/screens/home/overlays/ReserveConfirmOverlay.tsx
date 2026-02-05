@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
+import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import type { ReserveRequest } from "../../../types/reservations";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
@@ -18,18 +19,6 @@ export type ReserveConfirmOverlayProps = {
   onRelease?: () => void;
   onConfirm: (startMinutes: number, durationMinutes: number) => void;
   onClose: () => void;
-};
-
-const formatDurationLabel = (minutes: number) => {
-  if (minutes === 30) return "חצי שעה";
-  if (minutes === 60) return "שעה";
-  if (minutes === 90) return "שעה וחצי";
-  if (minutes === 120) return "שעתיים";
-  if (minutes === 150) return "שעתיים וחצי";
-  if (minutes === 180) return "3 שעות";
-  const hours = minutes / 60;
-  if (Number.isInteger(hours)) return `${hours} שעות`;
-  return `${hours.toFixed(2)} שעות`;
 };
 
 export default function ReserveConfirmOverlay({
@@ -176,7 +165,7 @@ export default function ReserveConfirmOverlay({
           </div>
         </div>
 
-        <p className="reserve-duration">משך: {formatDurationLabel(durationMinutes)}</p>
+        <p className="reserve-duration">משך: {formatDurationLabelHe(durationMinutes)}</p>
 
         <div className="reserve-actions">
           {mode === "edit" ? (

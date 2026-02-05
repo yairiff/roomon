@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDays, formatDateKey, formatShortDate, parseDateKey, getDayKeyFromDateKey } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
+import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import type { DayKey, Lesson, Room } from "../../../types/schedule";
 import type { ReservationMap, ReserveRequest } from "../../../types/reservations";
 import type { RoomMeta } from "../../../types/admin";
@@ -56,14 +57,6 @@ export default function BookingFinder({
   const formatDayDate = (dateKey: string) => {
     const dayLabel = weekDayNames[parseDateKey(dateKey).getDay()] || "";
     return `יום ${dayLabel} · ${formatShortDate(dateKey)}`;
-  };
-
-  const formatDurationLabel = (minutes: number) => {
-    if (minutes === 60) return "שעה";
-    if (minutes === 120) return "שעתיים";
-    const hours = minutes / 60;
-    if (Number.isInteger(hours)) return `${hours} שעות`;
-    return `${hours.toFixed(2)} שעות`;
   };
 
   const hours = useMemo(
@@ -314,7 +307,7 @@ export default function BookingFinder({
                   </p>
                   <p className="finder-result-meta">
                     {formatDayDate(item.date)} · {formatMinutes(item.start)}–{formatMinutes(item.end)} ·{" "}
-                    {formatDurationLabel(item.end - item.start)}
+                    {formatDurationLabelHe(item.end - item.start)}
                   </p>
                 </div>
                 <button
