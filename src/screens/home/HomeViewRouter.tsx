@@ -150,6 +150,7 @@ export default function HomeViewRouter({
         agendaDays={myScheduleAgendaDays}
         onAgendaLoadMore={onMyScheduleAgendaLoadMore}
         todayDateKey={todayDateKey}
+        nowMinutes={nowMinutes}
         weekDates={weekDates}
         timeSlots={timeSlots}
         startHour={startHour}
@@ -203,4 +204,3 @@ export default function HomeViewRouter({
     />
   );
 }
-

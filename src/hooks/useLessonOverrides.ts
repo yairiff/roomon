@@ -4,6 +4,8 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
+  query,
+  where,
   serverTimestamp,
   setDoc
 } from "firebase/firestore";
@@ -21,12 +23,20 @@ type OverrideInput = {
   createdBy?: string;
 };
 
-export function useLessonOverrides() {
+export type LessonOverridesWindow = { startDate: string; endDate: string } | null;
+
+export function useLessonOverrides(window: LessonOverridesWindow = null, enabled = true) {
   const [overrides, setOverrides] = useState<LessonOverride[]>([]);
   const [overridesReady, setOverridesReady] = useState<boolean>(!db);
   const [overridesError, setOverridesError] = useState<string>("");
 
   useEffect(() => {
+    if (!enabled) {
+      setOverrides([]);
+      setOverridesError("");
+      setOverridesReady(true);
+      return;
+    }
     if (!db) {
       setOverridesError("Firestore is not configured.");
       setOverridesReady(true);
@@ -34,8 +44,11 @@ export function useLessonOverrides() {
     }
 
     const ref = collection(db, "lessonOverrides");
+    const q = window
+      ? query(ref, where("date", ">=", window.startDate), where("date", "<=", window.endDate))
+      : ref;
     const unsubscribe = onSnapshot(
-      ref,
+      q,
       (snapshot) => {
         const next: LessonOverride[] = [];
         snapshot.forEach((docSnap) => {
@@ -62,7 +75,7 @@ export function useLessonOverrides() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [enabled, window?.endDate, window?.startDate]);
 
   const overridesByDate = useMemo(() => {
     const map: Record<string, LessonOverride[]> = {};

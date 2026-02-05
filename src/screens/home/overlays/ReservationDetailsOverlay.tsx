@@ -56,17 +56,6 @@ export default function ReservationDetailsOverlay({
   return (
     <div className="reserve-overlay" onClick={onClose}>
       <div className="reserve-menu" onClick={(event) => event.stopPropagation()}>
-        {onTogglePin ? (
-          <button
-            type="button"
-            className="reserve-pin"
-            aria-label={pinned ? "הוסר מהמערכת שלי" : "הוסף למערכת שלי"}
-            aria-pressed={pinned}
-            onClick={onTogglePin}
-          >
-            {pinned ? <PinOnIcon /> : <PinAddIcon />}
-          </button>
-        ) : null}
         <div className="reserve-header">
           <div className="reserve-avatar" aria-hidden="true">
             {pictureUrl ? <img src={pictureUrl} alt="" /> : <span>{initials}</span>}
@@ -81,29 +70,47 @@ export default function ReservationDetailsOverlay({
           <p className="reserve-time">{timeLine}</p>
           {!name ? <p className="reserve-detail">{title}</p> : null}
         </div>
-        <div className="reserve-actions">
-          {telHref ? (
-            <a className="primary" href={telHref}>
-              <PhoneInTalkRoundedIcon fontSize="small" />
-              התקשר
-            </a>
-          ) : (
-            <button className="primary" type="button" disabled>
-              <PhoneInTalkRoundedIcon fontSize="small" />
-              טלפון
+        <div className="reserve-actions reserve-actions-details">
+          {onTogglePin ? (
+            <button
+              type="button"
+              className="secondary reserve-pin-action"
+              aria-label={pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}
+              aria-pressed={pinned}
+              onClick={onTogglePin}
+            >
+              {pinned ? <PinOnIcon /> : <PinAddIcon />}
+              <span>{pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}</span>
             </button>
-          )}
-          {waHref ? (
-            <a className="secondary" href={waHref} target="_blank" rel="noreferrer">
-              <WhatsAppIcon fontSize="small" />
-              WhatsApp
-            </a>
-          ) : (
-            <button className="secondary" type="button" disabled>
-              <WhatsAppIcon fontSize="small" />
-              WhatsApp
-            </button>
-          )}
+          ) : null}
+
+          <div className="reserve-contact-actions" aria-label="יצירת קשר">
+            {telHref ? (
+              <a className="icon-button contact" href={telHref} aria-label="התקשר">
+                <PhoneInTalkRoundedIcon fontSize="small" />
+              </a>
+            ) : (
+              <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
+                <PhoneInTalkRoundedIcon fontSize="small" />
+              </button>
+            )}
+
+            {waHref ? (
+              <a
+                className="icon-button contact whatsapp"
+                href={waHref}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="WhatsApp"
+              >
+                <WhatsAppIcon fontSize="small" />
+              </a>
+            ) : (
+              <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
+                <WhatsAppIcon fontSize="small" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

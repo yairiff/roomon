@@ -11,11 +11,14 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import type { BulkState } from "../bulk";
 import PropsOverlay from "../components/PropsOverlay";
 import FilterChip, { closeFilterChip } from "../components/FilterChip";
+import RowSelectButton from "../components/RowSelectButton";
+import SortSelect from "../components/SortSelect";
 
 type UsersSectionProps = {
   users: DirectoryUser[];
   pendingUsers: DirectoryUser[];
   usersError: string;
+  query: string;
   userDraft: DirectoryUser;
   setUserDraft: Dispatch<SetStateAction<DirectoryUser>>;
   currentAcademicYear: number;
@@ -44,6 +47,7 @@ export default function UsersSection({
   users,
   pendingUsers,
   usersError,
+  query,
   userDraft,
   setUserDraft,
   currentAcademicYear,
@@ -56,7 +60,6 @@ export default function UsersSection({
   const [filter, setFilter] = useState<UserFilter>("all");
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
   const [phoneFilter, setPhoneFilter] = useState<PhoneFilter>("all");
-  const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<UserSort>("name");
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(() => new Set());
   const [confirmDeleteEmails, setConfirmDeleteEmails] = useState<string[] | null>(null);
@@ -531,55 +534,21 @@ export default function UsersSection({
                 ))}
               </div>
             </FilterChip>
-
-            <FilterChip label="חיפוש" value={query.trim() ? query.trim() : "ללא"}>
-              <div className="admin-filter-pop-grid">
-                <input
-                  className="admin-filter-input"
-                  type="search"
-                  value={query}
-                  placeholder="שם / אימייל / טלפון"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <div className="admin-filter-pop-actions">
-                  <button
-                    type="button"
-                    className="admin-filter-option subtle"
-                    onClick={(event) => {
-                      setQuery("");
-                      closeFilterChip(event);
-                    }}
-                  >
-                    נקה
-                  </button>
-                </div>
-              </div>
-            </FilterChip>
           </div>
 
           <div className="admin-filter-group" aria-label="מיון">
-            <FilterChip label="מיון" value={sortLabel[sortBy]}>
-              <div className="admin-filter-options">
-                {(Object.keys(sortLabel) as UserSort[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`admin-filter-option${sortBy === key ? " active" : ""}`}
-                    onClick={(event) => {
-                      setSortBy(key);
-                      closeFilterChip(event);
-                    }}
-                  >
-                    {sortLabel[key]}
-                  </button>
-                ))}
-              </div>
-            </FilterChip>
-
-            <div className="admin-filter-count" aria-label="כמות תוצאות">
-              {filteredUsersCount} תוצאות
-            </div>
+            <SortSelect
+              label="מיון"
+              value={sortBy}
+              options={(Object.keys(sortLabel) as UserSort[]).map((key) => ({ value: key, label: sortLabel[key] }))}
+              onChange={(value) => setSortBy(value as UserSort)}
+            />
           </div>
+        </div>
+        <div className="admin-filter-summary" aria-label="סיכום">
+          <span className="admin-filter-summary-count">
+            {selectedInView.length ? `${selectedInView.length} מתוך ${filteredUsersCount} תוצאות` : `${filteredUsersCount} תוצאות`}
+          </span>
         </div>
         {usersError ? <span className="admin-error">{usersError}</span> : null}
       </div>
@@ -601,12 +570,11 @@ export default function UsersSection({
                     }
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    className="admin-row-check"
-                    checked={selectedEmails.has(user.email)}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() =>
+                  <span className={`admin-row-stripe role-${user.role}`} aria-hidden="true" />
+                  <RowSelectButton
+                    selected={selectedEmails.has(user.email)}
+                    label="בחר משתמש"
+                    onToggle={() =>
                       setSelectedEmails((prev) => {
                         const next = new Set(prev);
                         if (next.has(user.email)) next.delete(user.email);
@@ -614,7 +582,6 @@ export default function UsersSection({
                         return next;
                       })
                     }
-                    aria-label="בחר משתמש"
                   />
                   <div className="admin-row-main">
                     <p className="admin-row-title">{user.name || user.email}</p>
@@ -625,6 +592,8 @@ export default function UsersSection({
                         : user.cohortStartYear
                           ? `שנתון ${gradeLabelFromCohort(user.cohortStartYear)}`
                           : "שנתון לא הוגדר"}
+                      {" · "}
+                      {roleLabel(user.role)}
                     </p>
                     <p className="admin-row-meta">{user.email}</p>
                   </div>
@@ -664,9 +633,6 @@ export default function UsersSection({
                         <ReleaseIcon />
                       </button>
                     </div>
-                    <span className={`chip small${user.role === "pending" ? " active" : " ghost"}`}>
-                      {roleLabel(user.role)}
-                    </span>
                   </div>
                 </div>
               ))}

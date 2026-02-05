@@ -8,6 +8,8 @@ export type Reservation = {
   roomId: string;
   reservedBy: string;
   reservedEmail: string;
+  reservedPhone?: string;
+  reservedPicture?: string;
   kind?: "special" | "closed";
 };
 

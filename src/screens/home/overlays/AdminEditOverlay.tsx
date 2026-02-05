@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { getDayKeyFromDateKey } from "../../../lib/date";
+import { formatShortDate, getDayKeyFromDateKey } from "../../../lib/date";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
-import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { parseTimeInput, toTimeInput } from "../../../lib/timeInput";
 import { CloseIcon, ClosedIcon, LessonTypeIcon, ReservationIcon, SpecialIcon } from "../../../components/Icons";
 import type { DirectoryUser } from "../../../types/admin";
@@ -45,6 +44,7 @@ export default function AdminEditOverlay({
   const [userQuery, setUserQuery] = useState("");
   const [userOpen, setUserOpen] = useState(false);
   const lastValidUser = useRef<{ label: string; email: string; name: string } | null>(null);
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!draft || draft.type !== "reservation") {
@@ -89,9 +89,7 @@ export default function AdminEditOverlay({
             ? "שריון"
             : "בחר סוג";
 
-  const timeLabel =
-    `בין ${formatMinutes(draft.startMinutes)}-` +
-    `${formatMinutes(draft.startMinutes + draft.durationMinutes)}`;
+  const dateLabel = `יום ${weekDays.find((day) => day.key === draft.dayKey)?.label || ""} · ${formatShortDate(draft.dateKey)}`;
 
   return (
     <div className="admin-overlay" onClick={onClose}>
@@ -100,37 +98,10 @@ export default function AdminEditOverlay({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="admin-modal-header">
-          <div>
+          <div style={{ flex: 1 }}>
             <p className="admin-title">
               {typeLabel} · {draft.mode === "create" ? "חדש" : "עריכה"}
             </p>
-            <div className="admin-subtitle">
-              <div className="admin-subtitle-row">
-                <span>{`יום ${weekDays.find((day) => day.key === draft.dayKey)?.label || ""}`}</span>
-                <input
-                  className="admin-date-picker"
-                  type="date"
-                  value={draft.dateKey}
-                  onChange={(event) => {
-                    const nextDate = event.target.value;
-                    if (!nextDate) return;
-                    setDraft((prev) =>
-                      prev
-                        ? ({
-                            ...prev,
-                            dateKey: nextDate,
-                            dayKey: getDayKeyFromDateKey(nextDate)
-                          } as AdminDraft)
-                        : prev
-                    );
-                  }}
-                />
-                <span className="admin-subtitle-sep" aria-hidden="true">
-                  ·
-                </span>
-                <span>{timeLabel}</span>
-              </div>
-            </div>
           </div>
           <button className="icon-button" type="button" aria-label="סגירה" onClick={onClose}>
             <CloseIcon />
@@ -176,12 +147,47 @@ export default function AdminEditOverlay({
 
         <div className="admin-form">
           {draft.type === "lesson" && draft.mode === "edit" && draft.targetLessonId ? (
-            <p className="admin-meta" style={{ margin: "-2px 0 4px" }}>
+            <p className="admin-meta hint center" style={{ margin: "-2px 0 4px" }}>
               העריכה כאן יוצרת החרגה לתאריך הזה בלבד (לא משנה את הסדרה הקבועה).
               <br />
               כדי לשנות את כל הסדרה: ניהול → מערכת שעות → שיעורים.
             </p>
           ) : null}
+
+          <label className="admin-date-row">
+            תאריך
+            <button
+              type="button"
+              className="admin-date-pill"
+              onClick={() => {
+                const picker = dateInputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+                if (!picker) return;
+                if (picker.showPicker) picker.showPicker();
+                else picker.click();
+              }}
+            >
+              {dateLabel}
+            </button>
+            <input
+              ref={dateInputRef}
+              className="admin-date-input-hidden"
+              type="date"
+              value={draft.dateKey}
+              onChange={(event) => {
+                const nextDate = event.target.value;
+                if (!nextDate) return;
+                setDraft((prev) =>
+                  prev
+                    ? ({
+                        ...prev,
+                        dateKey: nextDate,
+                        dayKey: getDayKeyFromDateKey(nextDate)
+                      } as AdminDraft)
+                    : prev
+                );
+              }}
+            />
+          </label>
 
           <label>
             חדר

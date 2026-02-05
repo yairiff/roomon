@@ -93,6 +93,10 @@ export function useAdminDraftFlow({
     setAdminError("");
 
     if (adminDraft.type === "lesson") {
+      if (!adminDraft.title.trim()) {
+        setAdminError("יש להזין שם שיעור.");
+        return;
+      }
       const action = adminDraft.mode === "edit" ? "update" : "add";
       const lesson: Lesson = {
         id: adminDraft.targetLessonId || `override-${Date.now()}`,
@@ -115,6 +119,15 @@ export function useAdminDraftFlow({
         return;
       }
       setAdminDraft(null);
+      return;
+    }
+
+    if ((adminDraft.type === "special" || adminDraft.type === "closed") && !adminDraft.label.trim()) {
+      setAdminError(adminDraft.type === "special" ? "יש להזין תיאור אירוע." : "יש להזין תיאור סגירה.");
+      return;
+    }
+    if (adminDraft.type === "reservation" && !adminDraft.reservedEmail.trim()) {
+      setAdminError("יש להזין אימייל.");
       return;
     }
 
@@ -356,4 +369,3 @@ export function useAdminDraftFlow({
     switchAdminType
   };
 }
-

@@ -45,7 +45,6 @@ export function scheduleCsvHelp(table: Exclude<CsvTable, "users">): ReactNode {
             { key: "roomId", value: "מזהה חדר" },
             { key: "startTime", value: "HH:MM" },
             { key: "endTime", value: "HH:MM" },
-            { key: "reservedBy", value: "שם" },
             { key: "reservedEmail", value: "אימייל" }
           ]
         : [
@@ -58,4 +57,3 @@ export function scheduleCsvHelp(table: Exclude<CsvTable, "users">): ReactNode {
 
   return renderCsvHelp(rows);
 }
-

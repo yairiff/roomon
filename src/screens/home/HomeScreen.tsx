@@ -101,8 +101,8 @@ export default function HomeScreen({
   const lastMainViewRef = useRef<ViewMode>("live");
   const dateInputRef = useRef<HTMLInputElement | null>(null);
   const lastContextKeyRef = useRef<string>("");
-  const contactCacheRef = useRef<Map<string, { name: string; phone: string }>>(new Map());
-  const [detailsContact, setDetailsContact] = useState<{ name: string; phone: string } | null>(null);
+  const contactCacheRef = useRef<Map<string, { name: string; phone: string; pictureUrl?: string }>>(new Map());
+  const [detailsContact, setDetailsContact] = useState<{ name: string; phone: string; pictureUrl?: string } | null>(null);
   const lastWindowKeyRef = useRef<string>("");
   const [finderWindow, setFinderWindow] = useState<{ startDate: string; endDate: string }>(() => {
     const today = new Date();
@@ -157,7 +157,25 @@ export default function HomeScreen({
   });
 
   const { rooms, weekDays, timeSlots, lessons, config, roomMeta } = useSchedule(scheduleDateKey);
-  const { overridesByDate, addOverride } = useLessonOverrides();
+  const overridesWeekDates = buildWeekDates(selectedDate, weekDays);
+  const overridesWeekRange = {
+    startDate: overridesWeekDates[0]?.dateKey || selectedDate,
+    endDate: overridesWeekDates[overridesWeekDates.length - 1]?.dateKey || selectedDate
+  };
+  const overridesAgendaEnd = formatDateKey(addDays(parseDateKey(todayDateKey), Math.max(0, myScheduleAgendaDays - 1)));
+  const overridesWindow =
+    view === "live"
+      ? { startDate: todayDateKey, endDate: todayDateKey }
+      : view === "finder"
+        ? finderWindow
+        : view === "mySchedule"
+          ? (myScheduleMode === "agenda"
+            ? { startDate: todayDateKey, endDate: overridesAgendaEnd }
+            : myScheduleMode === "day"
+              ? { startDate: selectedDate, endDate: selectedDate }
+              : overridesWeekRange)
+          : overridesWeekRange;
+  const { overridesByDate, addOverride } = useLessonOverrides(overridesWindow);
   const { users } = useDirectoryUsers(adminMode && isAdmin);
 
   useEffect(() => {
@@ -741,10 +759,37 @@ export default function HomeScreen({
       setDetailsContact(null);
       return;
     }
+    const nameFromReservation = (detailsReservation?.reservedBy || "").trim();
+    const phoneFromReservation = (detailsReservation?.reservedPhone || "").trim();
+    const pictureFromReservation = (detailsReservation?.reservedPicture || "").trim();
+
     const cached = contactCacheRef.current.get(email);
     if (cached) {
-      setDetailsContact(cached);
+      const merged = {
+        ...cached,
+        ...(nameFromReservation ? { name: nameFromReservation } : {}),
+        ...(phoneFromReservation ? { phone: phoneFromReservation } : {}),
+        ...(pictureFromReservation ? { pictureUrl: pictureFromReservation } : {})
+      };
+      setDetailsContact(merged);
       return;
+    }
+
+    // Prefer contact info stored on the reservation itself (no extra reads), but still
+    // allow a single user-doc read to backfill a missing picture URL.
+    if (phoneFromReservation && pictureFromReservation) {
+      const contact = {
+        name: nameFromReservation,
+        phone: phoneFromReservation,
+        pictureUrl: pictureFromReservation
+      };
+      contactCacheRef.current.set(email, contact);
+      setDetailsContact(contact);
+      return;
+    }
+    if (phoneFromReservation) {
+      // Show the phone immediately, then try to backfill the picture from the users directory.
+      setDetailsContact({ name: nameFromReservation, phone: phoneFromReservation });
     }
     if (!db) {
       setDetailsContact(null);
@@ -755,7 +800,7 @@ export default function HomeScreen({
       .then((snap) => {
         if (cancelled) return;
         if (!snap.exists()) {
-          setDetailsContact(null);
+          setDetailsContact(phoneFromReservation ? { name: nameFromReservation, phone: phoneFromReservation } : null);
           return;
         }
         const data = snap.data() as Record<string, unknown>;
@@ -771,16 +816,27 @@ export default function HomeScreen({
                   : typeof data.tel === "string"
                     ? data.tel
                     : "";
+        const pictureUrl =
+          typeof data.pictureUrl === "string"
+            ? data.pictureUrl
+            : typeof data.picture === "string"
+              ? data.picture
+              : typeof data.photoURL === "string"
+                ? data.photoURL
+                : typeof data.photoUrl === "string"
+                  ? data.photoUrl
+                  : "";
         const contact = {
-          name: typeof data.name === "string" ? data.name : "",
-          phone
+          name: typeof data.name === "string" ? data.name : nameFromReservation,
+          phone: phoneFromReservation || phone,
+          ...(pictureUrl ? { pictureUrl } : {})
         };
         contactCacheRef.current.set(email, contact);
         setDetailsContact(contact);
       })
       .catch(() => {
         if (cancelled) return;
-        setDetailsContact(null);
+        setDetailsContact(phoneFromReservation ? { name: nameFromReservation, phone: phoneFromReservation } : null);
       });
     return () => {
       cancelled = true;
@@ -804,7 +860,13 @@ export default function HomeScreen({
     : "";
   const detailsName = detailsReservation?.reservedBy || detailsContact?.name || "";
   const detailsEmail = detailsReservation?.reservedEmail || "";
-  const detailsPhone = detailsContact?.phone || "";
+  const detailsPhone = detailsReservation?.reservedPhone || detailsContact?.phone || "";
+  const detailsPictureUrl =
+    detailsReservation?.reservedPicture ||
+    detailsContact?.pictureUrl ||
+    (currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase()
+      ? (currentUser.picture || "")
+      : "");
   const reservationPinned = detailsReservation
     ? isPinned({
         kind: "reservation",
@@ -869,7 +931,7 @@ export default function HomeScreen({
         name={detailsName}
         email={detailsEmail}
         phone={detailsPhone}
-        pictureUrl={currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase() ? (currentUser.picture || "") : undefined}
+        pictureUrl={detailsPictureUrl || undefined}
         pinned={reservationPinned}
         onTogglePin={
           detailsReservation && currentUser?.email

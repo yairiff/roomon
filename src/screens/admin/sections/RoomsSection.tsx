@@ -6,10 +6,13 @@ import type { BulkState } from "../bulk";
 import ConfirmDialog from "../components/ConfirmDialog";
 import PropsOverlay from "../components/PropsOverlay";
 import FilterChip, { closeFilterChip } from "../components/FilterChip";
+import RowSelectButton from "../components/RowSelectButton";
+import SortSelect from "../components/SortSelect";
 
 type RoomsSectionProps = {
   roomsRaw: RoomRecord[];
   roomsError: string;
+  query: string;
   roomDraft: RoomRecord;
   setRoomDraft: Dispatch<SetStateAction<RoomRecord>>;
   toTimeInput: (minutes: number) => string;
@@ -27,6 +30,7 @@ type RoomSort = "order" | "name" | "open_time" | "closed_first";
 export default function RoomsSection({
   roomsRaw,
   roomsError,
+  query,
   roomDraft,
   setRoomDraft,
   toTimeInput,
@@ -38,7 +42,6 @@ export default function RoomsSection({
 }: RoomsSectionProps) {
   const [filter, setFilter] = useState<RoomFilter>("all");
   const [shortFilter, setShortFilter] = useState<RoomShortFilter>("all");
-  const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<RoomSort>("order");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [confirmDeleteIds, setConfirmDeleteIds] = useState<string[] | null>(null);
@@ -393,55 +396,21 @@ export default function RoomsSection({
                 ))}
               </div>
             </FilterChip>
-
-            <FilterChip label="חיפוש" value={query.trim() ? query.trim() : "ללא"}>
-              <div className="admin-filter-pop-grid">
-                <input
-                  className="admin-filter-input"
-                  type="search"
-                  value={query}
-                  placeholder="שם / קיצור / מזהה"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <div className="admin-filter-pop-actions">
-                  <button
-                    type="button"
-                    className="admin-filter-option subtle"
-                    onClick={(event) => {
-                      setQuery("");
-                      closeFilterChip(event);
-                    }}
-                  >
-                    נקה
-                  </button>
-                </div>
-              </div>
-            </FilterChip>
           </div>
 
           <div className="admin-filter-group" aria-label="מיון">
-            <FilterChip label="מיון" value={sortLabel[sortBy]}>
-              <div className="admin-filter-options">
-                {(Object.keys(sortLabel) as RoomSort[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`admin-filter-option${sortBy === key ? " active" : ""}`}
-                    onClick={(event) => {
-                      setSortBy(key);
-                      closeFilterChip(event);
-                    }}
-                  >
-                    {sortLabel[key]}
-                  </button>
-                ))}
-              </div>
-            </FilterChip>
-
-            <div className="admin-filter-count" aria-label="כמות תוצאות">
-              {filteredRooms.length} תוצאות
-            </div>
+            <SortSelect
+              label="מיון"
+              value={sortBy}
+              options={(Object.keys(sortLabel) as RoomSort[]).map((key) => ({ value: key, label: sortLabel[key] }))}
+              onChange={(value) => setSortBy(value as RoomSort)}
+            />
           </div>
+        </div>
+        <div className="admin-filter-summary" aria-label="סיכום">
+          <span className="admin-filter-summary-count">
+            {selectedInView.length ? `${selectedInView.length} מתוך ${filteredRooms.length} תוצאות` : `${filteredRooms.length} תוצאות`}
+          </span>
         </div>
         {roomsError ? <span className="admin-error">{roomsError}</span> : null}
       </div>
@@ -463,12 +432,11 @@ export default function RoomsSection({
                     }
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    className="admin-row-check"
-                    checked={selectedIds.has(room.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() =>
+                  <span className={`admin-row-stripe ${room.isClosed ? "closed" : "open"}`} aria-hidden="true" />
+                  <RowSelectButton
+                    selected={selectedIds.has(room.id)}
+                    label="בחר חדר"
+                    onToggle={() =>
                       setSelectedIds((prev) => {
                         const next = new Set(prev);
                         if (next.has(room.id)) next.delete(room.id);
@@ -476,7 +444,6 @@ export default function RoomsSection({
                         return next;
                       })
                     }
-                    aria-label="בחר חדר"
                   />
                   <div className="admin-row-main">
                     <p className="admin-row-title">{room.name}</p>

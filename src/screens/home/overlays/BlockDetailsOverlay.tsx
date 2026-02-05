@@ -1,4 +1,4 @@
-import { PinAddIcon, PinOnIcon } from "../../../components/Icons";
+import { CloseIcon, PinAddIcon, PinOnIcon } from "../../../components/Icons";
 
 export type BlockDetailsOverlayProps = {
   open: boolean;
@@ -28,17 +28,9 @@ export default function BlockDetailsOverlay({
   return (
     <div className="reserve-overlay" onClick={onClose}>
       <div className="reserve-menu" onClick={(event) => event.stopPropagation()}>
-        {onTogglePin ? (
-          <button
-            type="button"
-            className="reserve-pin"
-            aria-label={pinned ? "הוסר מהמערכת שלי" : "הוסף למערכת שלי"}
-            aria-pressed={pinned}
-            onClick={onTogglePin}
-          >
-            {pinned ? <PinOnIcon /> : <PinAddIcon />}
-          </button>
-        ) : null}
+        <button className="icon-button reserve-close" type="button" aria-label="סגירה" onClick={onClose}>
+          <CloseIcon />
+        </button>
         <div>
           <div className="reserve-title-row">
             <p className="reserve-title">{title}</p>
@@ -56,11 +48,20 @@ export default function BlockDetailsOverlay({
               </p>
             ))}
         </div>
-        <div className="reserve-actions">
-          <button className="secondary" type="button" onClick={onClose}>
-            סגירה
-          </button>
-        </div>
+        {onTogglePin ? (
+          <div className="reserve-actions reserve-actions-details single">
+            <button
+              type="button"
+              className="secondary reserve-pin-action"
+              aria-label={pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}
+              aria-pressed={pinned}
+              onClick={onTogglePin}
+            >
+              {pinned ? <PinOnIcon /> : <PinAddIcon />}
+              <span>{pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

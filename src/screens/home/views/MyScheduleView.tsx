@@ -20,6 +20,7 @@ type MyScheduleViewProps = {
   agendaDays: number;
   onAgendaLoadMore: () => void;
   todayDateKey: string;
+  nowMinutes: number;
   weekDates: WeekDate[];
   rooms: Room[];
   reservationMap: ReservationMap;
@@ -70,6 +71,7 @@ export default function MyScheduleView({
   agendaDays,
   onAgendaLoadMore,
   todayDateKey,
+  nowMinutes,
   weekDates,
   rooms,
   reservationMap,
@@ -269,7 +271,7 @@ export default function MyScheduleView({
             startMinutes: start,
             durationMinutes: entry.durationMinutes,
             title: "שמור",
-            meta: `${roomName(entry.roomId)} · ${formatMinutes(start)}–${formatMinutes(end)}`,
+            meta: `${formatMinutes(start)}–${formatMinutes(end)} · ${roomName(entry.roomId)}`,
             clickable: true,
             onClick: () => onEditReservation(dateKey, entry.id)
           });
@@ -298,7 +300,7 @@ export default function MyScheduleView({
       const start = pin.startMinutes;
       const end = pin.startMinutes + pin.durationMinutes;
       const meta =
-        `${roomName(pin.roomId)} · ${formatMinutes(start)}–${formatMinutes(end)}` +
+        `${formatMinutes(start)}–${formatMinutes(end)} · ${roomName(pin.roomId)}` +
         (pin.meta ? ` · ${pin.meta}` : "");
       add({
         kind: "pin",
@@ -326,7 +328,7 @@ export default function MyScheduleView({
           if (!recurringLessonIds.has(lesson.id)) return;
           const start = lesson.startMinutes;
           const end = lesson.startMinutes + lesson.durationMinutes;
-          const meta = `${roomName(lesson.roomId)} · ${formatMinutes(start)}–${formatMinutes(end)}` +
+          const meta = `${formatMinutes(start)}–${formatMinutes(end)} · ${roomName(lesson.roomId)}` +
             (lesson.teacher ? ` · ${lesson.teacher}` : "");
           add({
             kind: "pin",
@@ -372,7 +374,7 @@ export default function MyScheduleView({
     const nonEmptyDates = agendaDateKeys.filter((dateKey) => (agendaEntriesByDate.get(dateKey) || []).length > 0);
 
     return (
-      <section className="finder reservations my-schedule">
+      <section className="finder my-schedule my-schedule-agenda">
         <div className="my-schedule-agenda-note">
           מהיום · {weekdayLabel} {dateLabel}
         </div>
@@ -521,7 +523,9 @@ export default function MyScheduleView({
       if (!pin) return;
       onOpenPinned(pin);
       onSelectedDateChange(dateKey);
-    }
+    },
+    nowMinutes,
+    todayDateKey
   };
 
   return (

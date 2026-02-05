@@ -258,7 +258,9 @@ export function useReserveFlow({
           durationMinutes,
           roomId,
           reservedBy: currentUser.name,
-          reservedEmail: currentUser.email
+          reservedEmail: currentUser.email,
+          reservedPhone: currentUser.phone || undefined,
+          reservedPicture: currentUser.picture || undefined
         });
         if (!ok) {
           showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
@@ -414,7 +416,11 @@ export function useReserveFlow({
       const ok = await upsertReservation({
         ...currentEntry,
         time: startMinutes,
-        durationMinutes
+        durationMinutes,
+        reservedBy: currentUser.name,
+        reservedEmail: currentUser.email,
+        reservedPhone: currentUser.phone || currentEntry.reservedPhone || undefined,
+        reservedPicture: currentUser.picture || currentEntry.reservedPicture || undefined
       });
       if (!ok) {
         showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");

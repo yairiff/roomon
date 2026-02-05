@@ -121,7 +121,6 @@ export default function CsvToolContent({
           roomId: r.roomId,
           startTime: toTimeInput(r.time),
           endTime: toTimeInput(r.time + (r.durationMinutes || 60)),
-          reservedBy: r.reservedBy || "",
           reservedEmail: r.reservedEmail || ""
         }));
       return { filename: "reservations.csv", csv: stringifyCsv(reservationsCsvHeaders, rows) };
@@ -344,14 +343,20 @@ export default function CsvToolContent({
       dates.add(date);
 
       if (kind === "regular") {
+        const reservedEmail = String(row.reservedEmail || "").trim().toLowerCase();
+        if (!reservedEmail) {
+          errors.push(`שורה ${idx + 2}: חסר reservedEmail`);
+          return;
+        }
+        const reservedBy = users.find((u) => u.email.toLowerCase() === reservedEmail)?.name || "";
         next.push({
           id: reservationIdFromRow(date, roomId, startMinutes),
           date,
           time: startMinutes,
           durationMinutes,
           roomId,
-          reservedBy: row.reservedBy || "",
-          reservedEmail: row.reservedEmail || ""
+          reservedBy,
+          reservedEmail
         });
         return;
       }
@@ -429,15 +434,18 @@ export default function CsvToolContent({
     teacher: l.teacher || ""
   });
 
-  const canonicalReservation = (r: Reservation) => ({
-    date: r.date,
-    time: r.time,
-    durationMinutes: r.durationMinutes || 60,
-    roomId: r.roomId,
-    reservedBy: r.reservedBy || "",
-    reservedEmail: r.reservedEmail || "",
-    kind: r.kind || "regular"
-  });
+  const canonicalReservation = (r: Reservation) => {
+    const kind = r.kind || "regular";
+    return {
+      date: r.date,
+      time: r.time,
+      durationMinutes: r.durationMinutes || 60,
+      roomId: r.roomId,
+      reservedEmail: r.reservedEmail || "",
+      ...(kind === "regular" ? {} : { reservedBy: r.reservedBy || "" }),
+      kind
+    };
+  };
 
   const buildCsvImportPlan = (preview: NonNullable<typeof importPreview>): CsvImportPlan => {
     if ("users" in preview) {

@@ -9,6 +9,8 @@ import { AddIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../componen
 import ConfirmDialog from "../components/ConfirmDialog";
 import FilterChip, { closeFilterChip } from "../components/FilterChip";
 import ScheduleItemEditorOverlay from "./schedule/ScheduleItemEditorOverlay";
+import RowSelectButton from "../components/RowSelectButton";
+import SortSelect from "../components/SortSelect";
 
 type ScheduleFilter = "all" | "lessons" | "regular" | "special" | "closed";
 type ScheduleSort = "time" | "room" | "title";
@@ -16,6 +18,7 @@ type ScheduleSort = "time" | "room" | "title";
 type ScheduleSectionProps = {
   scheduleFilter: ScheduleFilter;
   setScheduleFilter: (filter: ScheduleFilter) => void;
+  query: string;
   activeSemester: SemesterKey;
   setActiveSemester: (semester: SemesterKey) => void;
   lessons: LessonRecord[];
@@ -58,6 +61,7 @@ const newReservationId = () =>
 export default function ScheduleSection({
   scheduleFilter,
   setScheduleFilter,
+  query,
   activeSemester,
   setActiveSemester,
   lessons,
@@ -75,7 +79,6 @@ export default function ScheduleSection({
   onFilteredLessonsChange,
   onFilteredReservationsChange
 }: ScheduleSectionProps) {
-  const [query, setQuery] = useState("");
   const [roomFilter, setRoomFilter] = useState<string>("all");
   const [dayFilter, setDayFilter] = useState<LessonRecord["day"] | "all">("all");
   const [dateStart, setDateStart] = useState<string>("");
@@ -85,6 +88,7 @@ export default function ScheduleSection({
   const [confirmDeleteKeys, setConfirmDeleteKeys] = useState<ItemKey[] | null>(null);
 
   const [draft, setDraft] = useState<
+    | { kind: "choose"; value: { date: string; roomId: string; startMinutes: number; day: LessonRecord["day"] } }
     | { kind: "lesson"; value: LessonRecord }
     | { kind: "reservation"; value: Reservation }
     | null
@@ -239,38 +243,20 @@ export default function ScheduleSection({
   }, [activeSemester]);
 
   const handleNew = useCallback(() => {
-    if (scheduleFilter === "lessons") {
-      const firstRoom = roomsRaw[0]?.id || "";
-      const base: LessonRecord = {
-        id: "",
-        title: "",
-        teacher: "",
-        day: "sun",
-        roomId: roomFilter !== "all" ? roomFilter : firstRoom,
-        startMinutes: rimonScheduleConfig.startHour * 60,
-        durationMinutes: rimonScheduleConfig.academicHourMinutes,
-        semester: activeSemester
-      };
-      setDraft({ kind: "lesson", value: base });
-      return;
-    }
-
     const today = new Date();
     const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const firstRoom = roomsRaw[0]?.id || "";
-    const kindFromFilter = scheduleFilter === "special" ? "special" : scheduleFilter === "closed" ? "closed" : undefined;
-    const base: Reservation = {
-      id: newReservationId(),
-      date,
-      time: rimonScheduleConfig.startHour * 60,
-      durationMinutes: 60,
-      roomId: roomFilter !== "all" ? roomFilter : firstRoom,
-      reservedBy: kindFromFilter === "special" ? "אירוע חדש" : kindFromFilter === "closed" ? "סגור זמנית" : "אדמין",
-      reservedEmail: "",
-      ...(kindFromFilter ? { kind: kindFromFilter } : {})
-    };
-    setDraft({ kind: "reservation", value: base });
-  }, [activeSemester, roomFilter, roomsRaw, scheduleFilter]);
+    const day = dayFilter !== "all" ? dayFilter : "sun";
+    setDraft({
+      kind: "choose",
+      value: {
+        date,
+        roomId: roomFilter !== "all" ? roomFilter : firstRoom,
+        startMinutes: rimonScheduleConfig.startHour * 60,
+        day
+      }
+    });
+  }, [dayFilter, roomFilter, roomsRaw]);
 
   const bulkEdit = useCallback(() => {
     if (selectedInView.length !== 1) return;
@@ -589,55 +575,21 @@ export default function ScheduleSection({
                 </div>
               </FilterChip>
             ) : null}
-
-            <FilterChip label="חיפוש" value={query.trim() ? query.trim() : "ללא"}>
-              <div className="admin-filter-pop-grid">
-                <input
-                  className="admin-filter-input"
-                  type="search"
-                  value={query}
-                  placeholder="כותרת / שם / אימייל / חדר"
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <div className="admin-filter-pop-actions">
-                  <button
-                    type="button"
-                    className="admin-filter-option subtle"
-                    onClick={(event) => {
-                      setQuery("");
-                      closeFilterChip(event);
-                    }}
-                  >
-                    נקה
-                  </button>
-                </div>
-              </div>
-            </FilterChip>
           </div>
 
           <div className="admin-filter-group" aria-label="מיון">
-            <FilterChip label="מיון" value={sortLabel[sortBy]}>
-              <div className="admin-filter-options">
-                {(Object.keys(sortLabel) as ScheduleSort[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`admin-filter-option${sortBy === key ? " active" : ""}`}
-                    onClick={(event) => {
-                      setSortBy(key);
-                      closeFilterChip(event);
-                    }}
-                  >
-                    {sortLabel[key]}
-                  </button>
-                ))}
-              </div>
-            </FilterChip>
-
-            <div className="admin-filter-count" aria-label="כמות תוצאות">
-              {items.length} תוצאות
-            </div>
+            <SortSelect
+              label="מיון"
+              value={sortBy}
+              options={(Object.keys(sortLabel) as ScheduleSort[]).map((key) => ({ value: key, label: sortLabel[key] }))}
+              onChange={(value) => setSortBy(value as ScheduleSort)}
+            />
           </div>
+        </div>
+        <div className="admin-filter-summary" aria-label="סיכום">
+          <span className="admin-filter-summary-count">
+            {selectedInView.length ? `${selectedInView.length} מתוך ${items.length} תוצאות` : `${items.length} תוצאות`}
+          </span>
         </div>
         {lessonsError || reservationsError ? <span className="admin-error">{lessonsError || reservationsError}</span> : null}
       </div>
@@ -648,6 +600,14 @@ export default function ScheduleSection({
             <div className="admin-table scroll tall">
               {items.map((item) => {
                 const checked = selectedKeys.has(item.key);
+                const stripeClass =
+                  item.kind === "lesson"
+                    ? "lesson"
+                    : item.reservation.kind === "special"
+                      ? "special"
+                      : item.reservation.kind === "closed"
+                        ? "closed"
+                        : "reservation";
                 const title =
                   item.kind === "lesson"
                     ? item.lesson.title || "שיעור"
@@ -671,12 +631,11 @@ export default function ScheduleSection({
                       }
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      className="admin-row-check"
-                      checked={checked}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() =>
+                    <span className={`admin-row-stripe ${stripeClass}`} aria-hidden="true" />
+                    <RowSelectButton
+                      selected={checked}
+                      label="בחר רשומה"
+                      onToggle={() =>
                         setSelectedKeys((prev) => {
                           const next = new Set(prev);
                           if (next.has(item.key)) next.delete(item.key);
@@ -684,7 +643,6 @@ export default function ScheduleSection({
                           return next;
                         })
                       }
-                      aria-label="בחר רשומה"
                     />
                     <div className="admin-row-main">
                       <p className="admin-row-title">{title}</p>

@@ -23,9 +23,13 @@ import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import FileDownloadRoundedIcon from "@mui/icons-material/FileDownloadRounded";
+import ImportExportRoundedIcon from "@mui/icons-material/ImportExportRounded";
 import AddToHomeScreenRoundedIcon from "@mui/icons-material/AddToHomeScreenRounded";
 import BookmarkAddRoundedIcon from "@mui/icons-material/BookmarkAddRounded";
 import BookmarkAddedRoundedIcon from "@mui/icons-material/BookmarkAddedRounded";
+import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import RemoveCircleRoundedIcon from "@mui/icons-material/RemoveCircleRounded";
 
 export function CalendarIcon() {
   return <CalendarMonthRoundedIcon fontSize="small" />;
@@ -129,6 +133,10 @@ export function DownloadIcon() {
   return <FileDownloadRoundedIcon fontSize="small" />;
 }
 
+export function ImportExportIcon() {
+  return <ImportExportRoundedIcon fontSize="small" />;
+}
+
 export function ShortcutIcon() {
   return <AddToHomeScreenRoundedIcon fontSize="small" />;
 }
@@ -139,4 +147,16 @@ export function PinAddIcon() {
 
 export function PinOnIcon() {
   return <BookmarkAddedRoundedIcon fontSize="small" />;
+}
+
+export function SelectOffIcon() {
+  return <RadioButtonUncheckedRoundedIcon fontSize="small" />;
+}
+
+export function SelectOnIcon() {
+  return <CheckCircleRoundedIcon fontSize="small" />;
+}
+
+export function SelectSomeIcon() {
+  return <RemoveCircleRoundedIcon fontSize="small" />;
 }

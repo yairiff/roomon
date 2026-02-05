@@ -33,9 +33,21 @@ export function useReservations(window: ReservationsWindow = null) {
       (snapshot) => {
         const nextMap: ReservationMap = {};
         snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as Partial<Reservation>;
+          const data = docSnap.data() as Partial<Reservation> & Record<string, unknown>;
           if (!data.date || !data.roomId || data.time === undefined) return;
           const kind = data.kind === "special" || data.kind === "closed" ? data.kind : undefined;
+          const reservedPhone =
+            typeof data.reservedPhone === "string"
+              ? data.reservedPhone
+              : typeof data.phone === "string"
+                ? data.phone
+                : "";
+          const reservedPicture =
+            typeof data.reservedPicture === "string"
+              ? data.reservedPicture
+              : typeof data.picture === "string"
+                ? data.picture
+                : "";
           const reservation: Reservation = {
             id: docSnap.id,
             date: data.date,
@@ -44,6 +56,8 @@ export function useReservations(window: ReservationsWindow = null) {
             roomId: data.roomId,
             reservedBy: data.reservedBy ?? "",
             reservedEmail: data.reservedEmail ?? "",
+            ...(reservedPhone ? { reservedPhone } : {}),
+            ...(reservedPicture ? { reservedPicture } : {}),
             ...(kind ? { kind } : {})
           };
           if (!nextMap[reservation.date]) {

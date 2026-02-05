@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { weekDays as weekDayOptions } from "../../../../config";
+import { rimonScheduleConfig, weekDays as weekDayOptions } from "../../../../config";
 import type { LessonOverride, LessonRecord, RoomRecord } from "../../../../types/admin";
 import type { SemesterKey } from "../../../../types/ui";
 import type { Reservation } from "../../../../types/reservations";
 import { useLessonOverrides } from "../../../../hooks/useLessonOverrides";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import PropsOverlay from "../../components/PropsOverlay";
-import { CloseIcon, DuplicateIcon, EditIcon, ReleaseIcon, TuneIcon } from "../../../../components/Icons";
+import { CloseIcon, ClosedIcon, DuplicateIcon, EditIcon, LessonTypeIcon, ReleaseIcon, ReservationIcon, SpecialIcon, TuneIcon } from "../../../../components/Icons";
 
 type ItemKey = `lesson:${string}` | `reservation:${string}`;
 type Draft =
+  | { kind: "choose"; value: { date: string; roomId: string; startMinutes: number; day: LessonRecord["day"] } }
   | { kind: "lesson"; value: LessonRecord }
   | { kind: "reservation"; value: Reservation }
   | null;
@@ -40,6 +41,11 @@ const kindLabel = (reservation: Reservation) => {
 const reservationKindValue = (reservation: Reservation) =>
   reservation.kind === "special" ? "special" : reservation.kind === "closed" ? "closed" : "regular";
 
+const newReservationId = () =>
+  (typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `res-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
 export default function ScheduleItemEditorOverlay({
   draft,
   setDraft,
@@ -60,6 +66,7 @@ export default function ScheduleItemEditorOverlay({
 
   const overlayTitle = useMemo(() => {
     if (!draft) return "";
+    if (draft.kind === "choose") return "הוספה";
     if (draft.kind === "lesson") return draft.value.id ? "עריכת שיעור" : "שיעור חדש";
     if (draft.value.kind === "special") return "עריכת אירוע";
     if (draft.value.kind === "closed") return "עריכת סגירה";
@@ -68,6 +75,9 @@ export default function ScheduleItemEditorOverlay({
 
   const overlayMeta = useMemo(() => {
     if (!draft) return null;
+    if (draft.kind === "choose") {
+      return `${draft.value.date} · ${toTimeInput(draft.value.startMinutes)} · ${roomLookup[draft.value.roomId] || draft.value.roomId}`;
+    }
     if (draft.kind === "lesson") {
       return `${dayLabel(draft.value.day)} · ${toTimeInput(draft.value.startMinutes)} · ${roomLookup[draft.value.roomId] || draft.value.roomId}`;
     }
@@ -88,6 +98,7 @@ export default function ScheduleItemEditorOverlay({
   const [lessonOverridesOpen, setLessonOverridesOpen] = useState(false);
   const [overrideDraft, setOverrideDraft] = useState<LessonOverride | null>(null);
   const [confirmRemoveOverride, setConfirmRemoveOverride] = useState<LessonOverride | null>(null);
+  const [draftError, setDraftError] = useState("");
 
   const lessonOverrides = useMemo(() => {
     if (!draft || draft.kind !== "lesson") return [];
@@ -115,6 +126,10 @@ export default function ScheduleItemEditorOverlay({
     setOverrideDraft(null);
     setConfirmRemoveOverride(null);
   }, [draft?.kind, draft && draft.kind === "lesson" ? draft.value.id : ""]);
+
+  useEffect(() => {
+    setDraftError("");
+  }, [draft]);
 
   const overrideActionLabel = (action: LessonOverride["action"]) => {
     if (action === "add") return "הוספה";
@@ -152,10 +167,29 @@ export default function ScheduleItemEditorOverlay({
 
   const updateDraft = () => {
     if (!draft) return;
+    setDraftError("");
+    if (draft.kind === "choose") {
+      setDraftError("יש לבחור סוג רשומה.");
+      return;
+    }
     if (draft.kind === "lesson") {
+      if (!draft.value.title.trim()) {
+        setDraftError("יש להזין שם שיעור.");
+        return;
+      }
       const id = draft.value.id || `${activeSemester}-${Date.now()}`;
       onUpsertLesson({ ...draft.value, id, semester: activeSemester });
       setDraft({ kind: "lesson", value: { ...draft.value, id, semester: activeSemester } });
+      return;
+    }
+    const specialKind = draft.value.kind === "special" || draft.value.kind === "closed";
+    if (specialKind) {
+      if (!draft.value.reservedBy.trim()) {
+        setDraftError(draft.value.kind === "special" ? "יש להזין תיאור אירוע." : "יש להזין תיאור סגירה.");
+        return;
+      }
+    } else if (!draft.value.reservedEmail.trim()) {
+      setDraftError("יש להזין אימייל.");
       return;
     }
     onUpdateReservation(draft.value);
@@ -163,6 +197,7 @@ export default function ScheduleItemEditorOverlay({
 
   const duplicateDraft = () => {
     if (!draft) return;
+    if (draft.kind === "choose") return;
     if (draft.kind === "lesson") {
       onDuplicateLesson(draft.value);
       return;
@@ -172,6 +207,7 @@ export default function ScheduleItemEditorOverlay({
 
   const deleteDraft = () => {
     if (!draft) return;
+    if (draft.kind === "choose") return;
     const key: ItemKey = draft.kind === "lesson" ? `lesson:${draft.value.id}` : `reservation:${draft.value.id}`;
     onRequestDeleteKeys([key]);
   };
@@ -194,7 +230,94 @@ export default function ScheduleItemEditorOverlay({
       <PropsOverlay open={Boolean(draft)} title={overlayTitle} meta={overlayMeta} onClose={closeDraft}>
         {draft ? (
           <>
-            {draft.kind === "lesson" ? (
+            {draft.kind === "choose" ? (
+              <div className="admin-card">
+                <p className="admin-meta hint center" style={{ margin: "0 0 10px" }}>
+                  בחר/י סוג רשומה להוספה:
+                </p>
+                <div className="admin-type-grid">
+                  <button
+                    type="button"
+                    className="admin-type-card lesson"
+                    onClick={() => {
+                      const base: LessonRecord = {
+                        id: "",
+                        title: "",
+                        teacher: "",
+                        day: draft.value.day,
+                        roomId: draft.value.roomId,
+                        startMinutes: draft.value.startMinutes,
+                        durationMinutes: rimonScheduleConfig.academicHourMinutes,
+                        semester: activeSemester
+                      };
+                      setDraft({ kind: "lesson", value: base });
+                    }}
+                  >
+                    <LessonTypeIcon />
+                    <span>שיעור</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-type-card reservation"
+                    onClick={() => {
+                      const base: Reservation = {
+                        id: newReservationId(),
+                        date: draft.value.date,
+                        time: draft.value.startMinutes,
+                        durationMinutes: 60,
+                        roomId: draft.value.roomId,
+                        reservedBy: "",
+                        reservedEmail: ""
+                      };
+                      setDraft({ kind: "reservation", value: base });
+                    }}
+                  >
+                    <ReservationIcon />
+                    <span>שריון</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-type-card special"
+                    onClick={() => {
+                      const base: Reservation = {
+                        id: newReservationId(),
+                        date: draft.value.date,
+                        time: draft.value.startMinutes,
+                        durationMinutes: 60,
+                        roomId: draft.value.roomId,
+                        reservedBy: "",
+                        reservedEmail: "",
+                        kind: "special"
+                      };
+                      setDraft({ kind: "reservation", value: base });
+                    }}
+                  >
+                    <SpecialIcon />
+                    <span>אירוע</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-type-card closed"
+                    onClick={() => {
+                      const base: Reservation = {
+                        id: newReservationId(),
+                        date: draft.value.date,
+                        time: draft.value.startMinutes,
+                        durationMinutes: 60,
+                        roomId: draft.value.roomId,
+                        reservedBy: "",
+                        reservedEmail: "",
+                        kind: "closed"
+                      };
+                      setDraft({ kind: "reservation", value: base });
+                    }}
+                  >
+                    <ClosedIcon />
+                    <span>סגירה</span>
+                  </button>
+                </div>
+              </div>
+            ) : draft.kind === "lesson" ? (
               <>
                 <div className="admin-inline" style={{ justifyContent: "space-between", alignItems: "center" }}>
                   <button
@@ -222,7 +345,7 @@ export default function ScheduleItemEditorOverlay({
                     </select>
                   </label>
                 </div>
-                <p className="admin-meta" style={{ margin: "-2px 0 10px" }}>
+                <p className="admin-meta hint center" style={{ margin: "-2px 0 10px" }}>
                   עריכה כאן משנה את הסדרה הקבועה (כל שבוע).
                   <br />
                   לשינוי חד-פעמי בתאריך מסוים: השתמש/י ב״הצג החרגות״.
@@ -233,7 +356,9 @@ export default function ScheduleItemEditorOverlay({
                     <input
                       type="text"
                       value={draft.value.title}
+                      placeholder="שם שיעור"
                       onChange={(event) => setDraft({ kind: "lesson", value: { ...draft.value, title: event.target.value } })}
+                      required
                     />
                   </label>
                   <label>
@@ -241,6 +366,7 @@ export default function ScheduleItemEditorOverlay({
                     <input
                       type="text"
                       value={draft.value.teacher}
+                      placeholder="שם מרצה"
                       onChange={(event) =>
                         setDraft({ kind: "lesson", value: { ...draft.value, teacher: event.target.value } })
                       }
@@ -360,13 +486,21 @@ export default function ScheduleItemEditorOverlay({
                     </select>
                   </label>
                   <label>
-                    שם
+                    {draft.value.kind === "special" ? "תיאור אירוע" : draft.value.kind === "closed" ? "תיאור סגירה" : "שם"}
                     <input
                       type="text"
                       value={draft.value.reservedBy}
+                      placeholder={
+                        draft.value.kind === "special"
+                          ? "תיאור אירוע"
+                          : draft.value.kind === "closed"
+                            ? "תיאור סגירה"
+                            : "שם"
+                      }
                       onChange={(event) =>
                         setDraft({ kind: "reservation", value: { ...draft.value, reservedBy: event.target.value } })
                       }
+                      required={draft.value.kind === "special" || draft.value.kind === "closed"}
                     />
                   </label>
                   <label>
@@ -374,12 +508,14 @@ export default function ScheduleItemEditorOverlay({
                     <input
                       type="email"
                       value={draft.value.reservedEmail}
+                      placeholder="email@example.com"
                       onChange={(event) =>
                         setDraft({
                           kind: "reservation",
                           value: { ...draft.value, reservedEmail: event.target.value }
                         })
                       }
+                      required={draft.value.kind !== "special" && draft.value.kind !== "closed"}
                     />
                   </label>
                   <label>
@@ -403,19 +539,23 @@ export default function ScheduleItemEditorOverlay({
               </>
             )}
 
-            <div className="admin-actions">
-              <button className="primary" type="button" onClick={updateDraft}>
-                שמירה
-              </button>
-              <button className="secondary" type="button" onClick={duplicateDraft}>
-                <DuplicateIcon />
-                שכפול
-              </button>
-              <button className="danger" type="button" onClick={deleteDraft}>
-                <ReleaseIcon />
-                מחיקה
-              </button>
-            </div>
+            {draftError ? <p className="admin-error">{draftError}</p> : null}
+
+            {draft.kind !== "choose" ? (
+              <div className="admin-actions">
+                <button className="primary" type="button" onClick={updateDraft}>
+                  שמירה
+                </button>
+                <button className="secondary" type="button" onClick={duplicateDraft}>
+                  <DuplicateIcon />
+                  שכפול
+                </button>
+                <button className="danger" type="button" onClick={deleteDraft}>
+                  <ReleaseIcon />
+                  מחיקה
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
       </PropsOverlay>
@@ -644,4 +784,3 @@ export default function ScheduleItemEditorOverlay({
     </>
   );
 }
-

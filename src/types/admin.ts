@@ -8,6 +8,7 @@ export type DirectoryUser = {
   name: string;
   role: UserRole;
   phone?: string;
+  pictureUrl?: string;
   cohortStartYear?: number;
   notes?: string;
 };

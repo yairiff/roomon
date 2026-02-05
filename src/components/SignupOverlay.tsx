@@ -52,6 +52,7 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
         email,
         name: name.trim(),
         phone: phone.trim(),
+        pictureUrl: user.picture || "",
         cohortStartYear,
         role: "pending",
         updatedAt: serverTimestamp(),

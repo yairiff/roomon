@@ -14,7 +14,7 @@ import { parseTimeInput, toTimeInput } from "../../lib/timeInput";
 import type { AdminSection } from "./types";
 import type { BulkState } from "./bulk";
 import BulkSelectAll from "./components/BulkSelectAll";
-import { RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, CloseIcon, UploadIcon, DownloadIcon } from "../../components/Icons";
+import { RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, CloseIcon, ImportExportIcon, SearchIcon, TuneIcon } from "../../components/Icons";
 import CsvToolContent from "./tools/CsvToolContent";
 import UsersSection from "./sections/UsersSection";
 import RoomsSection from "./sections/RoomsSection";
@@ -35,6 +35,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" } | null>(null);
   const [bulkState, setBulkState] = useState<BulkState | null>(null);
+  const [searchBySection, setSearchBySection] = useState<Record<AdminSection, string>>({
+    users: "",
+    schedule: "",
+    rooms: ""
+  });
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<
     | null
     | {
@@ -146,6 +152,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   }, [isNarrow]);
 
   useEffect(() => {
+    if (!isNarrow) {
+      setMobileSearchOpen(false);
+    }
+  }, [isNarrow]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
@@ -162,7 +174,13 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     setActiveTool(null);
     setScheduleFilter("all");
     setBulkState(null);
+    setMobileSearchOpen(false);
   }, [activeSection]);
+
+  const searchQuery = searchBySection[activeSection] || "";
+  const setSearchQuery = (value: string) => {
+    setSearchBySection((prev) => ({ ...prev, [activeSection]: value }));
+  };
 
   useEffect(() => {
     if (!overlayOpen) return;
@@ -382,7 +400,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     : activeTool.kind === "csv"
       ? `ייבוא וייצוא · ${activeTool.section === "users" ? "משתמשים" : "מערכת שעות"}`
       : activeTool.kind === "semesters"
-        ? "טווחי סמסטר"
+        ? "מאפיינים · מערכת שעות"
         : "";
   const overlayContent = !activeTool ? null : activeTool.kind === "csv" ? (
     <CsvToolContent
@@ -483,77 +501,142 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               </button>
             ) : null}
             <div className="admin-toolbar-title">{toolbarTitle}</div>
-            <div className="admin-section-tools">
-              {activeSection === "users" ? (
-                <>
+            <div className="admin-toolbar-controls">
+              <div className="admin-section-tools">
+                {bulkState ? (
+                  <>
+                    {bulkState.actions
+                      .filter((action) => {
+                        if (bulkState.selectedCount === 0) return action.id === "new";
+                        return action.id !== "new";
+                      })
+                      .sort((a, b) => {
+                        const rank = (id: string) => {
+                          if (id === "new") return 0;
+                          if (id === "edit") return 1;
+                          if (id === "delete") return 2;
+                          if (id === "duplicate") return 3;
+                          return 99;
+                        };
+                        return rank(a.id) - rank(b.id);
+                      })
+                      .map((action) => (
+                        <button
+                          key={action.id}
+                          type="button"
+                          className={`admin-toolbar-chip admin-bulk-action${action.tone === "danger" ? " danger" : ""}`}
+                          onClick={action.onClick}
+                          disabled={action.disabled}
+                        >
+                          {action.icon ? action.icon : null}
+                          <span>{action.label}</span>
+                        </button>
+                      ))}
+
+                    {bulkState.selectAll ? (
+                      <BulkSelectAll
+                        checked={bulkState.selectAll.checked}
+                        indeterminate={bulkState.selectAll.indeterminate}
+                        onToggle={bulkState.selectAll.onToggle}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+
+                {bulkState && (activeSection === "users" || activeSection === "schedule") ? (
+                  <span className="admin-toolbar-divider" aria-hidden="true" />
+                ) : null}
+
+                {activeSection === "users" ? (
                   <button
                     type="button"
                     className={`admin-toolbar-chip${activeTool?.section === "users" && activeTool.kind === "csv" ? " active" : ""}`}
                     onClick={() => toolToggle({ section: "users", kind: "csv" })}
                   >
-                    <span className="admin-toolbar-icon-row" aria-hidden="true">
-                      <UploadIcon />
-                      <DownloadIcon />
-                    </span>
+                    <ImportExportIcon />
                     <span>ייבוא וייצוא</span>
                   </button>
-                </>
-              ) : null}
-              {activeSection === "schedule" ? (
-                <>
+                ) : null}
+
+                {activeSection === "schedule" ? (
+                  <>
+                    <button
+                      type="button"
+                      className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "csv" ? " active" : ""}`}
+                      onClick={() => toolToggle({ section: "schedule", kind: "csv" })}
+                    >
+                      <ImportExportIcon />
+                      <span>ייבוא וייצוא</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "semesters" ? " active" : ""}`}
+                      onClick={() => toolToggle({ section: "schedule", kind: "semesters" })}
+                    >
+                      <TuneIcon />
+                      <span>מאפיינים</span>
+                    </button>
+                  </>
+                ) : null}
+              </div>
+
+              <div className="admin-toolbar-search">
+                {isNarrow ? (
                   <button
                     type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "csv" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "schedule", kind: "csv" })}
+                    className={`admin-toolbar-chip admin-toolbar-search-chip${mobileSearchOpen ? " active" : ""}`}
+                    aria-label="חיפוש"
+                    onClick={() => setMobileSearchOpen((prev) => !prev)}
                   >
-                    <span className="admin-toolbar-icon-row" aria-hidden="true">
-                      <UploadIcon />
-                      <DownloadIcon />
-                    </span>
-                    <span>ייבוא וייצוא</span>
+                    <SearchIcon />
+                    <span>חיפוש</span>
                   </button>
-                  <button
-                    type="button"
-                    className={`admin-toolbar-chip${activeTool?.section === "schedule" && activeTool.kind === "semesters" ? " active" : ""}`}
-                    onClick={() => toolToggle({ section: "schedule", kind: "semesters" })}
-                  >
-                    <CalendarIcon />
-                    <span>סמסטרים</span>
-                  </button>
-                </>
-              ) : null}
-              {bulkState ? (
-                <>
-                  <span className="admin-toolbar-divider" aria-hidden="true" />
-                  {bulkState.selectAll ? (
-                    <BulkSelectAll
-                      checked={bulkState.selectAll.checked}
-                      indeterminate={bulkState.selectAll.indeterminate}
-                      onToggle={bulkState.selectAll.onToggle}
-                      countLabel={`${bulkState.selectedCount}/${bulkState.totalCount}`}
-                    />
-                  ) : null}
-                  {bulkState.actions
-                    .filter((action) => {
-                      if (bulkState.selectedCount === 0) return action.id === "new";
-                      return action.id !== "new";
-                    })
-                    .map((action) => (
-                      <button
-                        key={action.id}
-                        type="button"
-                        className={`admin-toolbar-chip admin-bulk-action${action.tone === "danger" ? " danger" : ""}`}
-                        onClick={action.onClick}
-                        disabled={action.disabled}
-                      >
-                        {action.icon ? action.icon : null}
-                        <span>{action.label}</span>
-                      </button>
-                    ))}
-                </>
-              ) : null}
+                ) : (
+                  <input
+                    className="admin-toolbar-search-input"
+                    type="search"
+                    value={searchQuery}
+                    placeholder={
+                      activeSection === "users"
+                        ? "חיפוש משתמשים"
+                        : activeSection === "schedule"
+                          ? "חיפוש מערכת שעות"
+                          : "חיפוש חדרים"
+                    }
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                )}
+              </div>
             </div>
           </div>
+          {isNarrow && mobileSearchOpen ? (
+            <div className="admin-top-toolbar-row admin-top-toolbar-search-row">
+              <input
+                className="admin-toolbar-search-input mobile"
+                type="search"
+                value={searchQuery}
+                placeholder={
+                  activeSection === "users"
+                    ? "חיפוש משתמשים"
+                    : activeSection === "schedule"
+                      ? "חיפוש מערכת שעות"
+                      : "חיפוש חדרים"
+                }
+                onChange={(event) => setSearchQuery(event.target.value)}
+                autoFocus
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  className="icon-button admin-toolbar-search-clear"
+                  aria-label="נקה חיפוש"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <CloseIcon />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         {toast ? (
           <div className={`admin-toast${toast.tone === "error" ? " error" : ""}`}>
@@ -562,16 +645,17 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
         ) : null}
 
         <div className="admin-main-scroll">
-        {activeSection === "users" ? (
-          <UsersSection
-            users={users}
-            pendingUsers={pendingUsers}
-            usersError={usersError}
-            userDraft={userDraft}
-            setUserDraft={setUserDraft}
-            currentAcademicYear={currentAcademicYear}
-            onUpsert={handleUpsertUser}
-            onRemove={handleRemoveUser}
+	        {activeSection === "users" ? (
+	          <UsersSection
+	            users={users}
+	            pendingUsers={pendingUsers}
+	            usersError={usersError}
+	            query={searchQuery}
+	            userDraft={userDraft}
+	            setUserDraft={setUserDraft}
+	            currentAcademicYear={currentAcademicYear}
+	            onUpsert={handleUpsertUser}
+	            onRemove={handleRemoveUser}
             onReset={() =>
               setUserDraft({
                 email: "",
@@ -585,15 +669,16 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           />
         ) : null}
 
-        {activeSection === "schedule" ? (
-          <ScheduleSection
-            scheduleFilter={scheduleFilter}
-            setScheduleFilter={setScheduleFilter}
-            activeSemester={activeSemester}
-            setActiveSemester={setActiveSemester}
-            lessons={lessons}
-            lessonsError={lessonsError || lessonsAllError}
-            reservations={reservationList}
+	        {activeSection === "schedule" ? (
+	          <ScheduleSection
+	            scheduleFilter={scheduleFilter}
+	            setScheduleFilter={setScheduleFilter}
+	            query={searchQuery}
+	            activeSemester={activeSemester}
+	            setActiveSemester={setActiveSemester}
+	            lessons={lessons}
+	            lessonsError={lessonsError || lessonsAllError}
+	            reservations={reservationList}
             reservationsError={reservationsError}
             roomsRaw={roomsRaw}
             toTimeInput={toTimeInput}
@@ -606,14 +691,15 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           />
         ) : null}
 
-        {activeSection === "rooms" ? (
-          <RoomsSection
-            roomsRaw={roomsRaw}
-            roomsError={roomsError}
-            roomDraft={roomDraft}
-            setRoomDraft={setRoomDraft}
-            toTimeInput={toTimeInput}
-            parseTimeInput={parseTimeInput}
+	        {activeSection === "rooms" ? (
+	          <RoomsSection
+	            roomsRaw={roomsRaw}
+	            roomsError={roomsError}
+	            query={searchQuery}
+	            roomDraft={roomDraft}
+	            setRoomDraft={setRoomDraft}
+	            toTimeInput={toTimeInput}
+	            parseTimeInput={parseTimeInput}
             onUpsert={handleUpsertRoom}
             onRemove={handleRemoveRoom}
             onReset={() =>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { doc, getDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
 import { decodeJwt, loadGoogleScript } from "../lib/googleAuth";
 import { loadUser, saveUser, clearUser } from "../lib/storage";
 import { db } from "../lib/firebase";
@@ -35,6 +35,16 @@ export function useAuth({ clientId }: { clientId?: string }) {
       const data = raw as DirectoryUser;
       const role = data.role || "pending";
       const allowed = role === "admin" || role === "moderator" || role === "student";
+      const pictureUrl =
+        typeof raw.pictureUrl === "string"
+          ? raw.pictureUrl
+          : typeof raw.picture === "string"
+            ? raw.picture
+            : typeof raw.photoURL === "string"
+              ? raw.photoURL
+              : typeof raw.photoUrl === "string"
+                ? raw.photoUrl
+                : "";
       const phone =
         typeof raw.phone === "string"
           ? raw.phone
@@ -55,6 +65,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
           role,
           allowed,
           phone,
+          picture: pictureUrl || prev.picture,
           cohortStartYear: data.cohortStartYear ?? prev.cohortStartYear
         };
         if (
@@ -62,6 +73,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
           next.role === prev.role &&
           next.allowed === prev.allowed &&
           next.phone === prev.phone &&
+          next.picture === prev.picture &&
           next.cohortStartYear === prev.cohortStartYear
         ) {
           return prev;
@@ -90,12 +102,25 @@ export function useAuth({ clientId }: { clientId?: string }) {
             }
             let directoryUser: DirectoryUser | null = null;
             let directoryPhone = "";
+            let directoryPictureUrl = "";
+            let docExists = false;
             if (db) {
               try {
                 const snap = await getDoc(doc(db, "users", email.toLowerCase()));
                 if (snap.exists()) {
+                  docExists = true;
                   const raw = snap.data() as Record<string, unknown>;
                   directoryUser = raw as DirectoryUser;
+                  directoryPictureUrl =
+                    typeof raw.pictureUrl === "string"
+                      ? raw.pictureUrl
+                      : typeof raw.picture === "string"
+                        ? raw.picture
+                        : typeof raw.photoURL === "string"
+                          ? raw.photoURL
+                          : typeof raw.photoUrl === "string"
+                            ? raw.photoUrl
+                            : "";
                   directoryPhone =
                     typeof raw.phone === "string"
                       ? raw.phone
@@ -111,6 +136,24 @@ export function useAuth({ clientId }: { clientId?: string }) {
                 }
               } catch {
                 directoryUser = null;
+              }
+            }
+            // Persist the photo URL for other users to see (only if the user doc already exists).
+            // This avoids creating a partially-filled document before the signup flow.
+            if (
+              db &&
+              docExists &&
+              typeof profile.picture === "string" &&
+              profile.picture &&
+              directoryPictureUrl !== profile.picture
+            ) {
+              try {
+                await updateDoc(doc(db, "users", email.toLowerCase()), {
+                  pictureUrl: profile.picture,
+                  updatedAt: serverTimestamp()
+                });
+              } catch {
+                // Ignore; showing the local photo is still fine.
               }
             }
             const role = directoryUser?.role;
