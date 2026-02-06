@@ -2482,9 +2482,10 @@ select,
 
 .live-subline {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -2501,19 +2502,16 @@ select,
 }
 
 .live-next {
+  margin: 0;
   font-size: clamp(0.72rem, 2vw, 0.82rem);
   font-weight: 700;
   color: var(--accent-strong);
+  width: 100%;
+  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
-  text-align: left;
-}
-
-.live-next.empty {
-  display: block;
-  flex: 1;
+  line-height: 1.2;
 }
 
 .live-details {

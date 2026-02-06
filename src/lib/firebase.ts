@@ -1,5 +1,7 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { enableIndexedDbPersistence, getFirestore, type Firestore } from "firebase/firestore";
+import { getFunctions, type Functions } from "firebase/functions";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,13 +18,17 @@ export const isFirebaseConfigured = Boolean(
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let functions: Functions | null = null;
+let storage: FirebaseStorage | null = null;
 
 if (isFirebaseConfigured) {
   app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
   db = getFirestore(app);
+  functions = getFunctions(app);
+  storage = getStorage(app);
   // Cache Firestore data locally to dramatically reduce repeat reads across app sessions.
   // Ignore errors (e.g. multiple tabs, unsupported browser).
   enableIndexedDbPersistence(db).catch(() => {});
 }
 
-export { db };
+export { app, db, functions, storage };

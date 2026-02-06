@@ -32,7 +32,7 @@ export function scheduleCsvHelp(table: Exclude<CsvTable, "users">): ReactNode {
     table === "lessons"
       ? [
           { key: "semester", value: "A / B (אופציונלי, ברירת מחדל: הסמסטר הפעיל)" },
-          { key: "day", value: "sun / mon / tue / wed / thu" },
+          { key: "day", value: "א / ב / ג / ד / ה (אפשר גם sun/mon/tue/wed/thu)" },
           { key: "roomId", value: "מזהה חדר" },
           { key: "startTime", value: "HH:MM (למשל 09:00)" },
           { key: "endTime", value: "HH:MM (למשל 10:30)" },

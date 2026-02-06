@@ -32,8 +32,15 @@ type CsvToolContentProps = {
   showToast: (message: string, tone?: "success" | "error") => void;
 };
 
-const downloadTextFile = (filename: string, content: string, mime = "text/csv;charset=utf-8") => {
-  const blob = new Blob([content], { type: mime });
+const downloadTextFile = (
+  filename: string,
+  content: string,
+  mime = "text/csv;charset=utf-8",
+  { bom = mime.includes("csv") }: { bom?: boolean } = {}
+) => {
+  // Excel often mis-detects UTF-8 CSV unless it has a BOM (especially on Windows).
+  const payload = bom ? `\uFEFF${content}` : content;
+  const blob = new Blob([payload], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -55,6 +62,46 @@ export default function CsvToolContent({
   reservationsError,
   showToast
 }: CsvToolContentProps) {
+  const dayToHe = (day: LessonRecord["day"]) => {
+    switch (day) {
+      case "sun":
+        return "א";
+      case "mon":
+        return "ב";
+      case "tue":
+        return "ג";
+      case "wed":
+        return "ד";
+      case "thu":
+        return "ה";
+      default:
+        return day;
+    }
+  };
+
+  const parseDayCell = (raw: string): LessonRecord["day"] | null => {
+    const trimmed = String(raw || "").trim().toLowerCase();
+    if (!trimmed) return null;
+    if (trimmed === "sun" || trimmed === "mon" || trimmed === "tue" || trimmed === "wed" || trimmed === "thu") {
+      return trimmed as LessonRecord["day"];
+    }
+    const cleaned = trimmed.replace(/['״׳]/g, "").trim(); // accept א׳ / א" etc
+    switch (cleaned) {
+      case "א":
+        return "sun";
+      case "ב":
+        return "mon";
+      case "ג":
+        return "tue";
+      case "ד":
+        return "wed";
+      case "ה":
+        return "thu";
+      default:
+        return null;
+    }
+  };
+
   const scheduleDefaultTable: CsvTable =
     scheduleFilter === "lessons"
       ? "lessons"
@@ -103,7 +150,7 @@ export default function CsvToolContent({
     if (csvTable === "lessons") {
       const rows = lessons.map((l) => ({
         semester: l.semester || activeSemester,
-        day: l.day,
+        day: dayToHe(l.day),
         roomId: l.roomId,
         startTime: toTimeInput(l.startMinutes),
         endTime: toTimeInput(l.startMinutes + l.durationMinutes),
@@ -261,13 +308,9 @@ export default function CsvToolContent({
         errors.push(`שורה ${idx + 2}: semester לא תקין (A/B)`);
         return;
       }
-      const day = (row.day || "").trim() as LessonRecord["day"];
+      const day = parseDayCell(row.day || "");
       if (!day) {
         errors.push(`שורה ${idx + 2}: חסר day`);
-        return;
-      }
-      if (day !== "sun" && day !== "mon" && day !== "tue" && day !== "wed" && day !== "thu") {
-        errors.push(`שורה ${idx + 2}: day לא תקין (sun/mon/tue/wed/thu)`);
         return;
       }
       const roomId = (row.roomId || "").trim();
@@ -520,7 +563,8 @@ export default function CsvToolContent({
       });
 
       if (importMode === "override") {
-        const deleteIds = lessons.filter((l) => preview.semesters.has(l.semester)).map((l) => l.id);
+        // Override means "replace the entire lessons table" (both semesters), regardless of the current filter.
+        const deleteIds = lessons.map((l) => l.id);
         return {
           section: "lessons",
           mode: importMode,

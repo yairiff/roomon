@@ -1,5 +1,8 @@
 import * as admin from "firebase-admin";
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { randomUUID } from "crypto";
+import type { CallableRequest } from "firebase-functions/v2/https";
 
 admin.initializeApp();
 
@@ -7,6 +10,7 @@ type DirectoryUser = {
   email?: string;
   name?: string;
   phone?: string;
+  pictureUrl?: string;
   role?: "admin" | "moderator" | "student" | "pending";
   cohortStartYear?: number;
 };
@@ -38,16 +42,16 @@ const sendEmail = async (to: string[], subject: string, text: string) => {
   }
 };
 
-const getAdminEmails = async () => {
+const getAdminEmails = async (): Promise<string[]> => {
   const snapshot = await admin.firestore().collection("users").where("role", "==", "admin").get();
   const emails = snapshot.docs
-    .map((docSnap) => (docSnap.data() as DirectoryUser).email || docSnap.id)
-    .map((email) => String(email || "").toLowerCase())
+    .map((docSnap: FirebaseFirestore.QueryDocumentSnapshot) => (docSnap.data() as DirectoryUser).email || docSnap.id)
+    .map((email: string) => String(email || "").toLowerCase())
     .filter(Boolean);
   return Array.from(new Set(emails));
 };
 
-export const notifyAdminsNewUser = onDocumentCreated("users/{email}", async (event) => {
+export const notifyAdminsNewUser = onDocumentCreated("users/{email}", async (event: any) => {
   const data = event.data?.data() as DirectoryUser | undefined;
   if (!data) return;
   if (data.role !== "pending") return;
@@ -77,7 +81,7 @@ export const notifyAdminsNewUser = onDocumentCreated("users/{email}", async (eve
   await sendEmail(admins, subject, lines.join("\n"));
 });
 
-export const notifyUserApproved = onDocumentUpdated("users/{email}", async (event) => {
+export const notifyUserApproved = onDocumentUpdated("users/{email}", async (event: any) => {
   const before = event.data?.before.data() as DirectoryUser | undefined;
   const after = event.data?.after.data() as DirectoryUser | undefined;
   if (!before || !after) return;
@@ -105,3 +109,96 @@ export const notifyUserApproved = onDocumentUpdated("users/{email}", async (even
   await sendEmail([email], subject, lines.join("\n"));
 });
 
+const isGooglePhotoUrl = (url: string) => {
+  try {
+    const u = new URL(url);
+    return (
+      u.protocol === "https:" &&
+      (u.hostname.endsWith("googleusercontent.com") || u.hostname === "lh3.googleusercontent.com")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const normalizeGooglePhotoUrl = (url: string, size: number) => {
+  // Google profile photos often support "=s{N}-c" suffix.
+  // Keep it small and cache-friendly to stay within free-tier storage.
+  if (!isGooglePhotoUrl(url)) return url;
+  const base = url.split("=")[0];
+  return `${base}=s${size}-c`;
+};
+
+export const syncProfilePhoto = onCall(async (request: CallableRequest<{ sourceUrl?: string }>) => {
+  const emailRaw = request.auth?.token?.email;
+  const uid = request.auth?.uid;
+  if (!emailRaw || !uid) {
+    throw new HttpsError("unauthenticated", "Missing auth context.");
+  }
+
+  const email = String(emailRaw).toLowerCase();
+  const sourceUrl = String(request.data?.sourceUrl || "");
+  if (!sourceUrl || !isGooglePhotoUrl(sourceUrl)) {
+    throw new HttpsError("invalid-argument", "Invalid sourceUrl.");
+  }
+
+  const sizedUrl = normalizeGooglePhotoUrl(sourceUrl, 128);
+  const response = await fetch(sizedUrl, {
+    headers: {
+      // A stable UA helps some CDNs behave consistently.
+      "User-Agent": "rimon-room-booking/1.0"
+    }
+  });
+  if (!response.ok) {
+    throw new HttpsError("unavailable", `Failed to fetch profile photo (${response.status}).`);
+  }
+
+  const contentType = response.headers.get("content-type") || "image/jpeg";
+  if (!contentType.startsWith("image/")) {
+    throw new HttpsError("invalid-argument", "Profile photo content-type is not an image.");
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const MAX_BYTES = 300 * 1024;
+  if (bytes.byteLength <= 0 || bytes.byteLength > MAX_BYTES) {
+    throw new HttpsError("invalid-argument", "Profile photo is too large.");
+  }
+
+  const ext =
+    contentType.includes("png")
+      ? "png"
+      : contentType.includes("webp")
+        ? "webp"
+        : contentType.includes("gif")
+          ? "gif"
+          : "jpg";
+
+  const path = `profilePhotos/${uid}.${ext}`;
+  const token = randomUUID();
+  const bucket = admin.storage().bucket();
+  await bucket.file(path).save(bytes, {
+    resumable: false,
+    metadata: {
+      contentType,
+      cacheControl: "public, max-age=604800, immutable",
+      metadata: {
+        firebaseStorageDownloadTokens: token
+      }
+    }
+  });
+
+  const bucketName = bucket.name;
+  const objectName = encodeURIComponent(path); // keep "/" as %2F
+  const pictureUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${objectName}?alt=media&token=${token}`;
+
+  await admin.firestore().doc(`users/${email}`).set(
+    {
+      email,
+      pictureUrl,
+      pictureUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+    },
+    { merge: true }
+  );
+
+  return { pictureUrl };
+});

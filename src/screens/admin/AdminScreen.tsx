@@ -326,59 +326,64 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       <p className="admin-meta">
         אם אין טווחים מוגדרים, המערכת מציגה זמינות חדרים ללא שיעורים (בין סמסטרים).
       </p>
-      <div className="admin-form-grid">
-        <label>
-          סמסטר א׳ התחלה
-          <input
-            type="date"
-            value={rangeDraft.A.start}
-            onChange={(event) =>
-              setRangeDraft((prev) => ({
-                ...prev,
-                A: { ...prev.A, start: event.target.value }
-              }))
-            }
-          />
-        </label>
-        <label>
-          סמסטר א׳ סיום
-          <input
-            type="date"
-            value={rangeDraft.A.end}
-            onChange={(event) =>
-              setRangeDraft((prev) => ({
-                ...prev,
-                A: { ...prev.A, end: event.target.value }
-              }))
-            }
-          />
-        </label>
-        <label>
-          סמסטר ב׳ התחלה
-          <input
-            type="date"
-            value={rangeDraft.B.start}
-            onChange={(event) =>
-              setRangeDraft((prev) => ({
-                ...prev,
-                B: { ...prev.B, start: event.target.value }
-              }))
-            }
-          />
-        </label>
-        <label>
-          סמסטר ב׳ סיום
-          <input
-            type="date"
-            value={rangeDraft.B.end}
-            onChange={(event) =>
-              setRangeDraft((prev) => ({
-                ...prev,
-                B: { ...prev.B, end: event.target.value }
-              }))
-            }
-          />
-        </label>
+      <div className="admin-form">
+        <div className="admin-form-row">
+          <label>
+            סמסטר א׳ התחלה
+            <input
+              type="date"
+              value={rangeDraft.A.start}
+              onChange={(event) =>
+                setRangeDraft((prev) => ({
+                  ...prev,
+                  A: { ...prev.A, start: event.target.value }
+                }))
+              }
+            />
+          </label>
+          <label>
+            סמסטר א׳ סיום
+            <input
+              type="date"
+              value={rangeDraft.A.end}
+              onChange={(event) =>
+                setRangeDraft((prev) => ({
+                  ...prev,
+                  A: { ...prev.A, end: event.target.value }
+                }))
+              }
+            />
+          </label>
+        </div>
+
+        <div className="admin-form-row">
+          <label>
+            סמסטר ב׳ התחלה
+            <input
+              type="date"
+              value={rangeDraft.B.start}
+              onChange={(event) =>
+                setRangeDraft((prev) => ({
+                  ...prev,
+                  B: { ...prev.B, start: event.target.value }
+                }))
+              }
+            />
+          </label>
+          <label>
+            סמסטר ב׳ סיום
+            <input
+              type="date"
+              value={rangeDraft.B.end}
+              onChange={(event) =>
+                setRangeDraft((prev) => ({
+                  ...prev,
+                  B: { ...prev.B, end: event.target.value }
+                }))
+              }
+            />
+          </label>
+        </div>
       </div>
       <div className="admin-actions">
         <button

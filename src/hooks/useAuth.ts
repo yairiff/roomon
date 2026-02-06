@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import { decodeJwt, loadGoogleScript } from "../lib/googleAuth";
 import { loadUser, saveUser, clearUser } from "../lib/storage";
-import { db } from "../lib/firebase";
+import { db, functions } from "../lib/firebase";
 import type { User } from "../types/auth";
 import type { DirectoryUser } from "../types/admin";
+import { markPhotoSyncAttempt, shouldAttemptPhotoSync } from "../lib/profilePhoto";
 
 export function useAuth({ clientId }: { clientId?: string }) {
   const [user, setUser] = useState<User | null>(() => loadUser());
   const [authError, setAuthError] = useState("");
+  const pictureRef = useRef<string>("");
   const [googleButtonEl, setGoogleButtonEl] = useState<HTMLDivElement | null>(null);
   const googleButtonRef = useCallback((el: HTMLDivElement | null) => {
     setGoogleButtonEl(el);
@@ -23,9 +26,14 @@ export function useAuth({ clientId }: { clientId?: string }) {
   }, [user]);
 
   useEffect(() => {
+    pictureRef.current = (user?.picture || "").trim();
+  }, [user?.picture]);
+
+  useEffect(() => {
     if (!db || !user?.email) return;
     const email = user.email.toLowerCase();
     const ref = doc(db, "users", email);
+    let cancelled = false;
     const unsubscribe = onSnapshot(ref, (snap) => {
       if (!snap.exists()) {
         setUser((prev) => prev ? { ...prev, role: "pending", allowed: false } : prev);
@@ -57,6 +65,23 @@ export function useAuth({ clientId }: { clientId?: string }) {
                 : typeof raw.tel === "string"
                   ? raw.tel
                   : "";
+
+      // If we only have a Google hotlink, copy a small version into Storage (once in a while).
+      // This dramatically reduces 429s from Google profile image rate limits.
+      const storedUrl = pictureUrl || "";
+      const sourceUrl = pictureRef.current;
+      if (
+        !cancelled &&
+        functions &&
+        shouldAttemptPhotoSync({ email, sourceUrl, storedUrl })
+      ) {
+        markPhotoSyncAttempt(email);
+        const call = httpsCallable(functions, "syncProfilePhoto");
+        void call({ sourceUrl }).catch(() => {
+          // Best-effort: keep working even if photo sync fails.
+        });
+      }
+
       setUser((prev) => {
         if (!prev) return prev;
         const next: User = {
@@ -81,7 +106,10 @@ export function useAuth({ clientId }: { clientId?: string }) {
         return next;
       });
     });
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [user?.email]);
 
   useEffect(() => {
@@ -138,31 +166,13 @@ export function useAuth({ clientId }: { clientId?: string }) {
                 directoryUser = null;
               }
             }
-            // Persist the photo URL for other users to see (only if the user doc already exists).
-            // This avoids creating a partially-filled document before the signup flow.
-            if (
-              db &&
-              docExists &&
-              typeof profile.picture === "string" &&
-              profile.picture &&
-              directoryPictureUrl !== profile.picture
-            ) {
-              try {
-                await updateDoc(doc(db, "users", email.toLowerCase()), {
-                  pictureUrl: profile.picture,
-                  updatedAt: serverTimestamp()
-                });
-              } catch {
-                // Ignore; showing the local photo is still fine.
-              }
-            }
             const role = directoryUser?.role;
             const allowed = role === "admin" || role === "moderator" || role === "student";
             setAuthError("");
             setUser({
               name: directoryUser?.name || profile.name || profile.given_name || "סטודנט",
               email,
-              picture: profile.picture || "",
+              picture: directoryPictureUrl || profile.picture || "",
               allowed,
               role: role || "pending",
               phone: directoryPhone || directoryUser?.phone,

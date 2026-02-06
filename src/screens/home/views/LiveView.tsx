@@ -228,8 +228,8 @@ export default function LiveView({
                   <span className={`status-dot ${status.status}`} />
                   {status.label}
                 </span>
-                {nextText ? <span className="live-next">{nextText}</span> : <span className="live-next empty" />}
               </div>
+              {nextText ? <p className="live-next">{nextText}</p> : null}
 
               {details ? <p className="live-details">{details}</p> : <span className="live-details empty" />}
             </button>

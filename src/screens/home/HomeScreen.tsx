@@ -3,6 +3,7 @@ import HomeViewRouter from "./HomeViewRouter";
 import ReserveConfirmOverlay from "./overlays/ReserveConfirmOverlay";
 import ReservationDetailsOverlay from "./overlays/ReservationDetailsOverlay";
 import BlockDetailsOverlay from "./overlays/BlockDetailsOverlay";
+import { isFirebaseStorageDownloadUrl, isGoogleUserContentUrl } from "../../lib/profilePhoto";
 import ConfirmOverlay from "./overlays/ConfirmOverlay";
 import AdminEditOverlay from "./overlays/AdminEditOverlay";
 import ScheduleTopBarSubtitle from "./topBar/ScheduleTopBarSubtitle";
@@ -861,12 +862,19 @@ export default function HomeScreen({
   const detailsName = detailsReservation?.reservedBy || detailsContact?.name || "";
   const detailsEmail = detailsReservation?.reservedEmail || "";
   const detailsPhone = detailsReservation?.reservedPhone || detailsContact?.phone || "";
-  const detailsPictureUrl =
-    detailsReservation?.reservedPicture ||
-    detailsContact?.pictureUrl ||
-    (currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase()
-      ? (currentUser.picture || "")
-      : "");
+  const detailsPictureUrl = (() => {
+    const directoryUrl = (detailsContact?.pictureUrl || "").trim();
+    const reservedUrl = (detailsReservation?.reservedPicture || "").trim();
+    if (directoryUrl && isFirebaseStorageDownloadUrl(directoryUrl)) return directoryUrl;
+    if (reservedUrl && isGoogleUserContentUrl(reservedUrl) && directoryUrl) return directoryUrl;
+    return (
+      reservedUrl ||
+      directoryUrl ||
+      (currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase()
+        ? (currentUser.picture || "")
+        : "")
+    );
+  })();
   const reservationPinned = detailsReservation
     ? isPinned({
         kind: "reservation",
