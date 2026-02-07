@@ -75,7 +75,9 @@ export function useAuth({ clientId }: { clientId?: string }) {
       const storedUrl = pictureUrl || "";
       const sourceUrl = (googlePictureRef.current || pictureRef.current).trim();
       const idToken = googleIdTokenRef.current;
-      const targetSize = 384;
+      // Use a reasonably large cached avatar so zoom/profile views stay crisp,
+      // while still keeping Storage usage small (~tens of KB per user).
+      const targetSize = 512;
       if (
         !cancelled &&
         functions &&
@@ -192,7 +194,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
 
             // Best-effort: sync the profile photo immediately while the Google ID token is fresh.
             // This reduces 429s from directly hotlinking Google profile images.
-            const targetSize = 384;
+            const targetSize = 512;
             const sourceUrl = String(profile.picture || "").trim();
             const storedUrl = String(directoryPictureUrl || "").trim();
             const normalizedEmail = email.toLowerCase();

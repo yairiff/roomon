@@ -35,7 +35,7 @@ export function useReservations(window: ReservationsWindow = null) {
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Partial<Reservation> & Record<string, unknown>;
           if (!data.date || !data.roomId || data.time === undefined) return;
-          const kind = data.kind === "special" || data.kind === "closed" ? data.kind : undefined;
+          const kind = data.kind === "special" || data.kind === "exam" || data.kind === "closed" ? data.kind : undefined;
           const reservedPhone =
             typeof data.reservedPhone === "string"
               ? data.reservedPhone

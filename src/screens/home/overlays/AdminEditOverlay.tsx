@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import { formatShortDate, getDayKeyFromDateKey } from "../../../lib/date";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { parseTimeInput, toTimeInput } from "../../../lib/timeInput";
-import { CloseIcon, ClosedIcon, LessonTypeIcon, ReservationIcon, SpecialIcon } from "../../../components/Icons";
+import { CloseIcon, ClosedIcon, ExamTypeIcon, LessonTypeIcon, ReservationIcon, SpecialIcon } from "../../../components/Icons";
 import type { DirectoryUser } from "../../../types/admin";
 import type { Room, WeekDay } from "../../../types/schedule";
 import type { AdminDraft } from "../adminDraft";
@@ -14,9 +14,10 @@ type AdminEditOverlayProps = {
   users: DirectoryUser[];
   canSave: boolean;
   error?: string;
+  collisionPending?: boolean;
   onClose: () => void;
   setDraft: Dispatch<SetStateAction<AdminDraft | null>>;
-  onSwitchType: (nextType: "lesson" | "reservation" | "special" | "closed") => void;
+  onSwitchType: (nextType: "lesson" | "reservation" | "special" | "exam" | "closed") => void;
   onDeleteLesson: () => void;
   onDeleteReservation: () => void;
   onSave: () => void;
@@ -34,6 +35,7 @@ export default function AdminEditOverlay({
   users,
   canSave,
   error,
+  collisionPending = false,
   onClose,
   setDraft,
   onSwitchType,
@@ -83,6 +85,8 @@ export default function AdminEditOverlay({
       ? "שיעור"
       : draft.type === "special"
         ? "אירוע"
+        : draft.type === "exam"
+          ? "מבחן"
         : draft.type === "closed"
           ? "סגור"
           : draft.type === "reservation"
@@ -108,7 +112,7 @@ export default function AdminEditOverlay({
           </button>
         </div>
 
-        {draft.mode === "create" ? (
+        {draft.mode === "create" || draft.mode === "edit" ? (
           <div className="admin-type-grid">
             <button
               type="button"
@@ -136,6 +140,14 @@ export default function AdminEditOverlay({
             </button>
             <button
               type="button"
+              className={`admin-type-card exam${draft.type === "exam" ? " active" : ""}`}
+              onClick={() => onSwitchType("exam")}
+            >
+              <ExamTypeIcon />
+              <span>מבחן</span>
+            </button>
+            <button
+              type="button"
               className={`admin-type-card closed${draft.type === "closed" ? " active" : ""}`}
               onClick={() => onSwitchType("closed")}
             >
@@ -151,6 +163,16 @@ export default function AdminEditOverlay({
               העריכה כאן יוצרת החרגה לתאריך הזה בלבד (לא משנה את הסדרה הקבועה).
               <br />
               כדי לשנות את כל הסדרה: ניהול → מערכת שעות → שיעורים.
+            </p>
+          ) : null}
+          {draft.mode === "edit" && draft.source?.kind === "lesson" && draft.type !== "lesson" ? (
+            <p className="admin-meta hint center" style={{ margin: "-2px 0 4px" }}>
+              שינוי סוג מחליף מופע בודד: השיעור יוסתר בתאריך הזה ותתווסף רשומה חדשה.
+            </p>
+          ) : null}
+          {draft.mode === "edit" && draft.source?.kind === "reservation" && draft.type === "lesson" ? (
+            <p className="admin-meta hint center" style={{ margin: "-2px 0 4px" }}>
+              שינוי סוג מחליף מופע בודד: השריון יימחק ותתווסף החרגת שיעור לתאריך הזה.
             </p>
           ) : null}
 
@@ -273,16 +295,16 @@ export default function AdminEditOverlay({
                 />
               </label>
             </>
-          ) : draft.type === "special" || draft.type === "closed" ? (
+          ) : draft.type === "special" || draft.type === "exam" || draft.type === "closed" ? (
             <label>
               תיאור
               <input
                 type="text"
                 value={draft.label}
-                placeholder={draft.type === "special" ? "תיאור אירוע" : "תיאור סגירה"}
+                placeholder={draft.type === "special" ? "תיאור אירוע" : draft.type === "exam" ? "תיאור מבחן" : "תיאור סגירה"}
                 onChange={(event) =>
                   setDraft((prev) =>
-                    prev && (prev.type === "special" || prev.type === "closed")
+                    prev && (prev.type === "special" || prev.type === "exam" || prev.type === "closed")
                       ? { ...prev, label: event.target.value }
                       : prev
                   )
@@ -371,7 +393,7 @@ export default function AdminEditOverlay({
             </p>
           ) : null}
 
-          {error ? <p className="admin-error">{error}</p> : null}
+          {error ? <p className={collisionPending ? "admin-warning" : "admin-error"}>{error}</p> : null}
         </div>
 
         <div className="admin-actions">
@@ -380,7 +402,8 @@ export default function AdminEditOverlay({
               מחיקה ליום זה
             </button>
           ) : null}
-          {draft.mode === "edit" && (draft.type === "reservation" || draft.type === "special" || draft.type === "closed") ? (
+          {draft.mode === "edit" &&
+          (draft.type === "reservation" || draft.type === "special" || draft.type === "exam" || draft.type === "closed") ? (
             <button type="button" className="secondary danger" onClick={onDeleteReservation}>
               מחיקת שריון
             </button>
@@ -394,7 +417,7 @@ export default function AdminEditOverlay({
             onClick={onSave}
             disabled={!canSave || draft.type === "choose"}
           >
-            שמירה
+            {collisionPending ? "שמירה בכל זאת" : "שמירה"}
           </button>
         </div>
       </div>

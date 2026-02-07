@@ -17,12 +17,13 @@ import {
   lessonsCsvHeaders,
   reservationsCsvHeaders,
   specialCsvHeaders,
+  examCsvHeaders,
   closedCsvHeaders
 } from "./csvTool/csvSchema";
 
 type CsvToolContentProps = {
   section: "users" | "schedule";
-  scheduleFilter: "all" | "lessons" | "regular" | "special" | "closed";
+  scheduleFilter: "all" | "lessons" | "regular" | "special" | "exam" | "closed";
   activeSemester: SemesterKey;
   users: DirectoryUser[];
   lessons: LessonRecord[];
@@ -109,6 +110,8 @@ export default function CsvToolContent({
         ? "reservations"
         : scheduleFilter === "special"
           ? "special"
+          : scheduleFilter === "exam"
+            ? "exam"
           : scheduleFilter === "closed"
             ? "closed"
             : "lessons";
@@ -184,6 +187,19 @@ export default function CsvToolContent({
           label: r.reservedBy || ""
         }));
       return { filename: "special.csv", csv: stringifyCsv(specialCsvHeaders, rows) };
+    }
+
+    if (csvTable === "exam") {
+      const rows = reservations
+        .filter((r) => r.kind === "exam")
+        .map((r) => ({
+          date: r.date,
+          roomId: r.roomId,
+          startTime: toTimeInput(r.time),
+          endTime: toTimeInput(r.time + (r.durationMinutes || 60)),
+          label: r.reservedBy || ""
+        }));
+      return { filename: "exam.csv", csv: stringifyCsv(examCsvHeaders, rows) };
     }
 
     const rows = reservations
@@ -350,7 +366,7 @@ export default function CsvToolContent({
 
   const reservationIdFromRow = (date: string, roomId: string, timeMinutes: number) => `res_${date}_${roomId}_${timeMinutes}`;
 
-  const importReservationsFromCsv = (text: string, kind: "regular" | "special" | "closed") => {
+  const importReservationsFromCsv = (text: string, kind: "regular" | "special" | "exam" | "closed") => {
     const { rows } = parseCsvAsObjects(text);
     const errors: string[] = [];
     const next: Reservation[] = [];
@@ -413,12 +429,12 @@ export default function CsvToolContent({
         roomId,
         reservedBy: label,
         reservedEmail: "",
-        kind: kind === "special" ? "special" : "closed"
+        kind: kind === "special" ? "special" : kind === "exam" ? "exam" : "closed"
       });
     });
 
     const table = kind === "regular" ? "reservations" : kind;
-    return { table: table as "reservations" | "special" | "closed", kind, reservations: next, errors, dates };
+    return { table: table as "reservations" | "special" | "exam" | "closed", kind, reservations: next, errors, dates };
   };
 
   const importPreview = useMemo(() => {
@@ -427,6 +443,7 @@ export default function CsvToolContent({
     if (csvTable === "lessons") return importLessonsFromCsv(importText);
     if (csvTable === "reservations") return importReservationsFromCsv(importText, "regular");
     if (csvTable === "special") return importReservationsFromCsv(importText, "special");
+    if (csvTable === "exam") return importReservationsFromCsv(importText, "exam");
     return importReservationsFromCsv(importText, "closed");
   }, [activeSemester, csvTable, importText, section]);
 
@@ -450,7 +467,7 @@ export default function CsvToolContent({
       }
     | {
         section: "reservations";
-        kind: "regular" | "special" | "closed";
+        kind: "regular" | "special" | "exam" | "closed";
         mode: typeof importMode;
         adds: number;
         updates: number;
@@ -581,7 +598,7 @@ export default function CsvToolContent({
 
     const kind = preview.kind;
     const relevantExisting = reservations.filter((r) => {
-      const k = r.kind === "special" || r.kind === "closed" ? r.kind : "regular";
+      const k = r.kind === "special" || r.kind === "exam" || r.kind === "closed" ? r.kind : "regular";
       return k === kind;
     });
     const resKey = (r: Reservation) => `${r.date}|${r.roomId}|${r.time}|${kind}`;
@@ -727,7 +744,14 @@ export default function CsvToolContent({
             .forEach((r) => batch.set(doc(firestore, "reservations", r.id), stripUndefined(r as unknown as Record<string, unknown>)));
           await batch.commit();
         }
-        const label = importPlan.kind === "regular" ? "שריונים" : importPlan.kind === "special" ? "אירועים" : "סגירות";
+        const label =
+          importPlan.kind === "regular"
+            ? "שריונים"
+            : importPlan.kind === "special"
+              ? "אירועים"
+              : importPlan.kind === "exam"
+                ? "מבחנים"
+                : "סגירות";
         setImportMessage(`עודכנו/נוספו ${toWrite.length} ${label}.`);
         showToast(`ייבוא ${label} הושלם.`);
         return;
@@ -747,6 +771,8 @@ export default function CsvToolContent({
           ? "שריונים"
           : csvTable === "special"
             ? "אירועים"
+            : csvTable === "exam"
+              ? "מבחנים"
             : "סגירות";
 
   const csvDistinctHelp = useMemo(() => {
@@ -756,9 +782,10 @@ export default function CsvToolContent({
   }, [csvTable, section]);
 
   const exportReservationCounts = useMemo(() => {
-    const base = { regular: 0, special: 0, closed: 0, all: reservations.length };
+    const base = { regular: 0, special: 0, exam: 0, closed: 0, all: reservations.length };
     reservations.forEach((r) => {
       if (r.kind === "special") base.special += 1;
+      else if (r.kind === "exam") base.exam += 1;
       else if (r.kind === "closed") base.closed += 1;
       else base.regular += 1;
     });
@@ -770,6 +797,7 @@ export default function CsvToolContent({
     if (csvTable === "lessons") return `שיעורים: ${lessons.length}`;
     if (csvTable === "reservations") return `שריונים: ${exportReservationCounts.regular}`;
     if (csvTable === "special") return `אירועים: ${exportReservationCounts.special}`;
+    if (csvTable === "exam") return `מבחנים: ${exportReservationCounts.exam}`;
     return `סגירות: ${exportReservationCounts.closed}`;
   }, [csvTable, exportReservationCounts, lessons.length, section]);
 
@@ -791,6 +819,7 @@ export default function CsvToolContent({
                       { key: "lessons", label: "שיעורים" },
                       { key: "reservations", label: "שריונים" },
                       { key: "special", label: "אירועים" },
+                      { key: "exam", label: "מבחנים" },
                       { key: "closed", label: "סגירות" }
                     ] as const)
               ).map((opt) => (

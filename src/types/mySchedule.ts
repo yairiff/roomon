@@ -1,4 +1,4 @@
-export type MySchedulePinKind = "lesson" | "special" | "closed" | "reservation";
+export type MySchedulePinKind = "lesson" | "special" | "exam" | "closed" | "reservation";
 
 export type MySchedulePin = {
   id: string;

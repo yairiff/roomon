@@ -127,6 +127,19 @@ export default function MyScheduleView({
         });
         return;
       }
+      if (pin.kind === "exam") {
+        add({
+          id,
+          date: pin.dateKey,
+          time: pin.startMinutes,
+          durationMinutes: pin.durationMinutes,
+          roomId: MY_ROOM_ID,
+          reservedBy: `${pin.title}${pin.meta ? ` · ${pin.meta}` : ""}\n${roomLine}`,
+          reservedEmail: "",
+          kind: "exam"
+        });
+        return;
+      }
       if (pin.kind === "closed") {
         add({
           id,

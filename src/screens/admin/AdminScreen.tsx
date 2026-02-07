@@ -29,7 +29,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const isAdmin = currentUser?.role === "admin";
   const [activeSemester, setActiveSemester] = useState<SemesterKey>("A");
   const [activeSection, setActiveSection] = useState<AdminSection>("users");
-  const [scheduleFilter, setScheduleFilter] = useState<"all" | "lessons" | "regular" | "special" | "closed">("all");
+  const [scheduleFilter, setScheduleFilter] = useState<"all" | "lessons" | "regular" | "special" | "exam" | "closed">("all");
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);

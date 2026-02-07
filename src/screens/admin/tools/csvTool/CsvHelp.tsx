@@ -52,7 +52,10 @@ export function scheduleCsvHelp(table: Exclude<CsvTable, "users">): ReactNode {
             { key: "roomId", value: "מזהה חדר" },
             { key: "startTime", value: "HH:MM" },
             { key: "endTime", value: "HH:MM" },
-            { key: "label", value: table === "special" ? "תיאור אירוע" : "תיאור סגירה" }
+            {
+              key: "label",
+              value: table === "special" ? "תיאור אירוע" : table === "exam" ? "תיאור מבחן" : "תיאור סגירה"
+            }
           ];
 
   return renderCsvHelp(rows);

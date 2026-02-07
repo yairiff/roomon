@@ -161,7 +161,7 @@ export default function LiveView({
       .filter((entry) => entry.roomId === roomId)
       .map((entry) => ({
         start: entry.time,
-        label: entry.kind === "special" ? "אירוע" : entry.kind === "closed" ? "סגור" : "שמור"
+        label: entry.kind === "special" ? "אירוע" : entry.kind === "exam" ? "מבחן" : entry.kind === "closed" ? "סגור" : "שמור"
       }));
 
     const upcoming = [...lessonStarts, ...reservationStarts]
@@ -206,10 +206,15 @@ export default function LiveView({
         {roomStates.map(({ room, status, busyUntil, nextEvent }) => {
           const nextBusyMinutes = busyUntil ? formatDiffMinutes(busyUntil) : "";
           const nextEventMinutes = nextEvent ? formatDiffMinutes(nextEvent.start) : "";
-          const nextText = busyUntil
-            ? `פנוי ב־${formatMinutes(busyUntil)} · ${nextBusyMinutes}`
+          const nextLine1 = busyUntil
+            ? `פנוי ב־${formatMinutes(busyUntil)}`
             : nextEvent
-              ? `הבא ב־${formatMinutes(nextEvent.start)} · ${nextEventMinutes}`
+              ? `הבא ב־${formatMinutes(nextEvent.start)}`
+              : "";
+          const nextLine2 = busyUntil
+            ? (nextBusyMinutes ? `בעוד ${nextBusyMinutes}` : "")
+            : nextEvent
+              ? (nextEventMinutes ? `בעוד ${nextEventMinutes}` : "")
               : "";
           const detailsBase = [status.detailPrimary, status.detailSecondary].filter(Boolean).join(" · ");
           const details = detailsBase || (status.status === "empty" ? nextEvent?.label || "" : "");
@@ -229,7 +234,12 @@ export default function LiveView({
                   {status.label}
                 </span>
               </div>
-              {nextText ? <p className="live-next">{nextText}</p> : null}
+              {nextLine1 ? (
+                <p className="live-next">
+                  <span className="live-next-line">{nextLine1}</span>
+                  {nextLine2 ? <span className="live-next-line sub">{nextLine2}</span> : null}
+                </p>
+              ) : null}
 
               {details ? <p className="live-details">{details}</p> : <span className="live-details empty" />}
             </button>

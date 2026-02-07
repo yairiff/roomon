@@ -12,7 +12,7 @@ import ScheduleItemEditorOverlay from "./schedule/ScheduleItemEditorOverlay";
 import RowSelectButton from "../components/RowSelectButton";
 import SortSelect from "../components/SortSelect";
 
-type ScheduleFilter = "all" | "lessons" | "regular" | "special" | "closed";
+type ScheduleFilter = "all" | "lessons" | "regular" | "special" | "exam" | "closed";
 type ScheduleSort = "time" | "room" | "title";
 
 type ScheduleSectionProps = {
@@ -46,12 +46,19 @@ type ScheduleItem =
 
 const kindLabel = (reservation: Reservation) => {
   if (reservation.kind === "special") return "אירוע";
+  if (reservation.kind === "exam") return "מבחן";
   if (reservation.kind === "closed") return "סגירה";
   return "שריון";
 };
 
 const reservationKindValue = (reservation: Reservation) =>
-  reservation.kind === "special" ? "special" : reservation.kind === "closed" ? "closed" : "regular";
+  reservation.kind === "special"
+    ? "special"
+    : reservation.kind === "exam"
+      ? "exam"
+      : reservation.kind === "closed"
+        ? "closed"
+        : "regular";
 
 const newReservationId = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID
@@ -108,7 +115,11 @@ export default function ScheduleSection({
 
   const includesLessons = scheduleFilter === "all" || scheduleFilter === "lessons";
   const includesReservations =
-    scheduleFilter === "all" || scheduleFilter === "regular" || scheduleFilter === "special" || scheduleFilter === "closed";
+    scheduleFilter === "all" ||
+    scheduleFilter === "regular" ||
+    scheduleFilter === "special" ||
+    scheduleFilter === "exam" ||
+    scheduleFilter === "closed";
 
   const sortLabel: Record<ScheduleSort, string> = {
     time: "זמן",
@@ -148,6 +159,7 @@ export default function ScheduleSection({
     let list = reservations;
     if (scheduleFilter === "regular") list = list.filter((r) => !r.kind);
     if (scheduleFilter === "special") list = list.filter((r) => r.kind === "special");
+    if (scheduleFilter === "exam") list = list.filter((r) => r.kind === "exam");
     if (scheduleFilter === "closed") list = list.filter((r) => r.kind === "closed");
 
     if (roomFilter !== "all") {
@@ -277,7 +289,10 @@ export default function ScheduleSection({
   }, [activeSemester, onUpsertLesson]);
 
   const duplicateReservation = useCallback((reservation: Reservation) => {
-    const kind = reservation.kind === "special" || reservation.kind === "closed" ? reservation.kind : undefined;
+    const kind =
+      reservation.kind === "special" || reservation.kind === "exam" || reservation.kind === "closed"
+        ? reservation.kind
+        : undefined;
     const copy: Reservation = {
       ...reservation,
       id: newReservationId(),
@@ -420,7 +435,9 @@ export default function ScheduleSection({
                       ? "שריונים"
                       : scheduleFilter === "special"
                         ? "אירועים"
-                        : "סגירות"
+                        : scheduleFilter === "exam"
+                          ? "מבחנים"
+                          : "סגירות"
               }
             >
               <div className="admin-filter-options">
@@ -430,6 +447,7 @@ export default function ScheduleSection({
                     { key: "lessons" as const, label: "שיעורים" },
                     { key: "regular" as const, label: "שריונים" },
                     { key: "special" as const, label: "אירועים" },
+                    { key: "exam" as const, label: "מבחנים" },
                     { key: "closed" as const, label: "סגירות" }
                   ] as const
                 ).map((opt) => (
@@ -605,6 +623,8 @@ export default function ScheduleSection({
                     ? "lesson"
                     : item.reservation.kind === "special"
                       ? "special"
+                      : item.reservation.kind === "exam"
+                        ? "exam"
                       : item.reservation.kind === "closed"
                         ? "closed"
                         : "reservation";

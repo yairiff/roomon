@@ -1,5 +1,9 @@
 import type { DayKey } from "../../types/schedule";
 
+export type AdminDraftSource =
+  | { kind: "lesson"; lessonId: string }
+  | { kind: "reservation"; reservationId: string };
+
 export type AdminLessonDraft = {
   type: "lesson";
   mode: "create" | "edit";
@@ -11,6 +15,7 @@ export type AdminLessonDraft = {
   title: string;
   teacher: string;
   targetLessonId?: string;
+  source?: AdminDraftSource;
 };
 
 export type AdminReservationDraft = {
@@ -24,6 +29,7 @@ export type AdminReservationDraft = {
   reservedBy: string;
   reservedEmail: string;
   reservationId?: string;
+  source?: AdminDraftSource;
 };
 
 export type AdminChooseDraft = {
@@ -36,6 +42,7 @@ export type AdminChooseDraft = {
   durationMinutes: number;
   reservedBy: string;
   reservedEmail: string;
+  source?: AdminDraftSource;
 };
 
 export type AdminSpecialDraft = {
@@ -48,6 +55,20 @@ export type AdminSpecialDraft = {
   durationMinutes: number;
   label: string;
   reservationId?: string;
+  source?: AdminDraftSource;
+};
+
+export type AdminExamDraft = {
+  type: "exam";
+  mode: "create" | "edit";
+  dateKey: string;
+  dayKey: DayKey;
+  roomId: string;
+  startMinutes: number;
+  durationMinutes: number;
+  label: string;
+  reservationId?: string;
+  source?: AdminDraftSource;
 };
 
 export type AdminClosedDraft = {
@@ -60,6 +81,7 @@ export type AdminClosedDraft = {
   durationMinutes: number;
   label: string;
   reservationId?: string;
+  source?: AdminDraftSource;
 };
 
 export type AdminDraft =
@@ -67,7 +89,7 @@ export type AdminDraft =
   | AdminLessonDraft
   | AdminReservationDraft
   | AdminSpecialDraft
+  | AdminExamDraft
   | AdminClosedDraft;
 
 export type AdminDraftType = AdminDraft["type"];
-

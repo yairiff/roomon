@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
-  setDoc,
-  writeBatch
+  setDoc
 } from "firebase/firestore";
 import { db } from "../../../lib/firebase";
 import { loadMySchedulePins, saveMySchedulePins } from "../../../lib/storage";
@@ -62,106 +61,101 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
   }, [normalizedEmail]);
 
   // Remote subscription + migration:
-  // - Canonical storage: `users/{email}/mySchedulePins/{pinId}`
-  // - Legacy storage: `users/{email}.myPins` (array)
+  // Canonical storage: `users/{email}.myPins` (array)
+  // - We keep pins on the user doc so they reliably persist across devices.
+  // - A best-effort migration pulls from older `users/{email}/mySchedulePins` when accessible.
   useEffect(() => {
     if (!normalizedEmail) return;
     const firestore = db;
     if (!firestore) return;
 
     const userRef = doc(firestore, "users", normalizedEmail);
-    const pinsRef = collection(firestore, "users", normalizedEmail, "mySchedulePins");
 
     let cancelled = false;
-    let remoteAuthoritative = false;
-    let seedAttempted = false;
     const localSeedPins = loadMySchedulePins(normalizedEmail);
+    let seedAttempted = false;
 
-    const seedIfNeeded = async (remotePins: MySchedulePin[]) => {
-      if (remoteAuthoritative) return;
-      if (remotePins.length) {
-        remoteAuthoritative = true;
-        return;
-      }
+    const seedDocIfNeeded = async (remotePins: MySchedulePin[]) => {
       if (seedAttempted) return;
+      if (remotePins.length) return;
+      if (!localSeedPins.length) return;
       seedAttempted = true;
-
-      // Prefer legacy doc pins (for users signing in on a fresh device).
-      let legacyPins: MySchedulePin[] = [];
       try {
-        const snap = await getDoc(userRef);
-        const data = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
-        if (data && Array.isArray((data as any).myPins)) {
-          legacyPins = ((data as any).myPins as unknown[])
-            .filter(Boolean)
-            .map((p: any) => normalizePin(p as any, String(p?.id || "")))
-            .filter(Boolean) as MySchedulePin[];
-        }
+        await setDoc(
+          userRef,
+          { email: normalizedEmail, myPins: localSeedPins, myPinsUpdatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch {
+        // Best-effort.
+      }
+    };
+
+    const migrateFromSubcollection = async () => {
+      // Older builds stored pins in `users/{email}/mySchedulePins/{pinId}`.
+      // Pull them once and write into the canonical `myPins` array when possible.
+      try {
+        const pinsRef = collection(firestore, "users", normalizedEmail, "mySchedulePins");
+        const snap = await getDocs(pinsRef);
+        const migrated: MySchedulePin[] = [];
+        snap.forEach((docSnap) => {
+          const normalized = normalizePin(docSnap.data() as any, docSnap.id);
+          if (!normalized) return;
+          migrated.push(normalized);
+        });
+        if (!migrated.length) return;
+        migrated.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+        const userSnap = await getDoc(userRef);
+        const data = userSnap.exists() ? (userSnap.data() as any) : null;
+        const existing = Array.isArray(data?.myPins)
+          ? (data.myPins as unknown[]).map((p: any) => normalizePin(p as any, String(p?.id || ""))).filter(Boolean) as MySchedulePin[]
+          : [];
+        const mergedById = new Map<string, MySchedulePin>();
+        existing.forEach((p) => mergedById.set(p.id, p));
+        migrated.forEach((p) => mergedById.set(p.id, p));
+        const merged = Array.from(mergedById.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        await setDoc(
+          userRef,
+          { email: normalizedEmail, myPins: merged, myPinsUpdatedAt: serverTimestamp() },
+          { merge: true }
+        );
       } catch {
         // ignore
-      }
-
-      const seedPins = legacyPins.length ? legacyPins : localSeedPins;
-      if (!seedPins.length) {
-        remoteAuthoritative = true;
-        return;
-      }
-
-      try {
-        const batch = writeBatch(firestore);
-        seedPins.forEach((pin) => {
-          const id = pin.id || pinIdFor(pin);
-          const nextPin: MySchedulePin = { ...pin, id, createdAt: pin.createdAt || Date.now() };
-          batch.set(doc(firestore, "users", normalizedEmail, "mySchedulePins", id), nextPin, { merge: true });
-        });
-        batch.set(userRef, { email: normalizedEmail, myPinsUpdatedAt: serverTimestamp() }, { merge: true });
-        await batch.commit();
-        remoteAuthoritative = true;
-      } catch {
-        // If seeding fails (rules), keep local pins only.
       }
     };
 
     const unsubscribe = onSnapshot(
-      pinsRef,
+      userRef,
       (snapshot) => {
-        const next: MySchedulePin[] = [];
-        snapshot.forEach((docSnap) => {
-          const normalized = normalizePin(docSnap.data() as any, docSnap.id);
-          if (!normalized) return;
-          next.push(normalized);
-        });
-        next.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         if (cancelled) return;
+        const data = snapshot.exists() ? (snapshot.data() as any) : null;
+        const remotePinsRaw = Array.isArray(data?.myPins) ? (data.myPins as unknown[]) : [];
+        const next = remotePinsRaw
+          .filter(Boolean)
+          .map((p: any) => normalizePin(p as any, String(p?.id || "")))
+          .filter(Boolean) as MySchedulePin[];
+        next.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         if (next.length) {
-          remoteAuthoritative = true;
           setPins(next);
           saveMySchedulePins(normalizedEmail, next);
-          return;
+        } else {
+          void seedDocIfNeeded([]);
         }
-
-        // Avoid clobbering local pins on first empty snapshot (remote might be empty and needs seeding).
-        if (!remoteAuthoritative && localSeedPins.length) {
-          void seedIfNeeded([]);
-          return;
-        }
-
-        setPins([]);
-        saveMySchedulePins(normalizedEmail, []);
-        void seedIfNeeded([]);
       },
       () => {
         // Listener failed (permissions/offline) => stay with local pins.
-        void seedIfNeeded([]);
+        void seedDocIfNeeded([]);
       }
     );
 
-    void seedIfNeeded([]);
+    void migrateFromSubcollection();
+    void seedDocIfNeeded([]);
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [normalizedEmail, pinIdFor]);
+  }, [normalizedEmail]);
 
   const togglePin = useCallback(
     async (pin: Omit<MySchedulePin, "id" | "createdAt">) => {
@@ -180,62 +174,35 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
       showToast?.(exists ? "הוסר מהמערכת שלי" : "נוסף למערכת שלי");
 
       const firestore = db;
-      if (!firestore) {
-        // Local-only fallback.
-        setPins((prev) => {
-          const next = exists
-            ? prev.filter((entry) => entry.id !== id)
-            : [
-                ...prev,
-                {
-                  id,
-                  ...base,
-                  title: pin.title,
-                  meta: pin.meta,
-                  reservedEmail: pin.reservedEmail,
-                  createdAt: Date.now()
-                }
-              ];
-          saveMySchedulePins(normalizedEmail, next);
-          return next;
-        });
-        return;
-      }
+      // Optimistic local update (also serves offline mode).
+      const optimisticNext = (() => {
+        const now = Date.now();
+        return exists
+          ? pins.filter((entry) => entry.id !== id)
+          : [
+              ...pins,
+              {
+                id,
+                ...base,
+                title: pin.title,
+                meta: pin.meta,
+                reservedEmail: pin.reservedEmail,
+                createdAt: now
+              }
+            ];
+      })();
+      setPins(optimisticNext);
+      saveMySchedulePins(normalizedEmail, optimisticNext);
 
+      if (!firestore) return;
       try {
-        if (exists) {
-          await deleteDoc(doc(firestore, "users", normalizedEmail, "mySchedulePins", id));
-        } else {
-          const nextPin: MySchedulePin = {
-            id,
-            ...base,
-            title: pin.title,
-            meta: pin.meta,
-            reservedEmail: pin.reservedEmail,
-            createdAt: Date.now()
-          };
-          await setDoc(doc(firestore, "users", normalizedEmail, "mySchedulePins", id), nextPin, { merge: true });
-        }
-        await setDoc(doc(firestore, "users", normalizedEmail), { email: normalizedEmail, myPinsUpdatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(
+          doc(firestore, "users", normalizedEmail),
+          { email: normalizedEmail, myPins: optimisticNext, myPinsUpdatedAt: serverTimestamp() },
+          { merge: true }
+        );
       } catch {
-        // Keep UX responsive even if remote write fails.
-        setPins((prev) => {
-          const next = exists
-            ? prev.filter((entry) => entry.id !== id)
-            : [
-                ...prev,
-                {
-                  id,
-                  ...base,
-                  title: pin.title,
-                  meta: pin.meta,
-                  reservedEmail: pin.reservedEmail,
-                  createdAt: Date.now()
-                }
-              ];
-          saveMySchedulePins(normalizedEmail, next);
-          return next;
-        });
+        // Best-effort: keep local state.
       }
     },
     [normalizedEmail, pinIdFor, pins, showToast]

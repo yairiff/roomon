@@ -16,7 +16,7 @@ type ReservationsSectionProps = {
   onFilteredReservationsChange?: (reservations: Reservation[]) => void;
 };
 
-type ReservationFilter = "all" | "regular" | "special" | "closed";
+type ReservationFilter = "all" | "regular" | "special" | "exam" | "closed";
 type ReservationSort = "date_asc" | "date_desc" | "name" | "room";
 
 export default function ReservationsSection({
@@ -56,10 +56,12 @@ export default function ReservationsSection({
       all: reservations.length,
       regular: 0,
       special: 0,
+      exam: 0,
       closed: 0
     };
     reservations.forEach((reservation) => {
       if (reservation.kind === "special") base.special += 1;
+      else if (reservation.kind === "exam") base.exam += 1;
       else if (reservation.kind === "closed") base.closed += 1;
       else base.regular += 1;
     });
@@ -165,6 +167,7 @@ export default function ReservationsSection({
 
   const kindLabel = (reservation: Reservation) => {
     if (reservation.kind === "special") return "אירוע";
+    if (reservation.kind === "exam") return "מבחן";
     if (reservation.kind === "closed") return "סגירה";
     return "שריון";
   };
@@ -174,6 +177,8 @@ export default function ReservationsSection({
       ? "פרטי שריון"
       : kindLabel(draft) === "אירוע"
         ? "פרטי אירוע"
+        : kindLabel(draft) === "מבחן"
+          ? "פרטי מבחן"
         : "פרטי סגירה"
     : "פרטי רשומה";
 
@@ -194,14 +199,16 @@ export default function ReservationsSection({
     const today = new Date();
     const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const firstRoom = roomsRaw[0]?.id || "";
-    const kindFromFilter = effectiveFilter === "special" ? "special" : effectiveFilter === "closed" ? "closed" : undefined;
+    const kindFromFilter =
+      effectiveFilter === "special" ? "special" : effectiveFilter === "exam" ? "exam" : effectiveFilter === "closed" ? "closed" : undefined;
     const base: Reservation = {
       id: newId(),
       date,
       time: 9 * 60,
       durationMinutes: 60,
       roomId: roomFilter !== "all" ? roomFilter : firstRoom,
-      reservedBy: kindFromFilter === "special" ? "אירוע חדש" : kindFromFilter === "closed" ? "סגור זמנית" : "אדמין",
+      reservedBy:
+        kindFromFilter === "special" ? "אירוע חדש" : kindFromFilter === "exam" ? "מבחן חדש" : kindFromFilter === "closed" ? "סגור זמנית" : "אדמין",
       reservedEmail: "",
       ...(kindFromFilter ? { kind: kindFromFilter } : {})
     };
@@ -210,7 +217,8 @@ export default function ReservationsSection({
   };
 
   const duplicateReservation = (reservation: Reservation) => {
-    const kind = reservation.kind === "special" || reservation.kind === "closed" ? reservation.kind : undefined;
+    const kind =
+      reservation.kind === "special" || reservation.kind === "exam" || reservation.kind === "closed" ? reservation.kind : undefined;
     const copy: Reservation = {
       ...reservation,
       id: newId(),
@@ -313,6 +321,13 @@ export default function ReservationsSection({
                 onClick={() => setFilter("special")}
               >
                 אירועים ({counts.special})
+              </button>
+              <button
+                type="button"
+                className={`chip small${filter === "exam" ? " active" : ""}`}
+                onClick={() => setFilter("exam")}
+              >
+                מבחנים ({counts.exam})
               </button>
               <button
                 type="button"
@@ -430,7 +445,7 @@ export default function ReservationsSection({
                     <select
                       value={draft.kind || "regular"}
                       onChange={(event) => {
-                        const value = event.target.value as "regular" | "special" | "closed";
+                        const value = event.target.value as "regular" | "special" | "exam" | "closed";
                         setDraft({
                           ...draft,
                           kind: value === "regular" ? undefined : value
@@ -439,6 +454,7 @@ export default function ReservationsSection({
                     >
                       <option value="regular">שריון</option>
                       <option value="special">אירוע</option>
+                      <option value="exam">מבחן</option>
                       <option value="closed">סגירה</option>
                     </select>
                   </label>

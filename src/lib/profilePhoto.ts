@@ -18,7 +18,7 @@ export const shouldAttemptPhotoSync = (args: {
     sourceUrl,
     storedUrl,
     storedSize,
-    targetSize = 384,
+    targetSize = 512,
     cooldownMs = 7 * 24 * 60 * 60 * 1000
   } = args;
   if (!email) return false;
@@ -38,7 +38,7 @@ export const shouldAttemptPhotoSync = (args: {
   return true;
 };
 
-export const markPhotoSyncAttempt = (email: string, targetSize = 256) => {
+export const markPhotoSyncAttempt = (email: string, targetSize = 512) => {
   try {
     const key = `rimon_photo_sync_v2:${email.toLowerCase()}:s${targetSize}`;
     localStorage.setItem(key, String(Date.now()));

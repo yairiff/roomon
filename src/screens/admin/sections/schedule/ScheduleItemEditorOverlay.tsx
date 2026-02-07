@@ -6,7 +6,18 @@ import type { Reservation } from "../../../../types/reservations";
 import { useLessonOverrides } from "../../../../hooks/useLessonOverrides";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import PropsOverlay from "../../components/PropsOverlay";
-import { CloseIcon, ClosedIcon, DuplicateIcon, EditIcon, LessonTypeIcon, ReleaseIcon, ReservationIcon, SpecialIcon, TuneIcon } from "../../../../components/Icons";
+import {
+  CloseIcon,
+  ClosedIcon,
+  DuplicateIcon,
+  EditIcon,
+  ExamTypeIcon,
+  LessonTypeIcon,
+  ReleaseIcon,
+  ReservationIcon,
+  SpecialIcon,
+  TuneIcon
+} from "../../../../components/Icons";
 
 type ItemKey = `lesson:${string}` | `reservation:${string}`;
 type Draft =
@@ -34,12 +45,19 @@ type ScheduleItemEditorOverlayProps = {
 
 const kindLabel = (reservation: Reservation) => {
   if (reservation.kind === "special") return "אירוע";
+  if (reservation.kind === "exam") return "מבחן";
   if (reservation.kind === "closed") return "סגירה";
   return "שריון";
 };
 
 const reservationKindValue = (reservation: Reservation) =>
-  reservation.kind === "special" ? "special" : reservation.kind === "closed" ? "closed" : "regular";
+  reservation.kind === "special"
+    ? "special"
+    : reservation.kind === "exam"
+      ? "exam"
+      : reservation.kind === "closed"
+        ? "closed"
+        : "regular";
 
 const newReservationId = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID
@@ -69,6 +87,7 @@ export default function ScheduleItemEditorOverlay({
     if (draft.kind === "choose") return "הוספה";
     if (draft.kind === "lesson") return draft.value.id ? "עריכת שיעור" : "שיעור חדש";
     if (draft.value.kind === "special") return "עריכת אירוע";
+    if (draft.value.kind === "exam") return "עריכת מבחן";
     if (draft.value.kind === "closed") return "עריכת סגירה";
     return draft.value.id ? "עריכת שריון" : "שריון חדש";
   }, [draft]);
@@ -188,6 +207,11 @@ export default function ScheduleItemEditorOverlay({
         setDraftError(draft.value.kind === "special" ? "יש להזין תיאור אירוע." : "יש להזין תיאור סגירה.");
         return;
       }
+    } else if (draft.value.kind === "exam") {
+      if (!draft.value.reservedBy.trim()) {
+        setDraftError("יש להזין תיאור מבחן.");
+        return;
+      }
     } else if (!draft.value.reservedEmail.trim()) {
       setDraftError("יש להזין אימייל.");
       return;
@@ -294,6 +318,26 @@ export default function ScheduleItemEditorOverlay({
                   >
                     <SpecialIcon />
                     <span>אירוע</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-type-card exam"
+                    onClick={() => {
+                      const base: Reservation = {
+                        id: newReservationId(),
+                        date: draft.value.date,
+                        time: draft.value.startMinutes,
+                        durationMinutes: 60,
+                        roomId: draft.value.roomId,
+                        reservedBy: "",
+                        reservedEmail: "",
+                        kind: "exam"
+                      };
+                      setDraft({ kind: "reservation", value: base });
+                    }}
+                  >
+                    <ExamTypeIcon />
+                    <span>מבחן</span>
                   </button>
                   <button
                     type="button"
@@ -486,13 +530,21 @@ export default function ScheduleItemEditorOverlay({
                     </select>
                   </label>
                   <label>
-                    {draft.value.kind === "special" ? "תיאור אירוע" : draft.value.kind === "closed" ? "תיאור סגירה" : "שם"}
+                    {draft.value.kind === "special"
+                      ? "תיאור אירוע"
+                      : draft.value.kind === "exam"
+                        ? "תיאור מבחן"
+                        : draft.value.kind === "closed"
+                          ? "תיאור סגירה"
+                          : "שם"}
                     <input
                       type="text"
                       value={draft.value.reservedBy}
                       placeholder={
                         draft.value.kind === "special"
                           ? "תיאור אירוע"
+                          : draft.value.kind === "exam"
+                            ? "תיאור מבחן"
                           : draft.value.kind === "closed"
                             ? "תיאור סגירה"
                             : "שם"
@@ -500,7 +552,7 @@ export default function ScheduleItemEditorOverlay({
                       onChange={(event) =>
                         setDraft({ kind: "reservation", value: { ...draft.value, reservedBy: event.target.value } })
                       }
-                      required={draft.value.kind === "special" || draft.value.kind === "closed"}
+                      required={draft.value.kind === "special" || draft.value.kind === "exam" || draft.value.kind === "closed"}
                     />
                   </label>
                   <label>
@@ -515,7 +567,7 @@ export default function ScheduleItemEditorOverlay({
                           value: { ...draft.value, reservedEmail: event.target.value }
                         })
                       }
-                      required={draft.value.kind !== "special" && draft.value.kind !== "closed"}
+                      required={draft.value.kind !== "special" && draft.value.kind !== "exam" && draft.value.kind !== "closed"}
                     />
                   </label>
                   <label>
@@ -523,7 +575,7 @@ export default function ScheduleItemEditorOverlay({
                     <select
                       value={reservationKindValue(draft.value)}
                       onChange={(event) => {
-                        const value = event.target.value as "regular" | "special" | "closed";
+                        const value = event.target.value as "regular" | "special" | "exam" | "closed";
                         setDraft({
                           kind: "reservation",
                           value: { ...draft.value, kind: value === "regular" ? undefined : value }
@@ -532,6 +584,7 @@ export default function ScheduleItemEditorOverlay({
                     >
                       <option value="regular">שריון</option>
                       <option value="special">אירוע</option>
+                      <option value="exam">מבחן</option>
                       <option value="closed">סגירה</option>
                     </select>
                   </label>

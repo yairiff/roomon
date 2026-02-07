@@ -44,6 +44,7 @@ export default function TopBar({
             <img
               src={user?.picture}
               alt={user?.name || "User"}
+              loading="lazy"
               onError={() => setAvatarError(true)}
             />
           ) : user ? (

@@ -10,7 +10,7 @@ export type Reservation = {
   reservedEmail: string;
   reservedPhone?: string;
   reservedPicture?: string;
-  kind?: "special" | "closed";
+  kind?: "special" | "exam" | "closed";
 };
 
 export type ReservationMap = Record<string, Reservation[]>;

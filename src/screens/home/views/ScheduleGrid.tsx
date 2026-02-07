@@ -4,7 +4,7 @@ import type { User } from "../../../types/auth";
 import type { WeekDate } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { AddIcon, ReleaseIcon } from "../../../components/Icons";
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import type { RoomMeta } from "../../../types/admin";
 
 type ScheduleView = "daily" | "room";
@@ -28,6 +28,7 @@ export type ScheduleGridProps = {
   onEditReservation?: (dateKey: string, reservationId: string) => void;
   onLessonDetails?: (lessonId: string, dateKey: string) => void;
   onSpecialDetails?: (reservationId: string, dateKey: string) => void;
+  onExamDetails?: (reservationId: string, dateKey: string) => void;
   onClosedDetails?: (reservationId: string, dateKey: string) => void;
   onAdminSlotClick?: (request: ReserveRequest) => void;
   onAdminLessonClick?: (lessonId: string, dateKey: string) => void;
@@ -44,6 +45,8 @@ export type ScheduleGridProps = {
   footer?: ReactNode;
   nowMinutes?: number;
   todayDateKey?: string;
+  onNavigatePrev?: () => void;
+  onNavigateNext?: () => void;
 };
 
 const BASE_ROW_HEIGHT = 28;
@@ -59,14 +62,14 @@ type LessonBlock = {
 
 type ReservationBlock = {
   id: string;
-  type: "reserved" | "special" | "closed";
+  type: "reserved" | "special" | "exam" | "closed";
   title: string;
   meta: string;
   startMinutes: number;
   durationMinutes: number;
   reservationId: string;
   reservedEmail: string;
-  kind?: "special" | "closed";
+  kind?: "special" | "exam" | "closed";
 };
 
 type Block = LessonBlock | ReservationBlock;
@@ -138,6 +141,7 @@ export default function ScheduleGrid({
   onEditReservation,
   onLessonDetails,
   onSpecialDetails,
+  onExamDetails,
   onClosedDetails,
   onAdminSlotClick,
   onAdminLessonClick,
@@ -153,13 +157,34 @@ export default function ScheduleGrid({
   showHeaders = true,
   footer,
   nowMinutes,
-  todayDateKey
+  todayDateKey,
+  onNavigatePrev,
+  onNavigateNext
 }: ScheduleGridProps) {
   const baseStartMinutes = startHour * 60;
   const baseEndMinutes = endHour * 60;
   const totalHours = endHour - startHour;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [rowHeight, setRowHeight] = useState(BASE_ROW_HEIGHT);
+  const [rowScale, setRowScale] = useState(() => {
+    try {
+      const raw = localStorage.getItem("rimon_schedule_row_scale_v1");
+      const parsed = raw ? Number(raw) : 1;
+      return Number.isFinite(parsed) ? Math.max(0.6, Math.min(1.6, parsed)) : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const rowScaleRef = useRef(rowScale);
+  useEffect(() => {
+    rowScaleRef.current = rowScale;
+    try {
+      localStorage.setItem("rimon_schedule_row_scale_v1", String(rowScale));
+    } catch {
+      // ignore
+    }
+  }, [rowScale]);
+
   const columnHeight = totalHours * rowHeight;
   const slotHeightFor = (slot: TimeSlot) => ((slot.endMinutes - slot.startMinutes) / 60) * rowHeight;
   const colGap = compact ? 2 : 4;
@@ -176,11 +201,14 @@ export default function ScheduleGrid({
       const scrollHeight = scrollRef.current.clientHeight;
       const available = scrollHeight;
       if (available <= 0) return;
-      const baseMin = compact ? 22 : 26;
+      const baseMin = compact ? 20 : 24;
       const viewportH = typeof window !== "undefined" ? window.innerHeight : 800;
-      const minRowHeight = viewportH < 640 ? Math.max(18, baseMin - 4) : viewportH < 720 ? Math.max(20, baseMin - 2) : baseMin;
-      const next = Math.max(minRowHeight, available / totalHours);
-      setRowHeight(next);
+      const minRowHeight =
+        viewportH < 640 ? Math.max(14, baseMin - 6) : viewportH < 720 ? Math.max(16, baseMin - 4) : baseMin;
+      const fit = available / totalHours;
+      const base = Math.max(minRowHeight, fit);
+      const scaled = Math.max(12, Math.min(84, base * rowScaleRef.current));
+      setRowHeight(scaled);
     };
 
     update();
@@ -196,6 +224,118 @@ export default function ScheduleGrid({
       observer?.disconnect();
     };
   }, [showHeaders, totalHours]);
+
+  useEffect(() => {
+    // Apply pinch scale immediately (ResizeObserver fires later, but UX should feel direct).
+    if (!scrollRef.current) return;
+    const scrollHeight = scrollRef.current.clientHeight;
+    const available = scrollHeight;
+    if (available <= 0) return;
+    const baseMin = compact ? 20 : 24;
+    const viewportH = typeof window !== "undefined" ? window.innerHeight : 800;
+    const minRowHeight =
+      viewportH < 640 ? Math.max(14, baseMin - 6) : viewportH < 720 ? Math.max(16, baseMin - 4) : baseMin;
+    const fit = available / totalHours;
+    const base = Math.max(minRowHeight, fit);
+    const scaled = Math.max(12, Math.min(84, base * rowScale));
+    setRowHeight(scaled);
+  }, [compact, rowScale, totalHours]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (!onNavigatePrev && !onNavigateNext) return;
+
+    const state = {
+      mode: "none" as "none" | "swipe" | "pinch",
+      startX: 0,
+      startY: 0,
+      lastX: 0,
+      lastY: 0,
+      startTime: 0,
+      startDist: 0,
+      startScale: 1,
+      navigated: false
+    };
+
+    const dist = (t1: Touch, t2: Touch) => {
+      const dx = t2.clientX - t1.clientX;
+      const dy = t2.clientY - t1.clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const onStart = (event: TouchEvent) => {
+      if (event.touches.length === 2) {
+        state.mode = "pinch";
+        state.startDist = dist(event.touches[0], event.touches[1]);
+        state.startScale = rowScaleRef.current;
+        state.navigated = false;
+        return;
+      }
+      if (event.touches.length !== 1) return;
+      state.mode = "swipe";
+      state.startX = event.touches[0].clientX;
+      state.startY = event.touches[0].clientY;
+      state.lastX = state.startX;
+      state.lastY = state.startY;
+      state.startTime = Date.now();
+      state.navigated = false;
+    };
+
+    const onMove = (event: TouchEvent) => {
+      if (event.touches.length === 2) {
+        if (state.mode !== "pinch") {
+          state.mode = "pinch";
+          state.startDist = dist(event.touches[0], event.touches[1]);
+          state.startScale = rowScaleRef.current;
+        }
+        const d0 = state.startDist || 0;
+        const d1 = dist(event.touches[0], event.touches[1]);
+        if (d0 > 0 && d1 > 0) {
+          const next = Math.max(0.6, Math.min(1.6, state.startScale * (d1 / d0)));
+          setRowScale(next);
+          // Prevent browser pinch-zoom; keep the gesture scoped to the grid only.
+          event.preventDefault();
+        }
+        return;
+      }
+      if (event.touches.length !== 1) return;
+      if (state.mode !== "swipe") return;
+      state.lastX = event.touches[0].clientX;
+      state.lastY = event.touches[0].clientY;
+    };
+
+    const onEnd = () => {
+      if (state.mode !== "swipe" || state.navigated) {
+        state.mode = "none";
+        return;
+      }
+      const dx = state.lastX - state.startX;
+      const dy = state.lastY - state.startY;
+      const dt = Date.now() - state.startTime;
+      state.mode = "none";
+
+      if (dt > 650) return;
+      if (Math.abs(dx) < 60) return;
+      if (Math.abs(dx) < Math.abs(dy) * 1.4) return;
+
+      // Swipe left => next, swipe right => prev (works well in RTL too).
+      if (dx < 0) onNavigateNext?.();
+      else onNavigatePrev?.();
+      state.navigated = true;
+    };
+
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd, { passive: true });
+    el.addEventListener("touchcancel", onEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [onNavigateNext, onNavigatePrev]);
 
   const compactGridTemplate = useMemo(
     () =>
@@ -228,8 +368,22 @@ export default function ScheduleGrid({
       .filter((entry) => entry.roomId === roomId)
       .map((entry) => ({
         id: entry.id,
-        type: entry.kind === "special" ? "special" : entry.kind === "closed" ? "closed" : "reserved",
-        title: entry.kind === "special" ? "אירוע" : entry.kind === "closed" ? "סגור" : "שמור",
+        type:
+          entry.kind === "special"
+            ? "special"
+            : entry.kind === "exam"
+              ? "exam"
+              : entry.kind === "closed"
+                ? "closed"
+                : "reserved",
+        title:
+          entry.kind === "special"
+            ? "אירוע"
+            : entry.kind === "exam"
+              ? "מבחן"
+              : entry.kind === "closed"
+                ? "סגירה"
+                : "שמור",
         meta: entry.reservedBy || "",
         startMinutes: entry.time,
         durationMinutes: entry.durationMinutes,
@@ -382,7 +536,7 @@ export default function ScheduleGrid({
           // (Font sizes are fixed, so a fixed px threshold is more stable than a duration heuristic.)
           const canShowSecondLine = height >= 48;
           const showInlineMeta = showDetails && hasMeta && !canShowSecondLine;
-          const showCompactMeta = showCompactDetails && (block.type === "lesson" || block.type === "reserved") && hasMeta;
+          const showCompactMeta = showCompactDetails && hasMeta;
           return (
             <div
               key={block.id}
@@ -418,6 +572,10 @@ export default function ScheduleGrid({
                 }
                 if (block.type === "special") {
                   onSpecialDetails?.(block.reservationId, dateKey);
+                  return;
+                }
+                if (block.type === "exam") {
+                  onExamDetails?.(block.reservationId, dateKey);
                   return;
                 }
                 if (block.type === "closed") {

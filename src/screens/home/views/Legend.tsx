@@ -14,6 +14,9 @@ export default function Legend() {
         <span className="dot special" /> אירוע
       </div>
       <div>
+        <span className="dot exam" /> מבחן
+      </div>
+      <div>
         <span className="dot closed" /> סגור
       </div>
     </section>

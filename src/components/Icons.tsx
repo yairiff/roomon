@@ -15,6 +15,7 @@ import SchoolRoundedIcon from "@mui/icons-material/SchoolRounded";
 import EventAvailableRoundedIcon from "@mui/icons-material/EventAvailableRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import BlockRoundedIcon from "@mui/icons-material/BlockRounded";
+import QuizRoundedIcon from "@mui/icons-material/QuizRounded";
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
@@ -96,6 +97,10 @@ export function ReservationIcon() {
 
 export function SpecialIcon() {
   return <AutoAwesomeRoundedIcon fontSize="large" />;
+}
+
+export function ExamTypeIcon() {
+  return <QuizRoundedIcon fontSize="large" />;
 }
 
 export function ClosedIcon() {

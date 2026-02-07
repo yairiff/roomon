@@ -88,7 +88,7 @@ export default function HomeScreen({
   const [pendingRelease, setPendingRelease] = useState<{ dateKey: string; reservationId: string } | null>(null);
   const [reservationDetails, setReservationDetails] = useState<{ reservation: Reservation; dateKey: string } | null>(null);
   const [blockDetails, setBlockDetails] = useState<{
-    kind: "lesson" | "special" | "closed";
+    kind: "lesson" | "special" | "exam" | "closed";
     dateKey: string;
     lessonId?: string;
     roomId: string;
@@ -385,6 +385,7 @@ export default function HomeScreen({
     adminDraft,
     setAdminDraft,
     adminError,
+    collisionConfirm,
     handleAdminSlotClick,
     handleAdminLessonClick,
     handleAdminReservationClick,
@@ -437,6 +438,20 @@ export default function HomeScreen({
       startMinutes: reservation.time,
       durationMinutes: reservation.durationMinutes,
       title: reservation.reservedBy || "אירוע",
+      meta: ""
+    });
+  };
+
+  const handleExamDetails = (reservationId: string, dateKey: string) => {
+    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    if (!reservation) return;
+    setBlockDetails({
+      kind: "exam",
+      dateKey,
+      roomId: reservation.roomId,
+      startMinutes: reservation.time,
+      durationMinutes: reservation.durationMinutes,
+      title: reservation.reservedBy || "מבחן",
       meta: ""
     });
   };
@@ -725,11 +740,14 @@ export default function HomeScreen({
       onEditReservation={handleEditReservation}
       onLessonDetails={handleLessonDetails}
       onSpecialDetails={handleSpecialDetails}
+      onExamDetails={handleExamDetails}
       onClosedDetails={handleClosedDetails}
       onAdminSlotClick={handleAdminSlotClick}
       onAdminLessonClick={handleAdminLessonClick}
       onAdminReservationClick={handleAdminReservationClick}
       onReservationClick={handleReservationDetails}
+      onNavigatePrev={handlePrev}
+      onNavigateNext={handleNext}
     />
   );
 
@@ -1055,6 +1073,7 @@ export default function HomeScreen({
         users={users}
         canSave={effectiveAdminMode}
         error={adminError}
+        collisionPending={Boolean(collisionConfirm)}
         onClose={() => setAdminDraft(null)}
         setDraft={setAdminDraft}
         onSwitchType={switchAdminType}
