@@ -73,14 +73,18 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
     const pinsRef = collection(firestore, "users", normalizedEmail, "mySchedulePins");
 
     let cancelled = false;
-    let seeded = false;
+    let remoteAuthoritative = false;
+    let seedAttempted = false;
+    const localSeedPins = loadMySchedulePins(normalizedEmail);
 
     const seedIfNeeded = async (remotePins: MySchedulePin[]) => {
-      if (seeded) return;
+      if (remoteAuthoritative) return;
       if (remotePins.length) {
-        seeded = true;
+        remoteAuthoritative = true;
         return;
       }
+      if (seedAttempted) return;
+      seedAttempted = true;
 
       // Prefer legacy doc pins (for users signing in on a fresh device).
       let legacyPins: MySchedulePin[] = [];
@@ -97,10 +101,9 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
         // ignore
       }
 
-      const localPins = loadMySchedulePins(normalizedEmail);
-      const seedPins = legacyPins.length ? legacyPins : localPins;
+      const seedPins = legacyPins.length ? legacyPins : localSeedPins;
       if (!seedPins.length) {
-        seeded = true;
+        remoteAuthoritative = true;
         return;
       }
 
@@ -113,10 +116,9 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
         });
         batch.set(userRef, { email: normalizedEmail, myPinsUpdatedAt: serverTimestamp() }, { merge: true });
         await batch.commit();
+        remoteAuthoritative = true;
       } catch {
         // If seeding fails (rules), keep local pins only.
-      } finally {
-        seeded = true;
       }
     };
 
@@ -131,9 +133,22 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
         });
         next.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         if (cancelled) return;
-        setPins(next);
-        saveMySchedulePins(normalizedEmail, next);
-        void seedIfNeeded(next);
+        if (next.length) {
+          remoteAuthoritative = true;
+          setPins(next);
+          saveMySchedulePins(normalizedEmail, next);
+          return;
+        }
+
+        // Avoid clobbering local pins on first empty snapshot (remote might be empty and needs seeding).
+        if (!remoteAuthoritative && localSeedPins.length) {
+          void seedIfNeeded([]);
+          return;
+        }
+
+        setPins([]);
+        saveMySchedulePins(normalizedEmail, []);
+        void seedIfNeeded([]);
       },
       () => {
         // Listener failed (permissions/offline) => stay with local pins.
@@ -233,4 +248,3 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
 
   return { pins, setPins, togglePin, isPinned };
 }
-

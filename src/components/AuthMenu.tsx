@@ -32,6 +32,7 @@ export default function AuthMenu({
   if (!open) return null;
 
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
   const isIOS = /iPad|iPhone|iPod/i.test(ua);
@@ -40,6 +41,7 @@ export default function AuthMenu({
   useEffect(() => {
     if (!open) return;
     setInstallHelpOpen(false);
+    setZoomOpen(false);
   }, [open]);
 
   const installHintTitle = useMemo(() => {
@@ -76,14 +78,44 @@ export default function AuthMenu({
     setInstallHelpOpen((prev) => !prev);
   };
 
+  const pictureUrl = (user?.picture || "").trim();
+  const initials = (() => {
+    const source = (user?.name || "").trim() || (user?.email || "").trim();
+    if (!source) return "";
+    const parts = source.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return source.slice(0, 2).toUpperCase();
+  })();
+
+  const handleBackdropClick = () => {
+    if (zoomOpen) {
+      setZoomOpen(false);
+      return;
+    }
+    onClose();
+  };
+
   return (
-    <div className="auth-overlay" onClick={onClose}>
+    <div className="auth-overlay" onClick={handleBackdropClick}>
       <div className="auth-menu" onClick={(event) => event.stopPropagation()}>
         {user ? (
           <>
             <div className="auth-user">
-              <p>{user.name}</p>
-              <span>{user.email}</span>
+              <button
+                type="button"
+                className={`auth-user-avatar${pictureUrl ? " clickable" : ""}`}
+                aria-label={pictureUrl ? "הצג תמונת פרופיל" : undefined}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!pictureUrl) return;
+                  setZoomOpen(true);
+                }}
+                disabled={!pictureUrl}
+              >
+                {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
+              </button>
+              <p className="auth-user-name">{user.name}</p>
+              <span className="auth-user-email">{user.email}</span>
             </div>
             {user.role === "admin" ? (
               <div className="auth-admin-row">
@@ -228,6 +260,19 @@ export default function AuthMenu({
             ) : null}
           </>
         )}
+      </div>
+
+      <div
+        className={`avatar-zoom${zoomOpen ? " open" : ""}`}
+        aria-hidden={!zoomOpen}
+        onClick={(event) => {
+          event.stopPropagation();
+          setZoomOpen(false);
+        }}
+      >
+        <div className="avatar-zoom-inner" onClick={(event) => event.stopPropagation()}>
+          {pictureUrl ? <img src={pictureUrl} alt="" /> : null}
+        </div>
       </div>
     </div>
   );

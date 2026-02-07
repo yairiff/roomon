@@ -3,6 +3,7 @@ import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/fire
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { randomUUID } from "crypto";
 import type { CallableRequest } from "firebase-functions/v2/https";
+import { OAuth2Client } from "google-auth-library";
 
 admin.initializeApp();
 
@@ -19,6 +20,8 @@ const appUrl = process.env.APP_URL || "";
 const fromEmail = process.env.SENDGRID_FROM_EMAIL || "";
 const fromName = process.env.SENDGRID_FROM_NAME || "רימון - שריון חדרים";
 const sendgridApiKey = process.env.SENDGRID_API_KEY || "";
+const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
+const googleOauthClient = new OAuth2Client();
 
 const sendEmail = async (to: string[], subject: string, text: string) => {
   if (!sendgridApiKey || !fromEmail || !to.length) return;
@@ -129,76 +132,126 @@ const normalizeGooglePhotoUrl = (url: string, size: number) => {
   return `${base}=s${size}-c`;
 };
 
-export const syncProfilePhoto = onCall(async (request: CallableRequest<{ sourceUrl?: string }>) => {
-  const emailRaw = request.auth?.token?.email;
-  const uid = request.auth?.uid;
-  if (!emailRaw || !uid) {
-    throw new HttpsError("unauthenticated", "Missing auth context.");
+const verifyGoogleIdToken = async (idToken: string) => {
+  if (!idToken) return null;
+  try {
+    const ticket = await googleOauthClient.verifyIdToken(
+      googleClientId ? { idToken, audience: googleClientId } : { idToken }
+    );
+    const payload = ticket.getPayload();
+    const email = String(payload?.email || "").toLowerCase();
+    const sub = String(payload?.sub || "");
+    const verified = payload?.email_verified !== false;
+    if (!email || !sub || !verified) return null;
+    return { email, sub };
+  } catch {
+    return null;
   }
+};
 
-  const email = String(emailRaw).toLowerCase();
-  const sourceUrl = String(request.data?.sourceUrl || "");
-  if (!sourceUrl || !isGooglePhotoUrl(sourceUrl)) {
-    throw new HttpsError("invalid-argument", "Invalid sourceUrl.");
-  }
+export const syncProfilePhoto = onCall(
+  async (request: CallableRequest<{ sourceUrl?: string; targetSize?: number; idToken?: string }>) => {
+    // We don't require Firebase Auth (this app uses Google Identity Services).
+    // Instead, we optionally verify the Google ID token when provided.
+    const authedEmailRaw = request.auth?.token?.email;
+    const authedUid = request.auth?.uid;
+    const googleIdToken = String(request.data?.idToken || "");
 
-  const sizedUrl = normalizeGooglePhotoUrl(sourceUrl, 128);
-  const response = await fetch(sizedUrl, {
-    headers: {
-      // A stable UA helps some CDNs behave consistently.
-      "User-Agent": "rimon-room-booking/1.0"
-    }
-  });
-  if (!response.ok) {
-    throw new HttpsError("unavailable", `Failed to fetch profile photo (${response.status}).`);
-  }
+    let email = authedEmailRaw ? String(authedEmailRaw).toLowerCase() : "";
+    let uid = authedUid ? String(authedUid) : "";
 
-  const contentType = response.headers.get("content-type") || "image/jpeg";
-  if (!contentType.startsWith("image/")) {
-    throw new HttpsError("invalid-argument", "Profile photo content-type is not an image.");
-  }
-
-  const bytes = Buffer.from(await response.arrayBuffer());
-  const MAX_BYTES = 300 * 1024;
-  if (bytes.byteLength <= 0 || bytes.byteLength > MAX_BYTES) {
-    throw new HttpsError("invalid-argument", "Profile photo is too large.");
-  }
-
-  const ext =
-    contentType.includes("png")
-      ? "png"
-      : contentType.includes("webp")
-        ? "webp"
-        : contentType.includes("gif")
-          ? "gif"
-          : "jpg";
-
-  const path = `profilePhotos/${uid}.${ext}`;
-  const token = randomUUID();
-  const bucket = admin.storage().bucket();
-  await bucket.file(path).save(bytes, {
-    resumable: false,
-    metadata: {
-      contentType,
-      cacheControl: "public, max-age=604800, immutable",
-      metadata: {
-        firebaseStorageDownloadTokens: token
+    if (!email || !uid) {
+      const verified = await verifyGoogleIdToken(googleIdToken);
+      if (!verified) {
+        throw new HttpsError("unauthenticated", "Missing auth context.");
       }
+      email = verified.email;
+      uid = verified.sub;
     }
-  });
 
-  const bucketName = bucket.name;
-  const objectName = encodeURIComponent(path); // keep "/" as %2F
-  const pictureUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${objectName}?alt=media&token=${token}`;
+    const sourceUrl = String(request.data?.sourceUrl || "");
+    if (!sourceUrl || !isGooglePhotoUrl(sourceUrl)) {
+      throw new HttpsError("invalid-argument", "Invalid sourceUrl.");
+    }
 
-  await admin.firestore().doc(`users/${email}`).set(
-    {
-      email,
-      pictureUrl,
-      pictureUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
-    },
-    { merge: true }
-  );
+    const requestedSize = Number(request.data?.targetSize);
+    const targetSize = Number.isFinite(requestedSize) ? Math.round(requestedSize) : 384;
+    const clampedSize = Math.min(512, Math.max(96, targetSize));
 
-  return { pictureUrl };
-});
+    // If we already have a cached Storage URL of sufficient size, return it without re-fetching.
+    try {
+      const snap = await admin.firestore().doc(`users/${email}`).get();
+      if (snap.exists) {
+        const data = snap.data() as any;
+        const existingUrl = typeof data?.pictureUrl === "string" ? String(data.pictureUrl) : "";
+        const existingSize = typeof data?.pictureSize === "number" ? Number(data.pictureSize) : 0;
+        if (existingUrl.includes("firebasestorage.googleapis.com/") && existingSize >= clampedSize) {
+          return { pictureUrl: existingUrl };
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const sizedUrl = normalizeGooglePhotoUrl(sourceUrl, clampedSize);
+    const response = await fetch(sizedUrl, {
+      headers: {
+        // A stable UA helps some CDNs behave consistently.
+        "User-Agent": "rimon-room-booking/1.0"
+      }
+    });
+    if (!response.ok) {
+      throw new HttpsError("unavailable", `Failed to fetch profile photo (${response.status}).`);
+    }
+
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    if (!contentType.startsWith("image/")) {
+      throw new HttpsError("invalid-argument", "Profile photo content-type is not an image.");
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const MAX_BYTES = 550 * 1024;
+    if (bytes.byteLength <= 0 || bytes.byteLength > MAX_BYTES) {
+      throw new HttpsError("invalid-argument", "Profile photo is too large.");
+    }
+
+    const ext =
+      contentType.includes("png")
+        ? "png"
+        : contentType.includes("webp")
+          ? "webp"
+          : contentType.includes("gif")
+            ? "gif"
+            : "jpg";
+
+    const path = `profilePhotos/${uid}/avatar.${ext}`;
+    const token = randomUUID();
+    const bucket = admin.storage().bucket();
+    await bucket.file(path).save(bytes, {
+      resumable: false,
+      metadata: {
+        contentType,
+        cacheControl: "public, max-age=604800",
+        metadata: {
+          firebaseStorageDownloadTokens: token
+        }
+      }
+    });
+
+    const bucketName = bucket.name;
+    const objectName = encodeURIComponent(path); // keep "/" as %2F
+    const pictureUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${objectName}?alt=media&token=${token}`;
+
+    await admin.firestore().doc(`users/${email}`).set(
+      {
+        email,
+        pictureUrl,
+        pictureSize: clampedSize,
+        pictureUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+
+    return { pictureUrl };
+  }
+);

@@ -866,10 +866,16 @@ export default function HomeScreen({
     const directoryUrl = (detailsContact?.pictureUrl || "").trim();
     const reservedUrl = (detailsReservation?.reservedPicture || "").trim();
     if (directoryUrl && isFirebaseStorageDownloadUrl(directoryUrl)) return directoryUrl;
-    if (reservedUrl && isGoogleUserContentUrl(reservedUrl) && directoryUrl) return directoryUrl;
+    if (reservedUrl && isFirebaseStorageDownloadUrl(reservedUrl)) return reservedUrl;
+
+    // Avoid hotlinking Google profile images for other users; it frequently 429s under even light usage.
+    // We'll show initials until the user's Storage-cached photo is available.
+    if (directoryUrl && isGoogleUserContentUrl(directoryUrl)) return "";
+    if (reservedUrl && isGoogleUserContentUrl(reservedUrl)) return "";
+
     return (
-      reservedUrl ||
       directoryUrl ||
+      reservedUrl ||
       (currentUser && detailsEmail && currentUser.email.toLowerCase() === detailsEmail.toLowerCase()
         ? (currentUser.picture || "")
         : "")

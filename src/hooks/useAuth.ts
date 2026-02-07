@@ -12,6 +12,8 @@ export function useAuth({ clientId }: { clientId?: string }) {
   const [user, setUser] = useState<User | null>(() => loadUser());
   const [authError, setAuthError] = useState("");
   const pictureRef = useRef<string>("");
+  const googlePictureRef = useRef<string>("");
+  const googleIdTokenRef = useRef<string>("");
   const [googleButtonEl, setGoogleButtonEl] = useState<HTMLDivElement | null>(null);
   const googleButtonRef = useCallback((el: HTMLDivElement | null) => {
     setGoogleButtonEl(el);
@@ -53,6 +55,8 @@ export function useAuth({ clientId }: { clientId?: string }) {
               : typeof raw.photoUrl === "string"
                 ? raw.photoUrl
                 : "";
+      const pictureSize =
+        typeof (raw as any).pictureSize === "number" ? (raw as any).pictureSize : null;
       const phone =
         typeof raw.phone === "string"
           ? raw.phone
@@ -66,18 +70,21 @@ export function useAuth({ clientId }: { clientId?: string }) {
                   ? raw.tel
                   : "";
 
-      // If we only have a Google hotlink, copy a small version into Storage (once in a while).
+      // If we only have a Google hotlink, copy a cached version into Storage (once in a while).
       // This dramatically reduces 429s from Google profile image rate limits.
       const storedUrl = pictureUrl || "";
-      const sourceUrl = pictureRef.current;
+      const sourceUrl = (googlePictureRef.current || pictureRef.current).trim();
+      const idToken = googleIdTokenRef.current;
+      const targetSize = 384;
       if (
         !cancelled &&
         functions &&
-        shouldAttemptPhotoSync({ email, sourceUrl, storedUrl })
+        idToken &&
+        shouldAttemptPhotoSync({ email, sourceUrl, storedUrl, storedSize: pictureSize, targetSize })
       ) {
-        markPhotoSyncAttempt(email);
+        markPhotoSyncAttempt(email, targetSize);
         const call = httpsCallable(functions, "syncProfilePhoto");
-        void call({ sourceUrl }).catch(() => {
+        void call({ sourceUrl, targetSize, idToken }).catch(() => {
           // Best-effort: keep working even if photo sync fails.
         });
       }
@@ -128,9 +135,12 @@ export function useAuth({ clientId }: { clientId?: string }) {
               setAuthError("לא ניתן לקרוא את כתובת המייל מפרופיל גוגל.");
               return;
             }
+            googleIdTokenRef.current = response.credential || "";
+            googlePictureRef.current = typeof profile.picture === "string" ? profile.picture : "";
             let directoryUser: DirectoryUser | null = null;
             let directoryPhone = "";
             let directoryPictureUrl = "";
+            let directoryPictureSize: number | null = null;
             let docExists = false;
             if (db) {
               try {
@@ -149,6 +159,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
                           : typeof raw.photoUrl === "string"
                             ? raw.photoUrl
                             : "";
+                  directoryPictureSize = typeof (raw as any).pictureSize === "number" ? (raw as any).pictureSize : null;
                   directoryPhone =
                     typeof raw.phone === "string"
                       ? raw.phone
@@ -178,6 +189,28 @@ export function useAuth({ clientId }: { clientId?: string }) {
               phone: directoryPhone || directoryUser?.phone,
               cohortStartYear: directoryUser?.cohortStartYear
             });
+
+            // Best-effort: sync the profile photo immediately while the Google ID token is fresh.
+            // This reduces 429s from directly hotlinking Google profile images.
+            const targetSize = 384;
+            const sourceUrl = String(profile.picture || "").trim();
+            const storedUrl = String(directoryPictureUrl || "").trim();
+            const normalizedEmail = email.toLowerCase();
+            if (
+              functions &&
+              googleIdTokenRef.current &&
+              shouldAttemptPhotoSync({
+                email: normalizedEmail,
+                sourceUrl,
+                storedUrl,
+                storedSize: directoryPictureSize,
+                targetSize
+              })
+            ) {
+              markPhotoSyncAttempt(normalizedEmail, targetSize);
+              const call = httpsCallable(functions, "syncProfilePhoto");
+              void call({ sourceUrl, targetSize, idToken: googleIdTokenRef.current }).catch(() => {});
+            }
           }
         });
         window.google.accounts.id.renderButton(googleButtonEl, {
@@ -201,6 +234,7 @@ export function useAuth({ clientId }: { clientId?: string }) {
     if (window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
     }
+    googleIdTokenRef.current = "";
     clearUser();
     setUser(null);
   };
