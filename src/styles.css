@@ -1406,10 +1406,13 @@ body,
 }
 
 .auth-user {
-  display: grid;
-  gap: 8px;
-  justify-items: center;
-  text-align: center;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  text-align: right;
+  direction: rtl;
 }
 
 .auth-user-avatar {
@@ -1461,6 +1464,20 @@ body,
 .auth-user-email {
   font-size: 0.82rem;
   color: var(--muted);
+}
+
+.auth-user-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.auth-user-name,
+.auth-user-email {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .booking-shell {

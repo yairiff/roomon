@@ -114,8 +114,10 @@ export default function AuthMenu({
               >
                 {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
               </button>
-              <p className="auth-user-name">{user.name}</p>
-              <span className="auth-user-email">{user.email}</span>
+              <div className="auth-user-text">
+                <p className="auth-user-name">{user.name}</p>
+                <span className="auth-user-email">{user.email}</span>
+              </div>
             </div>
             {user.role === "admin" ? (
               <div className="auth-admin-row">
