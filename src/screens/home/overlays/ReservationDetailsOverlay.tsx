@@ -1,5 +1,6 @@
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import { useState } from "react";
 import { PinAddIcon, PinOnIcon } from "../../../components/Icons";
 
 export type ReservationDetailsOverlayProps = {
@@ -33,6 +34,8 @@ export default function ReservationDetailsOverlay({
 }: ReservationDetailsOverlayProps) {
   if (!open) return null;
 
+  const [zoomOpen, setZoomOpen] = useState(false);
+
   const normalizedPhone = phone ? phone.replace(/[^\d+]/g, "") : "";
   const telHref = normalizedPhone ? `tel:${normalizedPhone}` : "";
   const waPhone = (() => {
@@ -53,13 +56,31 @@ export default function ReservationDetailsOverlay({
     return source.slice(0, 2).toUpperCase();
   })();
 
+  const handleBackdropClick = () => {
+    if (zoomOpen) {
+      setZoomOpen(false);
+      return;
+    }
+    onClose();
+  };
+
   return (
-    <div className="reserve-overlay" onClick={onClose}>
+    <div className="reserve-overlay" onClick={handleBackdropClick}>
       <div className="reserve-menu" onClick={(event) => event.stopPropagation()}>
         <div className="reserve-header">
-          <div className="reserve-avatar" aria-hidden="true">
-            {pictureUrl ? <img src={pictureUrl} alt="" /> : <span>{initials}</span>}
-          </div>
+          <button
+            type="button"
+            className={`reserve-avatar${pictureUrl ? " clickable" : ""}`}
+            aria-label={pictureUrl ? "הצג תמונת פרופיל" : undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!pictureUrl) return;
+              setZoomOpen(true);
+            }}
+            disabled={!pictureUrl}
+          >
+            {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
+          </button>
           <div className="reserve-header-text">
             {name ? <p className="reserve-title">{name}</p> : <p className="reserve-title">{title}</p>}
             <p className="reserve-room">{room}</p>
@@ -111,6 +132,19 @@ export default function ReservationDetailsOverlay({
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      <div
+        className={`avatar-zoom${zoomOpen ? " open" : ""}`}
+        aria-hidden={!zoomOpen}
+        onClick={(event) => {
+          event.stopPropagation();
+          setZoomOpen(false);
+        }}
+      >
+        <div className="avatar-zoom-inner" onClick={(event) => event.stopPropagation()}>
+          {pictureUrl ? <img src={pictureUrl} alt="" /> : null}
         </div>
       </div>
     </div>
