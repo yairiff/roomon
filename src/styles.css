@@ -56,10 +56,14 @@
   --status-closed-dot: #8b8b8b;
   --status-closed-bg: rgba(158, 158, 158, 0.14);
   --status-closed-border: rgba(158, 158, 158, 0.38);
-  --live-btn-bg: #da9308;
-  --live-btn-bg-active: #c88505;
+  --solid-btn-bg: var(--accent);
+  --solid-btn-bg-active: var(--accent-strong);
+  --live-btn-bg: #f9ac00;
+  --live-btn-bg-active: #f7b42a;
   --live-btn-shadow: 0 10px 22px rgba(157, 100, 0, 0.32);
   --schedule-grid-line: rgba(227, 216, 206, 0.44);
+  --schedule-col-bg: #ffffff;
+  --schedule-col-bg-even: #f2f6f9;
 }
 
 :root[data-theme="dark"] {
@@ -118,10 +122,14 @@
   --status-closed-dot: #9aa6af;
   --status-closed-bg: rgba(115, 128, 138, 0.24);
   --status-closed-border: rgba(115, 128, 138, 0.5);
-  --live-btn-bg: #c2821a;
-  --live-btn-bg-active: #ad7415;
+  --solid-btn-bg: #d3962c;
+  --solid-btn-bg-active: #c1841f;
+  --live-btn-bg: #f4b53f;
+  --live-btn-bg-active: #f7c463;
   --live-btn-shadow: 0 10px 22px rgba(0, 0, 0, 0.46);
   --schedule-grid-line: rgba(154, 172, 186, 0.2);
+  --schedule-col-bg: #1f2a31;
+  --schedule-col-bg-even: #172129;
 }
 
 @keyframes overlayFadeIn {
@@ -1808,9 +1816,13 @@ button {
 }
 
 .primary {
-  background: var(--accent);
+  background: var(--solid-btn-bg);
   color: var(--text-on-accent);
   box-shadow: 0 10px 24px rgba(249, 172, 0, 0.3);
+}
+
+.primary:active {
+  background: var(--solid-btn-bg-active);
 }
 
 .secondary {
@@ -2149,12 +2161,12 @@ select,
   scroll-snap-align: start;
   scroll-snap-stop: always;
   min-width: 0;
-  --col-bg: var(--surface-solid);
+  --col-bg: var(--schedule-col-bg);
   box-shadow: inset 1px 0 0 var(--schedule-grid-line);
 }
 
 .room-column:nth-child(even) {
-  --col-bg: color-mix(in srgb, var(--surface-solid) 82%, var(--ink));
+  --col-bg: var(--schedule-col-bg-even);
 }
 
 .schedule.compact .room-column {
@@ -3086,7 +3098,7 @@ select,
 }
 
 .chip.active {
-  background: var(--accent);
+  background: var(--solid-btn-bg);
   border-color: var(--accent);
   color: var(--text-on-accent);
 }
@@ -5363,7 +5375,7 @@ select,
 }
 
 .admin-type-toggle button.active {
-  background: var(--accent);
+  background: var(--solid-btn-bg);
   color: var(--text-on-accent);
 }
 
