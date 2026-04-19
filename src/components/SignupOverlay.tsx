@@ -3,6 +3,7 @@ import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import type { User } from "../types/auth";
 import { cohortStartYearFromGrade, gradeLabelFromCohort, gradeOptions, gradeValueFromCohort } from "../lib/academics";
+import { isPersistentProfileUrl } from "../lib/profilePhoto";
 
 export type SignupOverlayProps = {
   open: boolean;
@@ -13,14 +14,17 @@ export type SignupOverlayProps = {
 export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayProps) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [grade, setGrade] = useState<"A" | "B" | "C">("A");
+  const [grade, setGrade] = useState<"A" | "B" | "C" | "STAFF">("A");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
-  const cohortStartYear = useMemo(() => cohortStartYearFromGrade(grade), [grade]);
+  const cohortStartYear = useMemo(
+    () => (grade === "STAFF" ? undefined : cohortStartYearFromGrade(grade)),
+    [grade]
+  );
   const gradeLabel = useMemo(
-    () => gradeLabelFromCohort(user?.cohortStartYear ?? cohortStartYear),
-    [user?.cohortStartYear, cohortStartYear]
+    () => (grade === "STAFF" ? "צוות" : gradeLabelFromCohort(user?.cohortStartYear ?? cohortStartYear)),
+    [user?.cohortStartYear, cohortStartYear, grade]
   );
 
   useEffect(() => {
@@ -29,6 +33,8 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
     setPhone(user.phone || "");
     if (user.cohortStartYear) {
       setGrade(gradeValueFromCohort(user.cohortStartYear));
+    } else {
+      setGrade("STAFF");
     }
   }, [user]);
 
@@ -46,14 +52,15 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
       return;
     }
     const email = user.email.toLowerCase();
+    const pictureUrl = isPersistentProfileUrl(user.picture || "") ? (user.picture || "").trim() : "";
     await setDoc(
       doc(db, "users", email),
       {
         email,
         name: name.trim(),
         phone: phone.trim(),
-        pictureUrl: user.picture || "",
-        cohortStartYear,
+        pictureUrl,
+        cohortStartYear: cohortStartYear ?? null,
         role: "pending",
         updatedAt: serverTimestamp(),
         createdAt: serverTimestamp()
@@ -81,10 +88,11 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
           </label>
           <label>
             שנתון
-            <select value={grade} onChange={(event) => setGrade(event.target.value as "A" | "B" | "C")}>
+            <select value={grade} onChange={(event) => setGrade(event.target.value as "A" | "B" | "C" | "STAFF")}>
               {gradeOptions().map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
+              <option value="STAFF">צוות</option>
             </select>
           </label>
         </div>

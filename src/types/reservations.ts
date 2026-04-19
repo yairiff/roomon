@@ -10,6 +10,7 @@ export type Reservation = {
   reservedEmail: string;
   reservedPhone?: string;
   reservedPicture?: string;
+  privateDescription?: string;
   kind?: "special" | "exam" | "closed";
 };
 
@@ -21,4 +22,5 @@ export type ReserveRequest = {
   time: number;
   roomId: string;
   durationMinutes?: number;
+  privateDescription?: string;
 };

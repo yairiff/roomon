@@ -34,7 +34,13 @@ export default function TopBar({
   }, [user?.picture]);
 
   const showAvatarImage = Boolean(user?.picture) && !avatarError;
-  const fallbackInitial = user?.name?.trim().charAt(0) || "?";
+  const fallbackInitials = (() => {
+    const name = (user?.name || "").trim();
+    if (!name) return "?";
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return parts[0].slice(0, 2).toUpperCase();
+  })();
   return (
     <header className="top-bar">
       <div className="top-bar-head">
@@ -48,7 +54,7 @@ export default function TopBar({
               onError={() => setAvatarError(true)}
             />
           ) : user ? (
-            <span>{fallbackInitial}</span>
+            <span>{fallbackInitials}</span>
           ) : (
             <UserIcon />
           )}

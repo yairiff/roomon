@@ -48,6 +48,12 @@ export function useReservations(window: ReservationsWindow = null) {
               : typeof data.picture === "string"
                 ? data.picture
                 : "";
+          const privateDescription =
+            typeof data.privateDescription === "string"
+              ? data.privateDescription.trim()
+              : typeof data.description === "string"
+                ? data.description.trim()
+                : "";
           const reservation: Reservation = {
             id: docSnap.id,
             date: data.date,
@@ -58,6 +64,7 @@ export function useReservations(window: ReservationsWindow = null) {
             reservedEmail: data.reservedEmail ?? "",
             ...(reservedPhone ? { reservedPhone } : {}),
             ...(reservedPicture ? { reservedPicture } : {}),
+            ...(privateDescription ? { privateDescription } : {}),
             ...(kind ? { kind } : {})
           };
           if (!nextMap[reservation.date]) {

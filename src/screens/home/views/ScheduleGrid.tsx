@@ -23,8 +23,10 @@ export type ScheduleGridProps = {
   reservationMap: ReservationMap;
   currentUser: User | null;
   onReserve: (request: ReserveRequest) => void;
+  onSlotAction?: (request: ReserveRequest) => void;
   onRelease: (dateKey: string, reservationId: string) => void;
   interactive?: boolean;
+  showSlotActions?: boolean;
   onEditReservation?: (dateKey: string, reservationId: string) => void;
   onLessonDetails?: (lessonId: string, dateKey: string) => void;
   onSpecialDetails?: (reservationId: string, dateKey: string) => void;
@@ -136,8 +138,10 @@ export default function ScheduleGrid({
   reservationMap,
   currentUser,
   onReserve,
+  onSlotAction,
   onRelease,
   interactive = true,
+  showSlotActions,
   onEditReservation,
   onLessonDetails,
   onSpecialDetails,
@@ -188,6 +192,7 @@ export default function ScheduleGrid({
   const columnHeight = totalHours * rowHeight;
   const slotHeightFor = (slot: TimeSlot) => ((slot.endMinutes - slot.startMinutes) / 60) * rowHeight;
   const colGap = compact ? 2 : 4;
+  const slotActionsEnabled = showSlotActions ?? interactive;
   const gridStyle = useMemo(
     () => ({ ["--row-height" as string]: `${rowHeight}px` }),
     [rowHeight]
@@ -319,9 +324,9 @@ export default function ScheduleGrid({
       if (Math.abs(dx) < 60) return;
       if (Math.abs(dx) < Math.abs(dy) * 1.4) return;
 
-      // Swipe left => next, swipe right => prev (works well in RTL too).
-      if (dx < 0) onNavigateNext?.();
-      else onNavigatePrev?.();
+      // Match RTL header arrows: swipe left => previous, swipe right => next.
+      if (dx < 0) onNavigatePrev?.();
+      else onNavigateNext?.();
       state.navigated = true;
     };
 
@@ -433,7 +438,7 @@ export default function ScheduleGrid({
     return (
       <div className="schedule-column" style={{ height: columnHeight }}>
         {showNowLine ? <div className="now-line" style={{ top: nowTop }} aria-hidden="true" /> : null}
-        {interactive
+        {slotActionsEnabled
           ? Array.from({ length: totalHours }, (_, index) => baseStartMinutes + index * 60).flatMap((hourStart) => {
               const hourEnd = hourStart + 60;
               const hourBusy = isSlotBusy(hourStart, hourEnd);
@@ -458,6 +463,10 @@ export default function ScheduleGrid({
                       if (adminMode) {
                         if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
                         onAdminSlotClick?.({ date: dateKey, day: dayKey, time: slotStart, roomId });
+                        return;
+                      }
+                      if (onSlotAction) {
+                        onSlotAction({ date: dateKey, day: dayKey, time: slotStart, roomId });
                         return;
                       }
                       if (!currentUser?.allowed) {
@@ -489,6 +498,10 @@ export default function ScheduleGrid({
                       if (adminMode) {
                         if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
                         onAdminSlotClick?.({ date: dateKey, day: dayKey, time: hourStart, roomId });
+                        return;
+                      }
+                      if (onSlotAction) {
+                        onSlotAction({ date: dateKey, day: dayKey, time: hourStart, roomId });
                         return;
                       }
                       if (!currentUser?.allowed) {

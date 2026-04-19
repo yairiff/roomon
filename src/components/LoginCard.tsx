@@ -10,6 +10,8 @@ export type LoginCardProps = {
   googleButtonRef: RefCallback<HTMLDivElement>;
   clientId?: string;
   devLoginEnabled: boolean;
+  flat?: boolean;
+  showTitle?: boolean;
 };
 
 export default function LoginCard({
@@ -20,11 +22,13 @@ export default function LoginCard({
   setAuthError,
   googleButtonRef,
   clientId,
-  devLoginEnabled
+  devLoginEnabled,
+  flat = false,
+  showTitle = true
 }: LoginCardProps) {
   return (
-    <div className="auth-card" id="auth-card">
-      <h2>כניסת סטודנטים</h2>
+    <div className={`auth-card${flat ? " flat" : ""}`} id="auth-card">
+      {showTitle ? <h2>כניסה למערכת</h2> : null}
       {user ? (
         <div className="user-row">
           <div className="user-info">
@@ -62,7 +66,7 @@ function DevLogin({ onLogin, setAuthError }: DevLoginProps) {
     event.preventDefault();
     if (!email) return;
     setAuthError("");
-    onLogin({ name: name || "סטודנט", email, allowed: true, role: "student" });
+    onLogin({ name: name || "משתמש", email, allowed: true, role: "student" });
   };
 
   return (

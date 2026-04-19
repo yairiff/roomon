@@ -15,6 +15,9 @@ import { weekDays } from "./config";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
+const THEME_STORAGE_KEY = "rimon_theme_mode_v1";
+
+type ThemeMode = "light" | "dark";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -22,14 +25,24 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 export default function App() {
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") return "light";
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+    return prefersDark ? "dark" : "light";
+  });
+  const darkMode = theme === "dark";
+
   const {
     user,
     setUser,
     authError,
     setAuthError,
+    roleResolved,
     googleButtonRef,
     signOut
-  } = useAuth({ clientId: CLIENT_ID });
+  } = useAuth({ clientId: CLIENT_ID, darkMode });
   const [reservationsWindow, setReservationsWindow] = useState<ReservationsWindow>(() => {
     const todayKey = formatDateKey(new Date());
     const weekStart = getWeekStart(todayKey);
@@ -44,7 +57,7 @@ export default function App() {
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
   const [view, setView] = useState<ViewMode>("live");
   const isAdminRoute = window.location.pathname.startsWith("/admin");
-  const needsSignup = Boolean(user && user.role === "pending");
+  const [needsSignup, setNeedsSignup] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -61,6 +74,16 @@ export default function App() {
       setLoginPromptOpen(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !roleResolved || user.role !== "pending") {
+      setNeedsSignup(false);
+      return;
+    }
+    // Avoid brief signup flashes while auth role settles.
+    const timer = window.setTimeout(() => setNeedsSignup(true), 180);
+    return () => window.clearTimeout(timer);
+  }, [user, roleResolved, user?.role]);
 
   useEffect(() => {
     const mq = window.matchMedia?.("(display-mode: standalone)");
@@ -86,6 +109,12 @@ export default function App() {
       window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   const handleInstall = async () => {
     if (!installPrompt) return;
@@ -164,9 +193,14 @@ export default function App() {
         onClose={() => setAuthOpen(false)}
         onSignOut={handleSignOut}
         onLoginClick={handleLoginClick}
+        onProfileUpdated={(updates) =>
+          setUser((prev) => (prev ? { ...prev, ...updates } : prev))
+        }
         onOpenMySchedule={() => setRequestedView("mySchedule")}
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
         installAvailable={Boolean(installPrompt)}
         isStandalone={isStandalone}
         onInstall={() => { void handleInstall(); }}

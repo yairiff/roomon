@@ -34,6 +34,7 @@ export type HomeViewRouterProps = {
   onMyScheduleAgendaLoadMore: () => void;
   pins: MySchedulePin[];
   onOpenPinned: (pin: MySchedulePin) => void;
+  onMyScheduleAddSlot: (request: ReserveRequest) => void;
   onSelectedDateChange: (dateKey: string) => void;
 
   // Schedule view
@@ -87,6 +88,7 @@ export default function HomeViewRouter({
   onMyScheduleAgendaLoadMore,
   pins,
   onOpenPinned,
+  onMyScheduleAddSlot,
   weekDates,
   roomDates,
   timeSlots,
@@ -170,6 +172,7 @@ export default function HomeViewRouter({
         onEditReservation={onEditReservation}
         getScheduleLessonsForDate={getLessonsForDate}
         onOpenPinned={onOpenPinned}
+        onAddSlot={onMyScheduleAddSlot}
       />
     );
   }

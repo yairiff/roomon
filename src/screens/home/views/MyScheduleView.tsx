@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { WeekDate } from "../../../lib/date";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, parseDateKey } from "../../../lib/date";
-import type { ReservationMap, Reservation } from "../../../types/reservations";
+import type { ReservationMap, Reservation, ReserveRequest } from "../../../types/reservations";
 import type { User } from "../../../types/auth";
 import type { DayKey, Lesson, Room, TimeSlot } from "../../../types/schedule";
 import type { MySchedulePin } from "../../../types/mySchedule";
@@ -28,6 +28,7 @@ type MyScheduleViewProps = {
   pins: MySchedulePin[];
   onEditReservation: (dateKey: string, reservationId: string) => void;
   onOpenPinned: (pin: MySchedulePin) => void;
+  onAddSlot: (request: ReserveRequest) => void;
   getScheduleLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
   timeSlots: TimeSlot[];
   startHour: number;
@@ -35,6 +36,7 @@ type MyScheduleViewProps = {
 };
 
 const MY_ROOM_ID = "__my_schedule__";
+export const PERSONAL_PIN_ROOM_ID = "__my_schedule_personal__";
 
 type AgendaEntry =
   | {
@@ -79,6 +81,7 @@ export default function MyScheduleView({
   pins,
   onEditReservation,
   onOpenPinned,
+  onAddSlot,
   getScheduleLessonsForDate,
   timeSlots,
   startHour,
@@ -86,7 +89,10 @@ export default function MyScheduleView({
 }: MyScheduleViewProps) {
   const email = (currentUser?.email || "").trim().toLowerCase();
 
-  const roomName = (roomId: string) => rooms.find((r) => r.id === roomId)?.name || roomId;
+  const roomName = (roomId: string) => {
+    if (roomId === PERSONAL_PIN_ROOM_ID) return "אישי";
+    return rooms.find((r) => r.id === roomId)?.name || roomId;
+  };
   const whoLabel = (reservedEmail?: string, fallback?: string) => {
     const normalized = (reservedEmail || "").trim().toLowerCase();
     if (email && normalized && normalized === email) return "אני";
@@ -190,7 +196,7 @@ export default function MyScheduleView({
             ...entry,
             date: dateKey,
             roomId: MY_ROOM_ID,
-            reservedBy: `אני\n${roomLine}`
+            reservedBy: `אני${entry.privateDescription ? ` · ${entry.privateDescription}` : ""}\n${roomLine}`
           });
         });
       });
@@ -482,8 +488,10 @@ export default function MyScheduleView({
     reservationMap: syntheticReservations,
     currentUser,
     onReserve: () => {},
+    onSlotAction: onAddSlot,
     onRelease: () => {},
     interactive: false as const,
+    showSlotActions: true as const,
     startHour,
     endHour,
     timeSlots,

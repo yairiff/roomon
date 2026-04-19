@@ -14,10 +14,11 @@ export type ReserveConfirmOverlayProps = {
   startMinutes: number;
   windowStart: number;
   initialDuration: number;
+  initialPrivateDescription?: string;
   userRemainingMinutes: number;
   mode?: "create" | "edit";
   onRelease?: () => void;
-  onConfirm: (startMinutes: number, durationMinutes: number) => void;
+  onConfirm: (startMinutes: number, durationMinutes: number, privateDescription?: string) => void;
   onClose: () => void;
 };
 
@@ -31,6 +32,7 @@ export default function ReserveConfirmOverlay({
   startMinutes: initialStart,
   windowStart,
   initialDuration,
+  initialPrivateDescription = "",
   userRemainingMinutes,
   mode = "create",
   onRelease,
@@ -39,15 +41,17 @@ export default function ReserveConfirmOverlay({
 }: ReserveConfirmOverlayProps) {
   const [startMinutes, setStartMinutes] = useState(initialStart);
   const [endMinutes, setEndMinutes] = useState(initialStart + initialDuration);
+  const [privateDescription, setPrivateDescription] = useState(initialPrivateDescription);
   const [infoOpen, setInfoOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
       setStartMinutes(initialStart);
       setEndMinutes(initialStart + initialDuration);
+      setPrivateDescription(initialPrivateDescription);
       setInfoOpen(false);
     }
-  }, [open, initialStart, initialDuration]);
+  }, [open, initialDuration, initialPrivateDescription, initialStart]);
 
   const startOptions = useMemo(() => {
     const STEP = 30;
@@ -166,6 +170,20 @@ export default function ReserveConfirmOverlay({
         </div>
 
         <p className="reserve-duration">משך: {formatDurationLabelHe(durationMinutes)}</p>
+        <div className="reserve-field reserve-note-field">
+          <label htmlFor="reserve-private-description" className="reserve-field-hint reserve-note-label">
+            תיאור אישי (רק בשבילך)
+          </label>
+          <textarea
+            id="reserve-private-description"
+            className="reserve-note-input"
+            rows={3}
+            maxLength={180}
+            placeholder="למשל: חזרה לשירימון"
+            value={privateDescription}
+            onChange={(event) => setPrivateDescription(event.target.value)}
+          />
+        </div>
 
         <div className="reserve-actions">
           {mode === "edit" ? (
@@ -179,7 +197,7 @@ export default function ReserveConfirmOverlay({
                 className="primary"
                 type="button"
                 disabled={durationMinutes < MIN_DURATION}
-                onClick={() => onConfirm(startMinutes, durationMinutes)}
+                onClick={() => onConfirm(startMinutes, durationMinutes, privateDescription.trim())}
               >
                 עדכון
               </button>
@@ -193,7 +211,7 @@ export default function ReserveConfirmOverlay({
                 className="primary"
                 type="button"
                 disabled={durationMinutes < MIN_DURATION}
-                onClick={() => onConfirm(startMinutes, durationMinutes)}
+                onClick={() => onConfirm(startMinutes, durationMinutes, privateDescription.trim())}
               >
                 אישור
               </button>

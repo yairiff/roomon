@@ -38,7 +38,7 @@ export default function LoginOverlay({
         <div className="login-copy">
           <p className="login-eyebrow">רימון בית ספר למוזיקה</p>
           <h2>התחבר כדי לשריין חדרים</h2>
-          <p className="login-subtitle">ניתן להיכנס עם חשבון גוגל אישי של הסטודנטים.</p>
+          <p className="login-subtitle">ניתן להיכנס עם חשבון גוגל אישי.</p>
         </div>
         <LoginCard
           user={user}
@@ -49,6 +49,8 @@ export default function LoginOverlay({
           googleButtonRef={googleButtonRef}
           clientId={clientId}
           devLoginEnabled={devLoginEnabled}
+          flat
+          showTitle={false}
         />
       </div>
     </div>

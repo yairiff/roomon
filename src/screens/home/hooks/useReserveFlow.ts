@@ -5,6 +5,7 @@ import type { DayKey, Lesson } from "../../../types/schedule";
 import type { ViewMode } from "../../../types/ui";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../../types/reservations";
 import { getDayKeyFromDateKey } from "../../../lib/date";
+import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
 
 export type PendingConfirm = {
   mode: "create" | "edit";
@@ -15,6 +16,7 @@ export type PendingConfirm = {
   startMinutes: number;
   windowStart: number;
   userRemainingMinutes: number;
+  privateDescription?: string;
 };
 
 type UseReserveFlowArgs = {
@@ -172,7 +174,8 @@ export function useReserveFlow({
         limitEnd,
         startMinutes,
         windowStart,
-        userRemainingMinutes
+        userRemainingMinutes,
+        privateDescription: request.privateDescription || ""
       });
       if (view === "finder") {
         openRoomDay(request.roomId, request.date);
@@ -187,10 +190,11 @@ export function useReserveFlow({
   );
 
   const handleConfirmReserve = useCallback(
-    (draft: ReserveRequest, startMinutes: number, durationMinutes: number) => {
+    (draft: ReserveRequest, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
       const MIN_DURATION = 30;
       if (!currentUser?.allowed) return;
       const { date, day, roomId } = draft;
+      const normalizedDescription = (privateDescription || "").trim();
       if (startMinutes % 30 !== 0 || durationMinutes % 30 !== 0) {
         showToast("יש לבחור שעות במרווחים של חצי שעה.");
         return;
@@ -249,6 +253,10 @@ export function useReserveFlow({
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
           : `res-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const nextReservedPicture =
+        isFirebaseStorageDownloadUrl((currentUser.picture || "").trim())
+          ? (currentUser.picture || "").trim()
+          : undefined;
 
       void (async () => {
         const ok = await addReservation({
@@ -260,7 +268,8 @@ export function useReserveFlow({
           reservedBy: currentUser.name,
           reservedEmail: currentUser.email,
           reservedPhone: currentUser.phone || undefined,
-          reservedPicture: currentUser.picture || undefined
+          reservedPicture: nextReservedPicture,
+          privateDescription: normalizedDescription
         });
         if (!ok) {
           showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
@@ -333,7 +342,8 @@ export function useReserveFlow({
         day: dayKey,
         time: alignedStart,
         roomId,
-        durationMinutes: entry.durationMinutes
+        durationMinutes: entry.durationMinutes,
+        privateDescription: entry.privateDescription || ""
       };
       setPendingConfirm({
         mode: "edit",
@@ -343,20 +353,22 @@ export function useReserveFlow({
         limitEnd: alignedLimitEnd,
         startMinutes: alignedStart,
         windowStart: alignedWindowStart,
-        userRemainingMinutes
+        userRemainingMinutes,
+        privateDescription: entry.privateDescription || ""
       });
     },
     [config.endHour, config.startHour, currentUser?.allowed, currentUser?.email, getLessonsForDate, getUserReservedMinutes, reservationMap, roomMeta, showToast]
   );
 
   const handleConfirmEdit = useCallback(
-    async (pending: PendingConfirm, startMinutes: number, durationMinutes: number) => {
+    async (pending: PendingConfirm, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
       if (!currentUser?.allowed) return;
       if (!pending.reservationId) return;
       const { date, day, roomId } = pending.request;
       const reservationId = pending.reservationId;
       const STEP = 30;
       const MIN_DURATION = 30;
+      const normalizedDescription = (privateDescription || "").trim();
       if (startMinutes % STEP !== 0 || durationMinutes % STEP !== 0) {
         showToast("יש לבחור שעות במרווחים של חצי שעה.");
         return;
@@ -420,7 +432,13 @@ export function useReserveFlow({
         reservedBy: currentUser.name,
         reservedEmail: currentUser.email,
         reservedPhone: currentUser.phone || currentEntry.reservedPhone || undefined,
-        reservedPicture: currentUser.picture || currentEntry.reservedPicture || undefined
+        reservedPicture: (() => {
+          const latest = (currentUser.picture || "").trim();
+          if (isFirebaseStorageDownloadUrl(latest)) return latest;
+          const existing = (currentEntry.reservedPicture || "").trim();
+          return isFirebaseStorageDownloadUrl(existing) ? existing : undefined;
+        })(),
+        privateDescription: normalizedDescription
       });
       if (!ok) {
         showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");

@@ -12,6 +12,7 @@ type DirectoryUser = {
   name?: string;
   phone?: string;
   pictureUrl?: string;
+  pictureRemoved?: boolean;
   role?: "admin" | "moderator" | "student" | "pending";
   cohortStartYear?: number;
 };
@@ -125,11 +126,13 @@ const isGooglePhotoUrl = (url: string) => {
 };
 
 const normalizeGooglePhotoUrl = (url: string, size: number) => {
-  // Google profile photos often support "=s{N}-c" suffix.
-  // Keep it small and cache-friendly to stay within free-tier storage.
+  // Google profile photos commonly support "=s{N}-c" suffixes.
+  // Keep the original URL shape and only replace/append the size marker.
   if (!isGooglePhotoUrl(url)) return url;
-  const base = url.split("=")[0];
-  return `${base}=s${size}-c`;
+  if (/=s\d+-c$/.test(url)) {
+    return url.replace(/=s\d+-c$/, `=s${size}-c`);
+  }
+  return `${url}=s${size}-c`;
 };
 
 const verifyGoogleIdToken = async (idToken: string) => {
@@ -175,14 +178,17 @@ export const syncProfilePhoto = onCall(
     }
 
     const requestedSize = Number(request.data?.targetSize);
-    const targetSize = Number.isFinite(requestedSize) ? Math.round(requestedSize) : 384;
-    const clampedSize = Math.min(512, Math.max(96, targetSize));
+    const targetSize = Number.isFinite(requestedSize) ? Math.round(requestedSize) : 1024;
+    const clampedSize = Math.min(1024, Math.max(128, targetSize));
 
     // If we already have a cached Storage URL of sufficient size, return it without re-fetching.
     try {
       const snap = await admin.firestore().doc(`users/${email}`).get();
       if (snap.exists) {
         const data = snap.data() as any;
+        if (data?.pictureRemoved === true) {
+          return { pictureUrl: "" };
+        }
         const existingUrl = typeof data?.pictureUrl === "string" ? String(data.pictureUrl) : "";
         const existingSize = typeof data?.pictureSize === "number" ? Number(data.pictureSize) : 0;
         if (existingUrl.includes("firebasestorage.googleapis.com/") && existingSize >= clampedSize) {
@@ -194,12 +200,18 @@ export const syncProfilePhoto = onCall(
     }
 
     const sizedUrl = normalizeGooglePhotoUrl(sourceUrl, clampedSize);
-    const response = await fetch(sizedUrl, {
-      headers: {
-        // A stable UA helps some CDNs behave consistently.
-        "User-Agent": "rimon-room-booking/1.0"
-      }
-    });
+    const fetchImage = async (url: string) =>
+      fetch(url, {
+        headers: {
+          // A stable UA helps some CDNs behave consistently.
+          "User-Agent": "rimon-room-booking/1.0"
+        }
+      });
+    let response = await fetchImage(sizedUrl);
+    if (!response.ok && sizedUrl !== sourceUrl) {
+      // Some Google photo URLs do not accept explicit size suffixes.
+      response = await fetchImage(sourceUrl);
+    }
     if (!response.ok) {
       throw new HttpsError("unavailable", `Failed to fetch profile photo (${response.status}).`);
     }
@@ -210,7 +222,7 @@ export const syncProfilePhoto = onCall(
     }
 
     const bytes = Buffer.from(await response.arrayBuffer());
-    const MAX_BYTES = 550 * 1024;
+    const MAX_BYTES = 2 * 1024 * 1024;
     if (bytes.byteLength <= 0 || bytes.byteLength > MAX_BYTES) {
       throw new HttpsError("invalid-argument", "Profile photo is too large.");
     }
@@ -246,6 +258,7 @@ export const syncProfilePhoto = onCall(
       {
         email,
         pictureUrl,
+        pictureRemoved: false,
         pictureSize: clampedSize,
         pictureUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
       },

@@ -13,6 +13,7 @@ export type ReservationDetailsOverlayProps = {
   email: string;
   phone: string;
   pictureUrl?: string;
+  privateDescription?: string;
   pinned?: boolean;
   onTogglePin?: () => void;
   onClose: () => void;
@@ -28,6 +29,7 @@ export default function ReservationDetailsOverlay({
   email,
   phone,
   pictureUrl,
+  privateDescription,
   pinned = false,
   onTogglePin,
   onClose
@@ -90,6 +92,7 @@ export default function ReservationDetailsOverlay({
           <p className="reserve-date">{dateLine}</p>
           <p className="reserve-time">{timeLine}</p>
           {!name ? <p className="reserve-detail">{title}</p> : null}
+          {privateDescription ? <p className="reserve-detail">תיאור אישי: {privateDescription}</p> : null}
         </div>
         <div className="reserve-actions reserve-actions-details">
           {onTogglePin ? (

@@ -31,6 +31,7 @@ import BookmarkAddedRoundedIcon from "@mui/icons-material/BookmarkAddedRounded";
 import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RemoveCircleRoundedIcon from "@mui/icons-material/RemoveCircleRounded";
+import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 
 export function CalendarIcon() {
   return <CalendarMonthRoundedIcon fontSize="small" />;
@@ -164,4 +165,8 @@ export function SelectOnIcon() {
 
 export function SelectSomeIcon() {
   return <RemoveCircleRoundedIcon fontSize="small" />;
+}
+
+export function DarkModeIcon() {
+  return <DarkModeRoundedIcon fontSize="small" />;
 }
