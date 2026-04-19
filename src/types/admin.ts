@@ -7,6 +7,7 @@ export type DirectoryUser = {
   email: string;
   name: string;
   role: UserRole;
+  themePreference?: "light" | "dark";
   phone?: string;
   pictureUrl?: string;
   pictureRemoved?: boolean;

@@ -3,6 +3,7 @@ export type User = {
   email: string;
   picture?: string;
   pictureRemoved?: boolean;
+  themePreference?: "light" | "dark";
   allowed: boolean;
   role?: "admin" | "moderator" | "student" | "pending";
   phone?: string;

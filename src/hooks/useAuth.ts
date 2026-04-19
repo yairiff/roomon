@@ -135,6 +135,10 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
                 : typeof raw.tel === "string"
                   ? raw.tel
                   : "";
+      const themePreference =
+        raw.themePreference === "dark" || raw.themePreference === "light"
+          ? raw.themePreference
+          : undefined;
 
       // If we only have a Google hotlink, copy a cached version into Storage (once in a while).
       // This dramatically reduces 429s from Google profile image rate limits.
@@ -167,6 +171,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           name: data.name || prev.name,
           role,
           allowed,
+          themePreference,
           phone,
           picture: pictureRemoved ? "" : (persistentPictureUrl || fallbackPicture),
           pictureRemoved,
@@ -176,6 +181,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           next.name === prev.name &&
           next.role === prev.role &&
           next.allowed === prev.allowed &&
+          next.themePreference === prev.themePreference &&
           next.phone === prev.phone &&
           next.picture === prev.picture &&
           next.pictureRemoved === prev.pictureRemoved &&
@@ -217,6 +223,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
             let directoryPictureUrl = "";
             let directoryPictureSize: number | null = null;
             let directoryPictureRemoved = false;
+            let directoryThemePreference: "light" | "dark" | undefined;
             if (db) {
               try {
                 const snap = await getDoc(doc(db, "users", email.toLowerCase()));
@@ -235,6 +242,10 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
                             : "";
                   directoryPictureRemoved = isPictureRemoved(raw);
                   directoryPictureSize = typeof (raw as any).pictureSize === "number" ? (raw as any).pictureSize : null;
+                  directoryThemePreference =
+                    raw.themePreference === "dark" || raw.themePreference === "light"
+                      ? raw.themePreference
+                      : undefined;
                   directoryPhone =
                     typeof raw.phone === "string"
                       ? raw.phone
@@ -264,6 +275,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
               email,
               picture: directoryPictureRemoved ? "" : (directoryPersistentPicture || googlePicture || ""),
               pictureRemoved: directoryPictureRemoved,
+              themePreference: directoryThemePreference,
               allowed,
               role: role || "pending",
               phone: directoryPhone || directoryUser?.phone,

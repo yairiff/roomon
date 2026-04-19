@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import HomeScreen from "./screens/home/HomeScreen";
 import { useAuth } from "./hooks/useAuth";
 import { useReservations, type ReservationsWindow } from "./hooks/useReservations";
@@ -12,6 +13,7 @@ import AdminScreen from "./screens/admin/AdminScreen";
 import SignupOverlay from "./components/SignupOverlay";
 import { addDays, formatDateKey, getWeekStart } from "./lib/date";
 import { weekDays } from "./config";
+import { db } from "./lib/firebase";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
@@ -29,8 +31,7 @@ export default function App() {
     if (typeof window === "undefined") return "light";
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (saved === "light" || saved === "dark") return saved;
-    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-    return prefersDark ? "dark" : "light";
+    return "light";
   });
   const darkMode = theme === "dark";
 
@@ -74,6 +75,15 @@ export default function App() {
       setLoginPromptOpen(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (user.themePreference === "dark" || user.themePreference === "light") {
+      setTheme(user.themePreference);
+      return;
+    }
+    setTheme("light");
+  }, [user?.email, user?.themePreference]);
 
   useEffect(() => {
     if (!user || !roleResolved || user.role !== "pending") {
@@ -141,6 +151,28 @@ export default function App() {
     setLoginPromptOpen(true);
   };
 
+  const handleToggleDarkMode = async () => {
+    const nextTheme: ThemeMode = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+
+    if (!user || !db) return;
+    try {
+      const email = user.email.toLowerCase();
+      await setDoc(
+        doc(db, "users", email),
+        {
+          email,
+          themePreference: nextTheme,
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+      setUser((prev) => (prev ? { ...prev, themePreference: nextTheme } : prev));
+    } catch {
+      // Keep local theme even if Firestore persistence fails.
+    }
+  };
+
   useEffect(() => {
     const canAdmin = user?.role === "admin" || user?.role === "moderator";
     if (!canAdmin) {
@@ -200,7 +232,7 @@ export default function App() {
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}
         darkMode={darkMode}
-        onToggleDarkMode={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+        onToggleDarkMode={() => { void handleToggleDarkMode(); }}
         installAvailable={Boolean(installPrompt)}
         isStandalone={isStandalone}
         onInstall={() => { void handleInstall(); }}
