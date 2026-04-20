@@ -32,8 +32,6 @@ export function useRooms() {
             id,
             name,
             shortName: data.shortName || name,
-            openMinutes: data.openMinutes,
-            closeMinutes: data.closeMinutes,
             isClosed: data.isClosed,
             sortOrder: data.sortOrder,
             note: data.note
@@ -62,8 +60,6 @@ export function useRooms() {
     const map: Record<string, RoomMeta> = {};
     rooms.forEach((room) => {
       map[room.id] = {
-        openMinutes: room.openMinutes,
-        closeMinutes: room.closeMinutes,
         isClosed: room.isClosed,
         sortOrder: room.sortOrder,
         note: room.note

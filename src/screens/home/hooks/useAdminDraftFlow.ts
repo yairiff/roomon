@@ -85,16 +85,15 @@ export function useAdminDraftFlow({
       });
       if (reservationOverlap) return "קיים שריון חופף.";
 
-      const policy = roomMeta?.[roomId];
-      const roomOpen = policy?.openMinutes ?? config.startHour * 60;
-      const roomClose = policy?.closeMinutes ?? config.endHour * 60;
+      const roomOpen = config.startHour * 60;
+      const roomClose = config.endHour * 60;
       if (startMinutes < roomOpen || endMinutes > roomClose) {
         return "השעה מחוץ לשעות הפעילות של החדר.";
       }
 
       return "";
     },
-    [config.endHour, config.startHour, getLessonsForDate, reservationMap, roomMeta]
+    [config.endHour, config.startHour, getLessonsForDate, reservationMap]
   );
 
   const draftSignature = (draft: AdminDraft) => {

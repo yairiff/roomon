@@ -64,6 +64,11 @@
   --schedule-grid-line: rgba(227, 216, 206, 0.44);
   --schedule-col-bg: #ffffff;
   --schedule-col-bg-even: #f2f6f9;
+  --schedule-block-lesson-bg: #fbe7e6;
+  --schedule-block-reserved-bg: #fff7e8;
+  --schedule-block-special-bg: #e9f0ff;
+  --schedule-block-exam-bg: #efe9ff;
+  --schedule-block-closed-bg: #edf1f4;
 }
 
 :root[data-theme="dark"] {
@@ -130,6 +135,11 @@
   --schedule-grid-line: rgba(154, 172, 186, 0.2);
   --schedule-col-bg: #1f2a31;
   --schedule-col-bg-even: #172129;
+  --schedule-block-lesson-bg: #4a2d2c;
+  --schedule-block-reserved-bg: #423321;
+  --schedule-block-special-bg: #2a3551;
+  --schedule-block-exam-bg: #342e4f;
+  --schedule-block-closed-bg: #2f3941;
 }
 
 @keyframes overlayFadeIn {
@@ -1168,6 +1178,12 @@ body,
   border-color: rgba(37, 211, 102, 0.7);
   background: rgba(37, 211, 102, 0.1);
   color: #0b3d22;
+}
+
+:root[data-theme="dark"] .icon-button.contact.whatsapp {
+  border-color: rgba(84, 227, 133, 0.7);
+  background: rgba(84, 227, 133, 0.2);
+  color: #9af0b8;
 }
 
 .reserve-pin-action {
@@ -2266,27 +2282,27 @@ select,
 }
 
 .schedule-block.lesson {
-  background: var(--status-lesson-bg);
+  background: var(--schedule-block-lesson-bg);
   border: 1px solid var(--status-lesson-border);
 }
 
 .schedule-block.reserved {
-  background: var(--status-reserved-bg);
+  background: var(--schedule-block-reserved-bg);
   border: 1px solid var(--status-reserved-border);
 }
 
 .schedule-block.special {
-  background: var(--status-special-bg);
+  background: var(--schedule-block-special-bg);
   border: 1px solid var(--status-special-border);
 }
 
 .schedule-block.exam {
-  background: var(--status-exam-bg);
+  background: var(--schedule-block-exam-bg);
   border: 1px solid var(--status-exam-border);
 }
 
 .schedule-block.closed {
-  background: var(--status-closed-bg);
+  background: var(--schedule-block-closed-bg);
   border: 1px solid var(--status-closed-border);
 }
 
@@ -2396,27 +2412,27 @@ select,
 }
 
 .schedule-block.compact.lesson {
-  background: var(--status-lesson-bg);
+  background: var(--schedule-block-lesson-bg);
   border: 1px solid var(--status-lesson-border);
 }
 
 .schedule-block.compact.reserved {
-  background: var(--status-reserved-bg);
+  background: var(--schedule-block-reserved-bg);
   border: 1px solid var(--status-reserved-border);
 }
 
 .schedule-block.compact.special {
-  background: var(--status-special-bg);
+  background: var(--schedule-block-special-bg);
   border: 1px solid var(--status-special-border);
 }
 
 .schedule-block.compact.exam {
-  background: var(--status-exam-bg);
+  background: var(--schedule-block-exam-bg);
   border: 1px solid var(--status-exam-border);
 }
 
 .schedule-block.compact.closed {
-  background: var(--status-closed-bg);
+  background: var(--schedule-block-closed-bg);
   border: 1px solid var(--status-closed-border);
 }
 

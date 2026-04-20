@@ -41,10 +41,7 @@ export default function LiveView({
   };
 
   const getRoomStatus = (roomId: string) => {
-    const policy = roomMeta?.[roomId];
-    const roomOpen = policy?.openMinutes ?? startHour * 60;
-    const roomClose = policy?.closeMinutes ?? endHour * 60;
-    if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) {
+    if (isClosedNow || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60) {
       return {
         status: "closed" as const,
         label: "סגור",
@@ -102,10 +99,7 @@ export default function LiveView({
   };
 
   const getBusyUntil = (roomId: string) => {
-    const policy = roomMeta?.[roomId];
-    const roomOpen = policy?.openMinutes ?? startHour * 60;
-    const roomClose = policy?.closeMinutes ?? endHour * 60;
-    if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
+    if (isClosedNow || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60) return null;
     const intervals = [
       ...lessons
         .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
@@ -138,10 +132,7 @@ export default function LiveView({
   };
 
   const getNextEvent = (roomId: string) => {
-    const policy = roomMeta?.[roomId];
-    const roomOpen = policy?.openMinutes ?? startHour * 60;
-    const roomClose = policy?.closeMinutes ?? endHour * 60;
-    if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
+    if (isClosedNow || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60) return null;
     const lessonStarts = lessons
       .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
       .map((lesson) => ({

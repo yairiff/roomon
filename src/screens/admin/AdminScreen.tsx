@@ -35,14 +35,18 @@ type ScopedPolicyDraft = {
   isDefault: boolean;
   useConditionRooms: boolean;
   useConditionDays: boolean;
+  useConditionSemesters: boolean;
   useConditionDateRange: boolean;
   useConditionTimeRange: boolean;
   roomIds: string[];
   dayKeys: DayKey[];
+  semesterIds: string[];
   dateStart: string;
   dateEnd: string;
   startTime: string;
   endTime: string;
+  collapseHourQuota: boolean;
+  blockReservations: boolean;
   useHourQuota: boolean;
   maxHoursPerRoomPerDay: string;
   maxHoursPerRoomPerWeek: string;
@@ -179,14 +183,18 @@ const createEmptyScopedPolicyDraft = (): ScopedPolicyDraft => ({
   isDefault: false,
   useConditionRooms: false,
   useConditionDays: false,
+  useConditionSemesters: false,
   useConditionDateRange: false,
   useConditionTimeRange: false,
   roomIds: [],
   dayKeys: [],
+  semesterIds: [],
   dateStart: "",
   dateEnd: "",
   startTime: "",
   endTime: "",
+  collapseHourQuota: true,
+  blockReservations: false,
   useHourQuota: false,
   maxHoursPerRoomPerDay: "",
   maxHoursPerRoomPerWeek: "",
@@ -207,14 +215,18 @@ const toScopedPolicyDraft = (policy: ReservationScopedPolicy): ScopedPolicyDraft
   isDefault: policy.isDefault,
   useConditionRooms: !policy.isDefault && policy.scope.roomIds.length > 0,
   useConditionDays: !policy.isDefault && policy.scope.dayKeys.length > 0,
+  useConditionSemesters: !policy.isDefault && (policy.scope.semesterIds || []).length > 0,
   useConditionDateRange: !policy.isDefault && Boolean(policy.scope.dateStart || policy.scope.dateEnd),
   useConditionTimeRange: !policy.isDefault && (policy.scope.startMinutes !== undefined || policy.scope.endMinutes !== undefined),
   roomIds: policy.scope.roomIds || [],
   dayKeys: policy.scope.dayKeys || [],
+  semesterIds: policy.scope.semesterIds || [],
   dateStart: policy.scope.dateStart || "",
   dateEnd: policy.scope.dateEnd || "",
   startTime: policy.scope.startMinutes !== undefined ? toTimeInput(policy.scope.startMinutes) : "",
   endTime: policy.scope.endMinutes !== undefined ? toTimeInput(policy.scope.endMinutes) : "",
+  collapseHourQuota: true,
+  blockReservations: policy.rules.blockReservations === true,
   useHourQuota:
     Number(policy.rules.maxHoursPerRoomPerDay || 0) > 0 ||
     Number(policy.rules.maxHoursPerRoomPerWeek || 0) > 0 ||
@@ -226,9 +238,10 @@ const toScopedPolicyDraft = (policy: ReservationScopedPolicy): ScopedPolicyDraft
   maxHoursPerWeekTotal: parseOptionalLimitDraft(policy.rules.maxHoursPerWeekTotal),
   useMaxDaysForward: Number(policy.rules.maxDaysForward || 0) > 0,
   maxDaysForward: parseOptionalLimitDraft(policy.rules.maxDaysForward),
-  useMinLeadHours:
-    policy.rules.minLeadMode === "hours_before" && Number(policy.rules.minLeadHours || 0) > 0,
-  useMinLeadDayBefore: policy.rules.minLeadMode === "day_before_time",
+  useMinLeadHours: Number(policy.rules.minLeadHours || 0) > 0,
+  useMinLeadDayBefore:
+    policy.rules.minLeadDayBeforeEnabled === true ||
+    (policy.rules.minLeadMode === "day_before_time" && policy.rules.minLeadDayBeforeMinutes !== undefined),
   minLeadHours: policy.rules.minLeadHours !== undefined ? String(policy.rules.minLeadHours) : "0",
   minLeadDayBeforeTime:
     policy.rules.minLeadDayBeforeMinutes !== undefined
@@ -246,7 +259,29 @@ const parseOptionalNumber = (value: string) => {
 const parseLimitNumber = (value: string) => Math.max(0, parseOptionalNumber(value) || 0);
 
 const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
+  if (draft.blockReservations) {
+    return {
+      id: draft.id || createPolicyId(),
+      name: draft.isDefault ? "כל המקרים" : draft.name.trim() || "מדיניות חדשה",
+      enabled: draft.isDefault ? true : draft.enabled,
+      isDefault: draft.isDefault,
+      scope: draft.isDefault
+        ? { roomIds: [], dayKeys: [], semesterIds: [] }
+        : {
+            roomIds: draft.useConditionRooms ? Array.from(new Set(draft.roomIds.filter(Boolean))) : [],
+            dayKeys: draft.useConditionDays ? Array.from(new Set(draft.dayKeys)) : [],
+            semesterIds: draft.useConditionSemesters ? Array.from(new Set(draft.semesterIds.filter(Boolean))) : [],
+            ...(draft.useConditionDateRange && draft.dateStart ? { dateStart: draft.dateStart } : {}),
+            ...(draft.useConditionDateRange && draft.dateEnd ? { dateEnd: draft.dateEnd } : {}),
+            ...(draft.useConditionTimeRange && draft.startTime ? { startMinutes: parseTimeInput(draft.startTime) } : {}),
+            ...(draft.useConditionTimeRange && draft.endTime ? { endMinutes: parseTimeInput(draft.endTime) } : {})
+          },
+      rules: { blockReservations: true }
+    };
+  }
+
   const rules: Partial<ReservationPolicy> = {
+    blockReservations: false,
     maxHoursPerRoomPerDay: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerRoomPerDay) : 0,
     maxHoursPerRoomPerWeek: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerRoomPerWeek) : 0,
     maxHoursPerDayTotal: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerDayTotal) : 0,
@@ -254,16 +289,10 @@ const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
     maxDaysForward: draft.useMaxDaysForward ? parseLimitNumber(draft.maxDaysForward) : 0
   };
 
-  if (draft.useMinLeadDayBefore) {
-    rules.minLeadMode = "day_before_time";
-    rules.minLeadDayBeforeMinutes = parseTimeInput(draft.minLeadDayBeforeTime || "18:00");
-  } else if (draft.useMinLeadHours) {
-    rules.minLeadMode = "hours_before";
-    rules.minLeadHours = parseLimitNumber(draft.minLeadHours);
-  } else {
-    rules.minLeadMode = "hours_before";
-    rules.minLeadHours = 0;
-  }
+  rules.minLeadMode = draft.useMinLeadDayBefore ? "day_before_time" : "hours_before";
+  rules.minLeadHours = draft.useMinLeadHours ? parseLimitNumber(draft.minLeadHours) : 0;
+  rules.minLeadDayBeforeEnabled = draft.useMinLeadDayBefore;
+  rules.minLeadDayBeforeMinutes = parseTimeInput(draft.minLeadDayBeforeTime || "18:00");
 
   return {
     id: draft.id || createPolicyId(),
@@ -271,10 +300,11 @@ const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
     enabled: draft.isDefault ? true : draft.enabled,
     isDefault: draft.isDefault,
     scope: draft.isDefault
-      ? { roomIds: [], dayKeys: [] }
+      ? { roomIds: [], dayKeys: [], semesterIds: [] }
       : {
           roomIds: draft.useConditionRooms ? Array.from(new Set(draft.roomIds.filter(Boolean))) : [],
           dayKeys: draft.useConditionDays ? Array.from(new Set(draft.dayKeys)) : [],
+          semesterIds: draft.useConditionSemesters ? Array.from(new Set(draft.semesterIds.filter(Boolean))) : [],
           ...(draft.useConditionDateRange && draft.dateStart ? { dateStart: draft.dateStart } : {}),
           ...(draft.useConditionDateRange && draft.dateEnd ? { dateEnd: draft.dateEnd } : {}),
           ...(draft.useConditionTimeRange && draft.startTime ? { startMinutes: parseTimeInput(draft.startTime) } : {}),
@@ -285,6 +315,9 @@ const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
 };
 
 const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
+  if (policy.rules.blockReservations === true) {
+    return ["שריונים חסומים"];
+  }
   const parts: string[] = [];
   const pushLimit = (value: number | undefined, format: (numeric: number) => string) => {
     const numeric = Number(value || 0);
@@ -298,10 +331,10 @@ const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
   pushLimit(policy.rules.maxHoursPerWeekTotal, (numeric) => `עד ${numeric} שעות בשבוע`);
   pushLimit(policy.rules.maxDaysForward, (numeric) => `עד ${numeric} ימים קדימה`);
 
-  if (policy.rules.minLeadMode === "hours_before" && (policy.rules.minLeadHours || 0) > 0) {
+  if ((policy.rules.minLeadHours || 0) > 0) {
     parts.push(`לפחות ${policy.rules.minLeadHours} שעות מראש`);
   }
-  if (policy.rules.minLeadMode === "day_before_time" && policy.rules.minLeadDayBeforeMinutes !== undefined) {
+  if (policy.rules.minLeadDayBeforeEnabled === true && policy.rules.minLeadDayBeforeMinutes !== undefined) {
     parts.push(`עד ${formatMinutes(policy.rules.minLeadDayBeforeMinutes)} ביום שלפני`);
   }
   if (!parts.length) {
@@ -310,7 +343,11 @@ const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
   return parts;
 };
 
-const summarizePolicyConditionsParts = (policy: ReservationScopedPolicy, roomNameById: Record<string, string>) => {
+const summarizePolicyConditionsParts = (
+  policy: ReservationScopedPolicy,
+  roomNameById: Record<string, string>,
+  semesterNameById: Record<string, string>
+) => {
   if (policy.isDefault) return ["כל המקרים"];
   const parts: string[] = [];
   if (policy.scope.dayKeys.length) {
@@ -321,6 +358,10 @@ const summarizePolicyConditionsParts = (policy: ReservationScopedPolicy, roomNam
     const names = policy.scope.roomIds.map((roomId) => roomNameById[roomId] || roomId);
     parts.push(`רק בחדרים ${names.join(", ")}`);
   }
+  if ((policy.scope.semesterIds || []).length) {
+    const names = (policy.scope.semesterIds || []).map((semesterId) => semesterNameById[semesterId] || semesterId);
+    parts.push(`רק בסמסטר ${names.join(", ")}`);
+  }
   if (policy.scope.dateStart || policy.scope.dateEnd) {
     parts.push(`בטווח תאריכים ${policy.scope.dateStart || "..."}–${policy.scope.dateEnd || "..."}`);
   }
@@ -330,8 +371,12 @@ const summarizePolicyConditionsParts = (policy: ReservationScopedPolicy, roomNam
   return parts.length ? parts : ["כל המקרים"];
 };
 
-const summarizePolicySentence = (policy: ReservationScopedPolicy, roomNameById: Record<string, string>) => {
-  const conditions = summarizePolicyConditionsParts(policy, roomNameById).join(" ו־");
+const summarizePolicySentence = (
+  policy: ReservationScopedPolicy,
+  roomNameById: Record<string, string>,
+  semesterNameById: Record<string, string>
+) => {
+  const conditions = summarizePolicyConditionsParts(policy, roomNameById, semesterNameById).join(" ו־");
   const rules = summarizePolicyRulesParts(policy);
   if (policy.isDefault || conditions === "כל המקרים") {
     return `${rules.join(", ")}.`;
@@ -871,6 +916,14 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       }, {}),
     [roomsRaw]
   );
+  const semesterNameById = useMemo(
+    () =>
+      semestersDraft.reduce<Record<string, string>>((acc, semester) => {
+        acc[semester.id] = `${formatAcademicYearLabel(semester.studyYear)} · ${semester.letter}`;
+        return acc;
+      }, {}),
+    [semestersDraft]
+  );
 
   const semesterOptions = useMemo(
     () =>
@@ -1236,7 +1289,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                       {policy.isDefault ? <span className="admin-policy-pill">ברירת מחדל</span> : null}
                       {!policy.enabled ? <span className="admin-policy-pill muted">מושבתת</span> : null}
                     </p>
-                    <p className="admin-policy-item-summary">{summarizePolicySentence(policy, roomNameById)}</p>
+                    <p className="admin-policy-item-summary">{summarizePolicySentence(policy, roomNameById, semesterNameById)}</p>
                   </div>
                   <div className="admin-row-actions">
                     <label className="admin-policy-toggle admin-policy-row-switch">

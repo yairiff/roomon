@@ -29,7 +29,7 @@ import { formatDurationLabelHe } from "../../lib/formatDurationHe";
 import { applyLessonOverrides } from "../../lib/lessonOverrides";
 import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
-import type { DayKey, Lesson } from "../../types/schedule";
+import type { DayKey, Lesson, TimeSlot } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
 import type { MySchedulePin } from "../../types/mySchedule";
 import { useMySchedulePins } from "./hooks/useMySchedulePins";
@@ -76,6 +76,17 @@ const buildDateKeysBetween = (startDate: string, endDate: string) => {
     keys.push(formatDateKey(date));
   }
   return keys;
+};
+
+const buildTimeSlotsRange = (startMinutes: number, endMinutes: number, slotMinutes: number): TimeSlot[] => {
+  const safeSlot = Math.max(15, slotMinutes || 60);
+  const start = Math.max(0, Math.floor(startMinutes / safeSlot) * safeSlot);
+  const end = Math.min(24 * 60, Math.ceil(endMinutes / safeSlot) * safeSlot);
+  const slots: TimeSlot[] = [];
+  for (let minutes = start; minutes < end; minutes += safeSlot) {
+    slots.push({ startMinutes: minutes, endMinutes: Math.min(end, minutes + safeSlot) });
+  }
+  return slots;
 };
 
 export default function HomeScreen({
@@ -444,6 +455,65 @@ export default function HomeScreen({
     weekDates
   ]);
 
+  const scheduleTimeSlots = useMemo(() => {
+    if (view !== "room") return timeSlots;
+
+    const relevantDates = allRooms
+      ? [selectedDate]
+      : roomMode === "week"
+        ? roomDates.map((entry) => entry.dateKey)
+        : [selectedDate];
+    const relevantRoomIds = allRooms
+      ? rooms.map((room) => room.id)
+      : selectedRoom
+        ? [selectedRoom]
+        : [];
+
+    if (!relevantDates.length || !relevantRoomIds.length) return timeSlots;
+
+    let minStart = Number.POSITIVE_INFINITY;
+    let maxEnd = Number.NEGATIVE_INFINITY;
+
+    relevantDates.forEach((dateKey) => {
+      const dayKey = getDayKeyFromDateKey(dateKey);
+      getLessonsForDate(dateKey, dayKey).forEach((lesson) => {
+        if (!relevantRoomIds.includes(lesson.roomId)) return;
+        minStart = Math.min(minStart, lesson.startMinutes);
+        maxEnd = Math.max(maxEnd, lesson.startMinutes + lesson.durationMinutes);
+      });
+      (displayReservationMap[dateKey] || []).forEach((entry) => {
+        if (!relevantRoomIds.includes(entry.roomId)) return;
+        minStart = Math.min(minStart, entry.time);
+        maxEnd = Math.max(maxEnd, entry.time + Math.max(30, entry.durationMinutes || 60));
+      });
+    });
+
+    if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd)) {
+      return timeSlots;
+    }
+
+    const baseStart = config.startHour * 60;
+    const baseEnd = config.endHour * 60;
+    const start = Math.min(baseStart, minStart);
+    const end = Math.max(baseEnd, maxEnd);
+    const next = buildTimeSlotsRange(start, end, config.slotMinutes);
+    return next.length ? next : timeSlots;
+  }, [
+    allRooms,
+    config.endHour,
+    config.slotMinutes,
+    config.startHour,
+    displayReservationMap,
+    getLessonsForDate,
+    roomDates,
+    roomMode,
+    rooms,
+    selectedDate,
+    selectedRoom,
+    timeSlots,
+    view
+  ]);
+
   useEffect(() => {
     if (!onReservationWindowChange) return;
     const liveWeekStart = getWeekStart(todayDateKey);
@@ -778,10 +848,7 @@ export default function HomeScreen({
       };
 
       const availableCount = rooms.filter((room) => {
-        const policy = roomMeta?.[room.id];
-        const roomOpen = policy?.openMinutes ?? config.startHour * 60;
-        const roomClose = policy?.closeMinutes ?? config.endHour * 60;
-        if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return false;
+        if (isClosedNow || nowMinutes < config.startHour * 60 || nowMinutes >= config.endHour * 60) return false;
         const activeLesson = todayLessons.some((lesson) => {
           if (lesson.roomId !== room.id) return false;
           return lesson.startMinutes <= nowMinutes && lesson.startMinutes + lesson.durationMinutes > nowMinutes;
@@ -898,7 +965,7 @@ export default function HomeScreen({
       roomMode={roomMode}
       weekDates={weekDates}
       roomDates={roomDates}
-      timeSlots={timeSlots}
+      timeSlots={view === "room" ? scheduleTimeSlots : timeSlots}
       selectedDate={selectedDate}
       selectedDayKey={selectedDayKey}
       selectedRoom={selectedRoom}

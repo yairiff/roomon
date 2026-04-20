@@ -411,12 +411,7 @@ export default function ScheduleGrid({
       group.forEach((block) => columnsById.set(block.id, columns));
     });
 
-    const roomPolicy = roomMeta?.[roomId];
-    const roomOpen = roomPolicy?.openMinutes ?? baseStartMinutes;
-    const roomClose = roomPolicy?.closeMinutes ?? baseEndMinutes;
-
     const isSlotBusy = (slotStart: number, slotEnd: number) => {
-      if (slotStart < roomOpen || slotEnd > roomClose) return true;
       return blocks.some((block) => {
         const blockStart = block.startMinutes;
         const blockEnd = block.startMinutes + block.durationMinutes;

@@ -24,19 +24,22 @@ export type SemesterRange = {
 export type ReservationCutoffMode = "hours_before" | "day_before_time";
 
 export type ReservationPolicy = {
+  blockReservations: boolean;
   maxHoursPerRoomPerDay: number;
   maxHoursPerRoomPerWeek: number;
   maxHoursPerDayTotal: number;
   maxHoursPerWeekTotal: number;
   maxDaysForward: number;
-  minLeadMode: ReservationCutoffMode;
+  minLeadMode: ReservationCutoffMode; // legacy
   minLeadHours: number;
+  minLeadDayBeforeEnabled: boolean;
   minLeadDayBeforeMinutes: number;
 };
 
 export type ReservationPolicyScope = {
   roomIds: string[];
   dayKeys: DayKey[];
+  semesterIds?: string[];
   dateStart?: string;
   dateEnd?: string;
   startMinutes?: number;
@@ -55,6 +58,7 @@ export type ReservationScopedPolicy = {
 };
 
 export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
+  blockReservations: false,
   maxHoursPerRoomPerDay: 3,
   maxHoursPerRoomPerWeek: 0,
   maxHoursPerDayTotal: 6,
@@ -62,5 +66,6 @@ export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
   maxDaysForward: 30,
   minLeadMode: "hours_before",
   minLeadHours: 0,
+  minLeadDayBeforeEnabled: false,
   minLeadDayBeforeMinutes: 18 * 60
 };

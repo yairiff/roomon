@@ -94,9 +94,8 @@ export default function BookingFinder({
       const reservations = reservationMap[dateKey] || [];
 
       availableRooms.forEach((room) => {
-        const policy = roomMeta?.[room.id];
-        const roomOpen = Math.max(policy?.openMinutes ?? startHour * 60, fromHour * 60);
-        const roomClose = Math.min(policy?.closeMinutes ?? endHour * 60, toHour * 60);
+        const roomOpen = Math.max(startHour * 60, fromHour * 60);
+        const roomClose = Math.min(endHour * 60, toHour * 60);
         if (roomOpen >= roomClose) return;
 
         const busyIntervals = [

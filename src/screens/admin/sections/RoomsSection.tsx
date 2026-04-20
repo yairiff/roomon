@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { RoomRecord } from "../../../types/admin";
-import { rimonScheduleConfig } from "../../../config";
 import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
 import type { BulkState } from "../bulk";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -25,7 +24,7 @@ type RoomsSectionProps = {
 };
 
 type RoomShortFilter = "all" | "has" | "missing";
-type RoomSort = "order" | "name" | "open_time";
+type RoomSort = "order" | "name";
 
 export default function RoomsSection({
   roomsRaw,
@@ -69,7 +68,6 @@ export default function RoomsSection({
     return [...list].sort((a, b) => {
       const aName = a.name.localeCompare(b.name, "he");
       if (sortBy === "name") return aName;
-      if (sortBy === "open_time") return (a.openMinutes ?? 0) - (b.openMinutes ?? 0) || aName;
       // order
       return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || aName;
     });
@@ -106,8 +104,7 @@ export default function RoomsSection({
 
   const sortLabel: Record<RoomSort, string> = {
     order: "סדר תצוגה",
-    name: "שם",
-    open_time: "שעת פתיחה"
+    name: "שם"
   };
 
   const selectedRoom = useMemo(() =>
@@ -118,11 +115,7 @@ export default function RoomsSection({
 
   const handleSelect = (room: RoomRecord) => {
     setSelectedRoomId(room.id);
-    setRoomDraft({
-      ...room,
-      openMinutes: room.openMinutes ?? rimonScheduleConfig.startHour * 60,
-      closeMinutes: room.closeMinutes ?? rimonScheduleConfig.endHour * 60
-    });
+    setRoomDraft({ ...room });
     setIsEditing(true);
     setIsNewEntry(false);
   };
@@ -299,26 +292,6 @@ export default function RoomsSection({
                   onChange={(event) => setRoomDraft((prev) => ({ ...prev, shortName: event.target.value }))}
                 />
               </label>
-              <label>
-                פתיחה
-                <input
-                  type="time"
-                  value={toTimeInput(roomDraft.openMinutes ?? rimonScheduleConfig.startHour * 60)}
-                  onChange={(event) =>
-                    setRoomDraft((prev) => ({ ...prev, openMinutes: parseTimeInput(event.target.value) }))
-                  }
-                />
-              </label>
-              <label>
-                סגירה
-                <input
-                  type="time"
-                  value={toTimeInput(roomDraft.closeMinutes ?? rimonScheduleConfig.endHour * 60)}
-                  onChange={(event) =>
-                    setRoomDraft((prev) => ({ ...prev, closeMinutes: parseTimeInput(event.target.value) }))
-                  }
-                />
-              </label>
             </div>
           </fieldset>
           <div className="admin-actions">
@@ -423,7 +396,7 @@ export default function RoomsSection({
                   <div className="admin-row-main">
                     <p className="admin-row-title">{room.name}</p>
                     <p className="admin-row-meta">
-                      {room.shortName} · {toTimeInput(room.openMinutes || 0)}-{toTimeInput(room.closeMinutes || 0)}
+                      {room.shortName || "ללא קיצור"}
                     </p>
                   </div>
                   <div className="admin-row-actions">

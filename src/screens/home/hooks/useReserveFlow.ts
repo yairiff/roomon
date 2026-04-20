@@ -318,10 +318,8 @@ export function useReserveFlow({
   const getAvailability = useCallback(
     (request: ReserveRequest, excludeReservationId?: string) => {
       const intervals = buildIntervals(request.day, request.date, request.roomId, excludeReservationId);
-      const roomPolicy = roomMeta?.[request.roomId];
-
-      const minStart = roomPolicy?.openMinutes ?? config.startHour * 60;
-      const maxEnd = roomPolicy?.closeMinutes ?? config.endHour * 60;
+      const minStart = config.startHour * 60;
+      const maxEnd = config.endHour * 60;
       const requestStart = Math.max(request.time, minStart);
       if (requestStart >= maxEnd) return null;
 
@@ -476,9 +474,8 @@ export function useReserveFlow({
         return;
       }
 
-      const roomPolicy = roomMeta?.[roomId];
-      const roomOpen = roomPolicy?.openMinutes ?? config.startHour * 60;
-      const roomClose = roomPolicy?.closeMinutes ?? config.endHour * 60;
+      const roomOpen = config.startHour * 60;
+      const roomClose = config.endHour * 60;
       if (startMinutes < roomOpen || startMinutes + durationMinutes > roomClose) {
         setAuthError("השעה מחוץ לשעות הפעילות של החדר.");
         return;
@@ -577,9 +574,8 @@ export function useReserveFlow({
       }
 
       const dayKey = getDayKeyFromDateKey(dateKey);
-      const roomPolicy = roomMeta?.[roomId];
-      const minStart = roomPolicy?.openMinutes ?? config.startHour * 60;
-      const maxEnd = roomPolicy?.closeMinutes ?? config.endHour * 60;
+      const minStart = config.startHour * 60;
+      const maxEnd = config.endHour * 60;
 
       const intervals = buildIntervals(dayKey, dateKey, roomId, reservationId);
       const alignedStart = Math.ceil(Math.max(entry.time, minStart) / STEP) * STEP;
@@ -683,9 +679,8 @@ export function useReserveFlow({
       if (!currentEntry || currentEntry.kind) return;
       if (currentEntry.reservedEmail !== currentUser.email) return;
 
-      const roomPolicy = roomMeta?.[roomId];
-      const roomOpen = roomPolicy?.openMinutes ?? config.startHour * 60;
-      const roomClose = roomPolicy?.closeMinutes ?? config.endHour * 60;
+      const roomOpen = config.startHour * 60;
+      const roomClose = config.endHour * 60;
       if (startMinutes < roomOpen || startMinutes + durationMinutes > roomClose) {
         showToast("השעה מחוץ לשעות הפעילות של החדר.");
         return;

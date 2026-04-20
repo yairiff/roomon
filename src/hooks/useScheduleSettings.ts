@@ -131,6 +131,7 @@ const clampDays = (value: unknown, fallback: number) => {
 };
 
 const sanitizePolicy = (policy?: Partial<ReservationPolicy>): ReservationPolicy => ({
+  blockReservations: policy?.blockReservations === true,
   maxHoursPerRoomPerDay: clampHours(
     policy?.maxHoursPerRoomPerDay,
     DEFAULT_RESERVATION_POLICY.maxHoursPerRoomPerDay
@@ -156,6 +157,8 @@ const sanitizePolicy = (policy?: Partial<ReservationPolicy>): ReservationPolicy 
       ? policy.minLeadMode
       : DEFAULT_RESERVATION_POLICY.minLeadMode,
   minLeadHours: clampHours(policy?.minLeadHours, DEFAULT_RESERVATION_POLICY.minLeadHours),
+  minLeadDayBeforeEnabled:
+    policy?.minLeadDayBeforeEnabled === true || policy?.minLeadMode === "day_before_time",
   minLeadDayBeforeMinutes: clampMinutes(
     policy?.minLeadDayBeforeMinutes,
     DEFAULT_RESERVATION_POLICY.minLeadDayBeforeMinutes
@@ -164,6 +167,9 @@ const sanitizePolicy = (policy?: Partial<ReservationPolicy>): ReservationPolicy 
 
 const sanitizePartialPolicyRules = (rulesRaw: Record<string, unknown>) => {
   const rules: Partial<ReservationPolicy> = {};
+  if (rulesRaw.blockReservations !== undefined) {
+    rules.blockReservations = rulesRaw.blockReservations === true;
+  }
   if (rulesRaw.maxHoursPerRoomPerDay !== undefined) {
     rules.maxHoursPerRoomPerDay = clampHours(rulesRaw.maxHoursPerRoomPerDay, 0);
   }
@@ -184,6 +190,9 @@ const sanitizePartialPolicyRules = (rulesRaw: Record<string, unknown>) => {
   }
   if (rulesRaw.minLeadHours !== undefined) {
     rules.minLeadHours = clampHours(rulesRaw.minLeadHours, 0);
+  }
+  if (rulesRaw.minLeadDayBeforeEnabled !== undefined) {
+    rules.minLeadDayBeforeEnabled = rulesRaw.minLeadDayBeforeEnabled === true;
   }
   if (rulesRaw.minLeadDayBeforeMinutes !== undefined) {
     rules.minLeadDayBeforeMinutes = clampMinutes(rulesRaw.minLeadDayBeforeMinutes, 18 * 60);
@@ -290,7 +299,7 @@ const buildDefaultPolicyRow = (
   name: "כל המקרים",
   enabled: true,
   isDefault: true,
-  scope: { roomIds: [], dayKeys: [] },
+  scope: { roomIds: [], dayKeys: [], semesterIds: [] },
   rules: { ...policy }
 });
 
@@ -344,15 +353,22 @@ const sanitizeScopedPolicies = (
                 .map((entry) => entry.trim())
                 .filter(Boolean)
             : [];
+          const scopeSemesterIds = Array.isArray(scopeRaw.semesterIds)
+            ? scopeRaw.semesterIds
+                .filter((entry): entry is string => typeof entry === "string")
+                .map((entry) => entry.trim())
+                .filter(Boolean)
+            : [];
           return {
             id,
             name: isDefault ? "כל המקרים" : name,
             enabled: item.enabled !== false,
             isDefault,
             scope: isDefault
-              ? { roomIds: [], dayKeys: [] }
+              ? { roomIds: [], dayKeys: [], semesterIds: [] }
               : {
                   roomIds: scopeRoomIds,
+                  semesterIds: scopeSemesterIds,
                   dayKeys: Array.isArray(scopeRaw.dayKeys)
                     ? scopeRaw.dayKeys.filter(
                         (entry): entry is DayKey =>

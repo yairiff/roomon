@@ -1,0 +1,21 @@
+{
+  "name": "RoomON",
+  "short_name": "RoomON",
+  "icons": [
+    {
+      "src": "/public/icons/web-app-manifest-192x192.png?v=20260420",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/public/icons/web-app-manifest-512x512.png?v=20260420",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#f9ac00",
+  "background_color": "#f9ac00",
+  "display": "standalone"
+}
