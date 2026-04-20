@@ -86,7 +86,6 @@ export function useAdminDraftFlow({
       if (reservationOverlap) return "קיים שריון חופף.";
 
       const policy = roomMeta?.[roomId];
-      if (policy?.isClosed) return "החדר סגור זמנית.";
       const roomOpen = policy?.openMinutes ?? config.startHour * 60;
       const roomClose = policy?.closeMinutes ?? config.endHour * 60;
       if (startMinutes < roomOpen || endMinutes > roomClose) {

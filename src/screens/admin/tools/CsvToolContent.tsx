@@ -7,7 +7,6 @@ import { stripUndefined } from "../../../lib/stripUndefined";
 import { parseTimeInput, toTimeInput } from "../../../lib/timeInput";
 import { cohortStartYearFromGrade, gradeValueFromCohort } from "../../../lib/academics";
 import type { DirectoryUser, LessonRecord, UserRole } from "../../../types/admin";
-import type { SemesterKey } from "../../../types/ui";
 import type { Reservation } from "../../../types/reservations";
 import { DownloadIcon, UploadIcon } from "../../../components/Icons";
 import { usersCsvHelp, scheduleCsvHelp } from "./csvTool/CsvHelp";
@@ -24,7 +23,7 @@ import {
 type CsvToolContentProps = {
   section: "users" | "schedule";
   scheduleFilter: "all" | "lessons" | "regular" | "special" | "exam" | "closed";
-  activeSemester: SemesterKey;
+  activeSemester: string;
   users: DirectoryUser[];
   lessons: LessonRecord[];
   lessonsError?: string;
@@ -281,7 +280,7 @@ export default function CsvToolContent({
     return { users: next, errors };
   };
 
-  const lessonIdFromRow = (semester: SemesterKey, day: LessonRecord["day"], roomId: string, startMinutes: number) =>
+  const lessonIdFromRow = (semester: string, day: LessonRecord["day"], roomId: string, startMinutes: number) =>
     `lesson_${semester}_${day}_${roomId}_${startMinutes}`;
 
   const parseEndMinutesFromRow = (
@@ -315,13 +314,13 @@ export default function CsvToolContent({
     const errors: string[] = [];
     const lessonsNext: LessonRecord[] = [];
     const seenLessons = new Set<string>();
-    const semesters = new Set<SemesterKey>();
+    const semesters = new Set<string>();
 
     rows.forEach((row, idx) => {
-      const semesterRaw = (row.semester || "").trim().toUpperCase();
-      const semester = semesterRaw ? (semesterRaw === "A" || semesterRaw === "B" ? (semesterRaw as SemesterKey) : null) : activeSemester;
+      const semesterRaw = (row.semester || "").trim();
+      const semester = semesterRaw || activeSemester;
       if (!semester) {
-        errors.push(`שורה ${idx + 2}: semester לא תקין (A/B)`);
+        errors.push(`שורה ${idx + 2}: semester חסר`);
         return;
       }
       const day = parseDayCell(row.day || "");

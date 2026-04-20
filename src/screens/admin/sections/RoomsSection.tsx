@@ -18,14 +18,14 @@ type RoomsSectionProps = {
   toTimeInput: (minutes: number) => string;
   parseTimeInput: (value: string) => number;
   onUpsert: (room: RoomRecord) => void;
+  onReorder: (orderedRooms: RoomRecord[]) => void;
   onRemove: (roomId: string) => void;
   onReset: () => void;
   onBulkStateChange?: (state: BulkState | null) => void;
 };
 
-type RoomFilter = "all" | "open" | "closed";
 type RoomShortFilter = "all" | "has" | "missing";
-type RoomSort = "order" | "name" | "open_time" | "closed_first";
+type RoomSort = "order" | "name" | "open_time";
 
 export default function RoomsSection({
   roomsRaw,
@@ -36,11 +36,11 @@ export default function RoomsSection({
   toTimeInput,
   parseTimeInput,
   onUpsert,
+  onReorder,
   onRemove,
   onReset,
   onBulkStateChange
 }: RoomsSectionProps) {
-  const [filter, setFilter] = useState<RoomFilter>("all");
   const [shortFilter, setShortFilter] = useState<RoomShortFilter>("all");
   const [sortBy, setSortBy] = useState<RoomSort>("order");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -48,12 +48,10 @@ export default function RoomsSection({
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [isNewEntry, setIsNewEntry] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [draggingRoomId, setDraggingRoomId] = useState<string>("");
 
   const filteredRooms = useMemo(() => {
     let list: RoomRecord[] = roomsRaw;
-    if (filter !== "all") {
-      list = filter === "closed" ? list.filter((room) => room.isClosed) : list.filter((room) => !room.isClosed);
-    }
     if (shortFilter !== "all") {
       list = list.filter((room) => {
         const hasShort = Boolean(room.shortName && room.shortName.trim());
@@ -72,11 +70,10 @@ export default function RoomsSection({
       const aName = a.name.localeCompare(b.name, "he");
       if (sortBy === "name") return aName;
       if (sortBy === "open_time") return (a.openMinutes ?? 0) - (b.openMinutes ?? 0) || aName;
-      if (sortBy === "closed_first") return Number(b.isClosed) - Number(a.isClosed) || aName;
       // order
       return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || aName;
     });
-  }, [filter, query, roomsRaw, shortFilter, sortBy]);
+  }, [query, roomsRaw, shortFilter, sortBy]);
 
   const filteredById = useMemo(() => {
     const map = new Map<string, RoomRecord>();
@@ -98,24 +95,6 @@ export default function RoomsSection({
     return base;
   }, [roomsRaw]);
 
-  const statusCounts = useMemo(() => {
-    const base = { all: roomsRaw.length, open: 0, closed: 0 };
-    roomsRaw.forEach((room) => {
-      if (room.isClosed) base.closed += 1;
-      else base.open += 1;
-    });
-    return base;
-  }, [roomsRaw]);
-
-  const filterLabel: Record<RoomFilter, string> = useMemo(
-    () => ({
-      all: `הכל (${statusCounts.all})`,
-      open: `פתוחים (${statusCounts.open})`,
-      closed: `סגורים (${statusCounts.closed})`
-    }),
-    [statusCounts]
-  );
-
   const shortFilterLabel: Record<RoomShortFilter, string> = useMemo(
     () => ({
       all: `הכל (${shortCounts.all})`,
@@ -128,13 +107,14 @@ export default function RoomsSection({
   const sortLabel: Record<RoomSort, string> = {
     order: "סדר תצוגה",
     name: "שם",
-    open_time: "שעת פתיחה",
-    closed_first: "סגורים קודם"
+    open_time: "שעת פתיחה"
   };
 
   const selectedRoom = useMemo(() =>
     (selectedRoomId ? roomsRaw.find((room) => room.id === selectedRoomId) || null : null),
   [roomsRaw, selectedRoomId]);
+
+  const canDragRooms = sortBy === "order";
 
   const handleSelect = (room: RoomRecord) => {
     setSelectedRoomId(room.id);
@@ -168,6 +148,21 @@ export default function RoomsSection({
     setRoomDraft(copy);
     setIsEditing(true);
     setIsNewEntry(false);
+  };
+
+  const moveRoom = (fromId: string, toId: string) => {
+    if (!canDragRooms) return;
+    if (!fromId || !toId || fromId === toId) return;
+    const ordered = [...roomsRaw].sort(
+      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, "he")
+    );
+    const fromIndex = ordered.findIndex((room) => room.id === fromId);
+    const toIndex = ordered.findIndex((room) => room.id === toId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const next = [...ordered];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    onReorder(next.map((room, index) => ({ ...room, sortOrder: index + 1 })));
   };
 
   const bulkToggleAll = () => {
@@ -305,14 +300,6 @@ export default function RoomsSection({
                 />
               </label>
               <label>
-                סדר
-                <input
-                  type="number"
-                  value={roomDraft.sortOrder ?? 0}
-                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, sortOrder: Number(event.target.value) }))}
-                />
-              </label>
-              <label>
                 פתיחה
                 <input
                   type="time"
@@ -331,14 +318,6 @@ export default function RoomsSection({
                     setRoomDraft((prev) => ({ ...prev, closeMinutes: parseTimeInput(event.target.value) }))
                   }
                 />
-              </label>
-              <label className="admin-checkbox">
-                <input
-                  type="checkbox"
-                  checked={Boolean(roomDraft.isClosed)}
-                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, isClosed: event.target.checked }))}
-                />
-                <span>סגור</span>
               </label>
             </div>
           </fieldset>
@@ -361,24 +340,6 @@ export default function RoomsSection({
       <div className="admin-section-toolbar">
         <div className="admin-filter-bar" aria-label="סינון ומיון">
           <div className="admin-filter-group scroll" aria-label="סינונים">
-            <FilterChip label="סטטוס" value={filterLabel[filter]}>
-              <div className="admin-filter-options">
-                {(Object.keys(filterLabel) as RoomFilter[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`admin-filter-option${filter === key ? " active" : ""}`}
-                    onClick={(event) => {
-                      setFilter(key);
-                      closeFilterChip(event);
-                    }}
-                  >
-                    {filterLabel[key]}
-                  </button>
-                ))}
-              </div>
-            </FilterChip>
-
             <FilterChip label="קיצור" value={shortFilterLabel[shortFilter]}>
               <div className="admin-filter-options">
                 {(Object.keys(shortFilterLabel) as RoomShortFilter[]).map((key) => (
@@ -411,6 +372,7 @@ export default function RoomsSection({
           <span className="admin-filter-summary-count">
             {selectedInView.length ? `${selectedInView.length} מתוך ${filteredRooms.length} תוצאות` : `${filteredRooms.length} תוצאות`}
           </span>
+          {canDragRooms ? <span className="admin-meta">גרור/י שורות כדי לשנות סדר.</span> : null}
         </div>
         {roomsError ? <span className="admin-error">{roomsError}</span> : null}
       </div>
@@ -421,9 +383,21 @@ export default function RoomsSection({
               {filteredRooms.map((room) => (
                 <div
                   key={room.id}
-                  className={`admin-row clickable${selectedRoomId === room.id ? " selected" : ""}`}
+                  className={`admin-row clickable${selectedRoomId === room.id ? " selected" : ""}${draggingRoomId === room.id ? " dragging" : ""}`}
                   role="button"
                   tabIndex={0}
+                  draggable={canDragRooms}
+                  onDragStart={() => setDraggingRoomId(room.id)}
+                  onDragOver={(event) => {
+                    if (!canDragRooms) return;
+                    event.preventDefault();
+                  }}
+                  onDrop={() => {
+                    if (!draggingRoomId || draggingRoomId === room.id) return;
+                    moveRoom(draggingRoomId, room.id);
+                    setDraggingRoomId("");
+                  }}
+                  onDragEnd={() => setDraggingRoomId("")}
                   onClick={() => handleSelect(room)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
@@ -432,7 +406,7 @@ export default function RoomsSection({
                     }
                   }}
                 >
-                  <span className={`admin-row-stripe ${room.isClosed ? "closed" : "open"}`} aria-hidden="true" />
+                  <span className="admin-row-stripe open" aria-hidden="true" />
                   <RowSelectButton
                     selected={selectedIds.has(room.id)}
                     label="בחר חדר"
@@ -445,11 +419,11 @@ export default function RoomsSection({
                       })
                     }
                   />
+                  {canDragRooms ? <span className="admin-row-grip" aria-hidden="true">⋮⋮</span> : null}
                   <div className="admin-row-main">
                     <p className="admin-row-title">{room.name}</p>
                     <p className="admin-row-meta">
                       {room.shortName} · {toTimeInput(room.openMinutes || 0)}-{toTimeInput(room.closeMinutes || 0)}
-                      {room.isClosed ? " · סגור" : ""}
                     </p>
                   </div>
                   <div className="admin-row-actions">
@@ -484,13 +458,10 @@ export default function RoomsSection({
                           e.stopPropagation();
                           setConfirmDeleteIds([room.id]);
                         }}
-                      >
-                        <ReleaseIcon />
-                      </button>
-                    </div>
-                    <span className={`chip small${room.isClosed ? " active" : " ghost"}`}>
-                      {room.isClosed ? "סגור" : "פתוח"}
-                    </span>
+                        >
+                          <ReleaseIcon />
+                        </button>
+                      </div>
                   </div>
                 </div>
               ))}

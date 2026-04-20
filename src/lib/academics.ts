@@ -9,7 +9,10 @@ export function getAcademicYearStartYear(date = new Date()) {
     return date >= start && date <= end;
   });
   if (match) {
-    return parseDateKey(match.start).getFullYear();
+    const start = parseDateKey(match.start);
+    // Academic year starts in Tishrei season (around Sep/Oct). If a range starts in Jan-Jun,
+    // it belongs to the academic year that started in the previous calendar year.
+    return start.getMonth() >= 7 ? start.getFullYear() : start.getFullYear() - 1;
   }
   const month = date.getMonth();
   return month >= 7 ? date.getFullYear() : date.getFullYear() - 1;

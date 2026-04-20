@@ -51,6 +51,10 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
       setError("נא למלא שם מלא.");
       return;
     }
+    if (!phone.trim()) {
+      setError("נא למלא מספר טלפון.");
+      return;
+    }
     const email = user.email.toLowerCase();
     const pictureUrl = isPersistentProfileUrl(user.picture || "") ? (user.picture || "").trim() : "";
     await setDoc(
@@ -84,7 +88,12 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
           </label>
           <label>
             טלפון
-            <input value={phone} onChange={(event) => setPhone(event.target.value)} />
+            <input
+              type="tel"
+              required
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+            />
           </label>
           <label>
             שנתון

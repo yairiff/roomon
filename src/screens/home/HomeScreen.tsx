@@ -20,6 +20,7 @@ import {
   formatDateKey,
   formatShortDate,
   getDayKeyFromDateKey,
+  getWeekStart,
   getWeekNumber,
   parseDateKey
 } from "../../lib/date";
@@ -63,6 +64,18 @@ const shiftSchoolDay = (dateKey: string, delta: number) => {
     next = addDays(next, delta);
   } while (next.getDay() === 5 || next.getDay() === 6);
   return formatDateKey(next);
+};
+
+const buildDateKeysBetween = (startDate: string, endDate: string) => {
+  const keys: string[] = [];
+  if (!startDate || !endDate) return keys;
+  const start = parseDateKey(startDate);
+  const end = parseDateKey(endDate);
+  if (start > end) return keys;
+  for (let date = start; date <= end; date = addDays(date, 1)) {
+    keys.push(formatDateKey(date));
+  }
+  return keys;
 };
 
 export default function HomeScreen({
@@ -185,7 +198,7 @@ export default function HomeScreen({
     showToast: (message) => showToast(message)
   });
 
-  const { rooms, weekDays, timeSlots, lessons, config, roomMeta } = useSchedule(scheduleDateKey);
+  const { rooms, weekDays, timeSlots, lessons, config, roomMeta, reservationPolicy, reservationPolicies, semesters } = useSchedule(scheduleDateKey);
   const overridesWeekDates = buildWeekDates(selectedDate, weekDays);
   const overridesWeekRange = {
     startDate: overridesWeekDates[0]?.dateKey || selectedDate,
@@ -258,13 +271,48 @@ export default function HomeScreen({
     [rooms]
   );
 
+  const getSemesterForDate = useCallback(
+    (dateKey: string) =>
+      semesters.find((semester) => {
+        if (!semester.startDate || !semester.endDate) return false;
+        return dateKey >= semester.startDate && dateKey <= semester.endDate;
+      }) || null,
+    [semesters]
+  );
+
+  const holidayNameByDate = useMemo(() => {
+    const map: Record<string, string> = {};
+    semesters.forEach((semester) => {
+      semester.holidays.forEach((holiday) => {
+        if (!holiday?.date || !holiday?.name) return;
+        if (!map[holiday.date]) {
+          map[holiday.date] = holiday.name;
+        }
+      });
+    });
+    return map;
+  }, [semesters]);
+
+  const isStudyDateForLessons = useCallback(
+    (dateKey: string, dayKey: DayKey) => {
+      const date = parseDateKey(dateKey);
+      if (date.getDay() === 5 || date.getDay() === 6) return false;
+      const semester = getSemesterForDate(dateKey);
+      if (!semester) return false;
+      if (semester.holidays.some((holiday) => holiday.date === dateKey)) return false;
+      return semester.studyDayKeys.includes(dayKey);
+    },
+    [getSemesterForDate]
+  );
+
   const getLessonsForDate = useCallback(
     (dateKey: string, dayKey: DayKey) => {
+      if (!isStudyDateForLessons(dateKey, dayKey)) return [];
       const baseLessons = lessons.filter((lesson) => lesson.day === dayKey);
       const overrides = overridesByDate[dateKey] || [];
       return applyLessonOverrides(baseLessons, overrides, dayKey);
     },
-    [lessons, overridesByDate]
+    [isStudyDateForLessons, lessons, overridesByDate]
   );
 
   // Best-effort migration: older "lesson" pins were date-specific; upgrade them to recurring pins
@@ -336,20 +384,88 @@ export default function HomeScreen({
     }];
   }, [roomMode, weekDates, selectedDayKey, selectedDate]);
 
+  const displayReservationMap = useMemo(() => {
+    if (effectiveAdminMode) return reservationMap;
+    const holidayDates = Object.keys(holidayNameByDate);
+    if (!holidayDates.length || !rooms.length) return reservationMap;
+
+    const visibleDates = new Set<string>([
+      ...Object.keys(reservationMap),
+      ...weekDates.map((day) => day.dateKey),
+      ...roomDates.map((day) => day.dateKey),
+      ...buildDateKeysBetween(finderWindow.startDate, finderWindow.endDate),
+      ...buildDateKeysBetween(todayDateKey, overridesAgendaEnd),
+      selectedDate,
+      todayDateKey
+    ]);
+
+    let touched = false;
+    const next: ReservationMap = {};
+    Object.entries(reservationMap).forEach(([key, value]) => {
+      next[key] = [...value];
+    });
+
+    visibleDates.forEach((dateKey) => {
+      const holidayName = holidayNameByDate[dateKey];
+      if (!holidayName) return;
+      const existing = next[dateKey] ? [...next[dateKey]] : [];
+      rooms.forEach((room) => {
+        const id = `holiday:${dateKey}:${room.id}`;
+        if (existing.some((entry) => entry.id === id)) return;
+        touched = true;
+        existing.push({
+          id,
+          date: dateKey,
+          roomId: room.id,
+          time: config.startHour * 60,
+          durationMinutes: (config.endHour - config.startHour) * 60,
+          reservedBy: holidayName,
+          reservedEmail: "",
+          kind: "closed"
+        });
+      });
+      next[dateKey] = existing.sort((a, b) => a.time - b.time);
+    });
+
+    return touched ? next : reservationMap;
+  }, [
+    config.endHour,
+    config.startHour,
+    effectiveAdminMode,
+    finderWindow.endDate,
+    finderWindow.startDate,
+    holidayNameByDate,
+    overridesAgendaEnd,
+    reservationMap,
+    roomDates,
+    rooms,
+    selectedDate,
+    todayDateKey,
+    weekDates
+  ]);
+
   useEffect(() => {
     if (!onReservationWindowChange) return;
+    const liveWeekStart = getWeekStart(todayDateKey);
+    const liveWeekRange = {
+      startDate: formatDateKey(liveWeekStart),
+      endDate: formatDateKey(addDays(liveWeekStart, weekDays.length - 1))
+    };
+    const selectedWeekStart = getWeekStart(selectedDate);
+    const selectedWeekRange = {
+      startDate: formatDateKey(selectedWeekStart),
+      endDate: formatDateKey(addDays(selectedWeekStart, weekDays.length - 1))
+    };
     const agendaEnd = formatDateKey(addDays(parseDateKey(todayDateKey), Math.max(0, myScheduleAgendaDays - 1)));
     const desired =
       view === "live"
-        ? { startDate: todayDateKey, endDate: todayDateKey }
+        ? liveWeekRange
         : view === "finder"
           ? finderWindow
           : view === "mySchedule"
             ? (myScheduleMode === "agenda"
               ? { startDate: todayDateKey, endDate: agendaEnd }
-              : myScheduleMode === "day"
-                ? { startDate: selectedDate, endDate: selectedDate }
-                : weekRange)
+              : selectedWeekRange)
           : weekRange;
 
     const key = `${desired.startDate}|${desired.endDate}`;
@@ -364,6 +480,7 @@ export default function HomeScreen({
     selectedDate,
     todayDateKey,
     view,
+    weekDays.length,
     weekRange
   ]);
 
@@ -405,8 +522,10 @@ export default function HomeScreen({
     setRoomMode,
     setAuthError,
     showToast,
-    reservationMap,
+    reservationMap: displayReservationMap,
     roomMeta,
+    reservationPolicy,
+    reservationPolicies,
     config,
     getLessonsForDate,
     addReservation,
@@ -439,7 +558,7 @@ export default function HomeScreen({
   });
 
   const handleReservationDetails = (reservationId: string, dateKey: string) => {
-    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    const reservation = (displayReservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
     if (!reservation) return;
     setReservationDetails({ reservation, dateKey });
   };
@@ -461,7 +580,7 @@ export default function HomeScreen({
   };
 
   const handleSpecialDetails = (reservationId: string, dateKey: string) => {
-    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    const reservation = (displayReservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
     if (!reservation) return;
     setBlockDetails({
       kind: "special",
@@ -475,7 +594,7 @@ export default function HomeScreen({
   };
 
   const handleExamDetails = (reservationId: string, dateKey: string) => {
-    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    const reservation = (displayReservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
     if (!reservation) return;
     setBlockDetails({
       kind: "exam",
@@ -489,7 +608,7 @@ export default function HomeScreen({
   };
 
   const handleClosedDetails = (reservationId: string, dateKey: string) => {
-    const reservation = (reservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
+    const reservation = (displayReservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
     if (!reservation) return;
     setBlockDetails({
       kind: "closed",
@@ -649,16 +768,19 @@ export default function HomeScreen({
       const today = parseDateKey(todayDateKey);
       const weekdayLabel = new Intl.DateTimeFormat("he-IL", { weekday: "long" }).format(today);
       const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(today);
-      const todayReservations = reservationMap[todayDateKey] || [];
+      const todayReservations = displayReservationMap[todayDateKey] || [];
       const isWeekend = today.getDay() === 5 || today.getDay() === 6;
       const isClosedNow = isWeekend || nowMinutes < config.startHour * 60 || nowMinutes >= config.endHour * 60;
       const todayLessons = getLessonsForDate(todayDateKey, todayDayKey);
+      const reservationDuration = (durationMinutes: number | undefined) => {
+        const numeric = Number(durationMinutes);
+        return Number.isFinite(numeric) && numeric > 0 ? numeric : 60;
+      };
 
       const availableCount = rooms.filter((room) => {
         const policy = roomMeta?.[room.id];
         const roomOpen = policy?.openMinutes ?? config.startHour * 60;
         const roomClose = policy?.closeMinutes ?? config.endHour * 60;
-        if (policy?.isClosed) return false;
         if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return false;
         const activeLesson = todayLessons.some((lesson) => {
           if (lesson.roomId !== room.id) return false;
@@ -667,7 +789,7 @@ export default function HomeScreen({
         if (activeLesson) return false;
         const activeReservation = todayReservations.some((entry) => {
           if (entry.roomId !== room.id) return false;
-          return entry.time <= nowMinutes && entry.time + entry.durationMinutes > nowMinutes;
+          return entry.time <= nowMinutes && entry.time + reservationDuration(entry.durationMinutes) > nowMinutes;
         });
         return !activeReservation;
       }).length;
@@ -704,7 +826,7 @@ export default function HomeScreen({
     nowMinutes,
     todayDateKey,
     todayDayKey,
-    reservationMap,
+    displayReservationMap,
     getLessonsForDate,
     config.startHour,
     config.endHour,
@@ -755,7 +877,7 @@ export default function HomeScreen({
       view={view}
       rooms={rooms}
       lessons={lessons}
-      reservationMap={reservationMap}
+      reservationMap={displayReservationMap}
       roomMeta={roomMeta}
       getLessonsForDate={getLessonsForDate}
       startHour={config.startHour}
@@ -1001,6 +1123,11 @@ export default function HomeScreen({
           initialDuration={pendingConfirm.durationMinutes}
           initialPrivateDescription={pendingConfirm.privateDescription}
           userRemainingMinutes={pendingConfirm.userRemainingMinutes}
+          limitHoursPerRoomPerDay={pendingConfirm.limitHoursPerRoomPerDay}
+          limitHoursPerRoomPerWeek={pendingConfirm.limitHoursPerRoomPerWeek}
+          limitHoursPerDayTotal={pendingConfirm.limitHoursPerDayTotal}
+          limitHoursPerWeekTotal={pendingConfirm.limitHoursPerWeekTotal}
+          limitMaxDaysForward={pendingConfirm.limitMaxDaysForward}
           mode={pendingConfirm.mode}
           onRelease={
             pendingConfirm.mode === "edit" && pendingConfirm.reservationId

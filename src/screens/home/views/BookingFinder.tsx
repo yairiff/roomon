@@ -95,7 +95,6 @@ export default function BookingFinder({
 
       availableRooms.forEach((room) => {
         const policy = roomMeta?.[room.id];
-        if (policy?.isClosed) return;
         const roomOpen = Math.max(policy?.openMinutes ?? startHour * 60, fromHour * 60);
         const roomClose = Math.min(policy?.closeMinutes ?? endHour * 60, toHour * 60);
         if (roomOpen >= roomClose) return;

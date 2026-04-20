@@ -2,9 +2,63 @@ import { useEffect, useState } from "react";
 import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { stripUndefined } from "../lib/stripUndefined";
+import { formatDateKey } from "../lib/date";
 import type { Reservation, ReservationMap } from "../types/reservations";
 
 export type ReservationsWindow = { startDate: string; endDate: string } | null;
+
+const parseNumeric = (value: unknown): number | null => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric;
+};
+
+const parseMinutesValue = (value: unknown): number | null => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.round(value) : null;
+  }
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  const timeMatch = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (timeMatch) {
+    const hour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.round(numeric);
+};
+
+const parseDurationMinutes = (
+  data: Partial<Reservation> & Record<string, unknown>,
+  startMinutes: number
+): number => {
+  const durationMinutes = parseNumeric(data.durationMinutes);
+  if (durationMinutes !== null && durationMinutes > 0) return Math.round(durationMinutes);
+
+  const endMinutes = parseMinutesValue(data.endMinutes ?? data.endTime);
+  if (endMinutes !== null && endMinutes > startMinutes) {
+    return Math.round(endMinutes - startMinutes);
+  }
+
+  const durationHours = parseNumeric(data.durationHours ?? data.hours);
+  if (durationHours !== null && durationHours > 0) {
+    return Math.round(durationHours * 60);
+  }
+
+  const duration = parseNumeric(data.duration);
+  if (duration !== null && duration > 0) {
+    // Legacy schema stored duration in hours.
+    if (duration <= 12) return Math.round(duration * 60);
+    return Math.round(duration);
+  }
+
+  return 60;
+};
 
 export function useReservations(window: ReservationsWindow = null) {
   const [reservationMap, setReservationMap] = useState<ReservationMap>({});
@@ -34,7 +88,28 @@ export function useReservations(window: ReservationsWindow = null) {
         const nextMap: ReservationMap = {};
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Partial<Reservation> & Record<string, unknown>;
-          if (!data.date || !data.roomId || data.time === undefined) return;
+          const dateKey = (() => {
+            if (typeof data.date === "string") return data.date.trim();
+            if (data.date instanceof Date) return formatDateKey(data.date);
+            if (
+              data.date &&
+              typeof data.date === "object" &&
+              "toDate" in data.date &&
+              typeof (data.date as { toDate?: unknown }).toDate === "function"
+            ) {
+              const dt = (data.date as { toDate: () => Date }).toDate();
+              return dt instanceof Date ? formatDateKey(dt) : "";
+            }
+            return "";
+          })();
+          const roomId = typeof data.roomId === "string"
+            ? data.roomId.trim()
+            : typeof data.room === "string"
+              ? data.room.trim()
+              : "";
+          const rawTime = data.time ?? data.startMinutes ?? data.startTime;
+          const time = parseMinutesValue(rawTime);
+          if (!dateKey || !roomId || time === null) return;
           const kind = data.kind === "special" || data.kind === "exam" || data.kind === "closed" ? data.kind : undefined;
           const reservedPhone =
             typeof data.reservedPhone === "string"
@@ -54,12 +129,13 @@ export function useReservations(window: ReservationsWindow = null) {
               : typeof data.description === "string"
                 ? data.description.trim()
                 : "";
+          const durationMinutes = parseDurationMinutes(data, time);
           const reservation: Reservation = {
             id: docSnap.id,
-            date: data.date,
-            time: data.time,
-            durationMinutes: data.durationMinutes ?? 60,
-            roomId: data.roomId,
+            date: dateKey,
+            time,
+            durationMinutes,
+            roomId,
             reservedBy: data.reservedBy ?? "",
             reservedEmail: data.reservedEmail ?? "",
             ...(reservedPhone ? { reservedPhone } : {}),

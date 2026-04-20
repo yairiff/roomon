@@ -35,21 +35,15 @@ export default function LiveView({
   const todayDate = parseDateKey(dateKey);
   const isWeekend = todayDate.getDay() === 5 || todayDate.getDay() === 6;
   const isClosedNow = isWeekend || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60;
+  const reservationDuration = (durationMinutes: number | undefined) => {
+    const numeric = Number(durationMinutes);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 60;
+  };
 
   const getRoomStatus = (roomId: string) => {
     const policy = roomMeta?.[roomId];
     const roomOpen = policy?.openMinutes ?? startHour * 60;
     const roomClose = policy?.closeMinutes ?? endHour * 60;
-    const isRoomClosed = Boolean(policy?.isClosed);
-
-    if (isRoomClosed) {
-      return {
-        status: "closed" as const,
-        label: "סגור",
-        detailPrimary: policy?.note || "סגור זמנית",
-        detailSecondary: ""
-      };
-    }
     if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) {
       return {
         status: "closed" as const,
@@ -79,7 +73,7 @@ export default function LiveView({
       (entry) =>
         entry.roomId === roomId &&
         entry.time <= nowMinutes &&
-        entry.time + entry.durationMinutes > nowMinutes
+        entry.time + reservationDuration(entry.durationMinutes) > nowMinutes
     );
 
     if (activeReservation) {
@@ -111,8 +105,7 @@ export default function LiveView({
     const policy = roomMeta?.[roomId];
     const roomOpen = policy?.openMinutes ?? startHour * 60;
     const roomClose = policy?.closeMinutes ?? endHour * 60;
-    const isRoomClosed = Boolean(policy?.isClosed);
-    if (isRoomClosed || isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
+    if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
     const intervals = [
       ...lessons
         .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
@@ -124,7 +117,7 @@ export default function LiveView({
         .filter((entry) => entry.roomId === roomId)
         .map((entry) => ({
           start: entry.time,
-          end: entry.time + entry.durationMinutes
+          end: entry.time + reservationDuration(entry.durationMinutes)
         }))
     ].sort((a, b) => a.start - b.start);
 
@@ -148,20 +141,26 @@ export default function LiveView({
     const policy = roomMeta?.[roomId];
     const roomOpen = policy?.openMinutes ?? startHour * 60;
     const roomClose = policy?.closeMinutes ?? endHour * 60;
-    const isRoomClosed = Boolean(policy?.isClosed);
-    if (isRoomClosed || isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
+    if (isClosedNow || nowMinutes < roomOpen || nowMinutes >= roomClose) return null;
     const lessonStarts = lessons
       .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
       .map((lesson) => ({
         start: lesson.startMinutes,
-        label: lesson.title
+        label: (lesson.title || "").trim() || "שיעור"
       }));
 
     const reservationStarts = todayReservations
       .filter((entry) => entry.roomId === roomId)
       .map((entry) => ({
         start: entry.time,
-        label: entry.kind === "special" ? "אירוע" : entry.kind === "exam" ? "מבחן" : entry.kind === "closed" ? "סגור" : "שמור"
+        label:
+          entry.kind === "special"
+            ? (entry.reservedBy || "אירוע")
+            : entry.kind === "exam"
+              ? (entry.reservedBy || "מבחן")
+              : entry.kind === "closed"
+                ? (entry.reservedBy || "סגור")
+                : (entry.reservedBy || "שריון")
       }));
 
     const upcoming = [...lessonStarts, ...reservationStarts]
@@ -216,8 +215,10 @@ export default function LiveView({
             : nextEvent
               ? (nextEventMinutes ? `בעוד ${nextEventMinutes}` : "")
               : "";
-          const detailsBase = [status.detailPrimary, status.detailSecondary].filter(Boolean).join(" · ");
-          const details = detailsBase || (status.status === "empty" ? nextEvent?.label || "" : "");
+          const nextEventName = status.status === "empty" ? (nextEvent?.label || "") : "";
+          const detailsPrimary = status.detailPrimary.trim();
+          const detailsSecondary = status.detailSecondary.trim();
+          const hasDetails = Boolean(detailsPrimary || detailsSecondary);
 
           return (
             <button
@@ -234,14 +235,24 @@ export default function LiveView({
                   {status.label}
                 </span>
               </div>
+              {hasDetails ? (
+                <p className="live-details">
+                  {detailsPrimary ? <span>{detailsPrimary}</span> : null}
+                  {detailsPrimary && detailsSecondary ? <span className="live-details-sep"> · </span> : null}
+                  {detailsSecondary ? <span className="live-details-secondary">{detailsSecondary}</span> : null}
+                </p>
+              ) : null}
               {nextLine1 ? (
                 <p className="live-next">
                   <span className="live-next-line">{nextLine1}</span>
-                  {nextLine2 ? <span className="live-next-line sub">{nextLine2}</span> : null}
+                  {nextLine2 ? (
+                    <span className="live-next-line sub">
+                      {nextEventName ? <span className="live-next-name">{nextEventName} · </span> : null}
+                      {nextLine2}
+                    </span>
+                  ) : null}
                 </p>
-              ) : null}
-
-              {details ? <p className="live-details">{details}</p> : <span className="live-details empty" />}
+              ) : <span className="live-next empty" />}
             </button>
           );
         })}

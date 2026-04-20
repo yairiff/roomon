@@ -16,7 +16,7 @@ export const rimonScheduleConfig: ScheduleConfig = {
   },
   semesterRanges: [
     { key: "A", start: "2025-10-01", end: "2026-02-15" },
-    { key: "B", start: "2026-02-30", end: "2026-07-31" }
+    { key: "B", start: "2026-02-16", end: "2026-07-31" }
   ],
   dayMap: {
     "א": "sun",

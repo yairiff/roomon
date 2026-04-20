@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { rimonScheduleConfig } from "../../../config";
 import { weekDays } from "../../../config";
 import type { LessonRecord, RoomRecord } from "../../../types/admin";
-import type { SemesterKey } from "../../../types/ui";
 import type { Reservation } from "../../../types/reservations";
 import type { BulkState } from "../bulk";
 import { AddIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
@@ -19,8 +18,9 @@ type ScheduleSectionProps = {
   scheduleFilter: ScheduleFilter;
   setScheduleFilter: (filter: ScheduleFilter) => void;
   query: string;
-  activeSemester: SemesterKey;
-  setActiveSemester: (semester: SemesterKey) => void;
+  activeSemester: string;
+  setActiveSemester: (semester: string) => void;
+  semesterOptions: { id: string; label: string; studyYear: number; letter: string }[];
   lessons: LessonRecord[];
   lessonsError: string;
   reservations: Reservation[];
@@ -71,6 +71,7 @@ export default function ScheduleSection({
   query,
   activeSemester,
   setActiveSemester,
+  semesterOptions,
   lessons,
   lessonsError,
   reservations,
@@ -126,6 +127,29 @@ export default function ScheduleSection({
     room: "חדר",
     title: "כותרת"
   };
+  const typeFilterOptions = useMemo(
+    () => [
+      { key: "all" as const, label: `הכל (${lessons.length + reservations.length})` },
+      { key: "lessons" as const, label: `שיעורים (${lessons.length})` },
+      {
+        key: "regular" as const,
+        label: `שריונים (${reservations.filter((entry) => !entry.kind).length})`
+      },
+      {
+        key: "special" as const,
+        label: `אירועים (${reservations.filter((entry) => entry.kind === "special").length})`
+      },
+      {
+        key: "exam" as const,
+        label: `מבחנים (${reservations.filter((entry) => entry.kind === "exam").length})`
+      },
+      {
+        key: "closed" as const,
+        label: `סגירות (${reservations.filter((entry) => entry.kind === "closed").length})`
+      }
+    ],
+    [lessons.length, reservations]
+  );
 
   const filteredLessons = useMemo(() => {
     if (!includesLessons) return [];
@@ -245,7 +269,7 @@ export default function ScheduleSection({
 
   const selectOne = useCallback((item: ScheduleItem) => {
     if (item.kind === "lesson") {
-      setDraft({ kind: "lesson", value: { ...item.lesson, semester: activeSemester } });
+      setDraft({ kind: "lesson", value: { ...item.lesson, semester: item.lesson.semester || activeSemester } });
       return;
     }
     setDraft({
@@ -277,11 +301,12 @@ export default function ScheduleSection({
   }, [itemsByKey, selectOne, selectedInView]);
 
   const duplicateLesson = useCallback((lesson: LessonRecord) => {
-    const newId = `${activeSemester}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const semesterId = lesson.semester || activeSemester || "semester";
+    const newId = `${semesterId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const copy: LessonRecord = {
       ...lesson,
       id: newId,
-      semester: activeSemester,
+      semester: semesterId,
       title: lesson.title ? `${lesson.title} (עותק)` : "שיעור (עותק)"
     };
     onUpsertLesson(copy);
@@ -409,6 +434,7 @@ export default function ScheduleSection({
         setDraft={setDraft}
         activeSemester={activeSemester}
         setActiveSemester={setActiveSemester}
+        semesterOptions={semesterOptions}
         roomsRaw={roomsRaw}
         roomLookup={roomLookup}
         dayLabel={dayLabel}
@@ -422,71 +448,43 @@ export default function ScheduleSection({
       />
 
       <div className="admin-section-toolbar">
+        <div className="admin-type-filter-row" aria-label="סוג רשומה">
+          {typeFilterOptions.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className={`chip small${scheduleFilter === opt.key ? " active" : ""}`}
+              onClick={() => setScheduleFilter(opt.key)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
         <div className="admin-filter-bar" aria-label="סינון ומיון">
           <div className="admin-filter-group scroll" aria-label="סינונים">
-            <FilterChip
-              label="סוג"
-              value={
-                scheduleFilter === "all"
-                  ? "הכל"
-                  : scheduleFilter === "lessons"
-                    ? "שיעורים"
-                    : scheduleFilter === "regular"
-                      ? "שריונים"
-                      : scheduleFilter === "special"
-                        ? "אירועים"
-                        : scheduleFilter === "exam"
-                          ? "מבחנים"
-                          : "סגירות"
-              }
-            >
-              <div className="admin-filter-options">
-                {(
-                  [
-                    { key: "all" as const, label: "הכל" },
-                    { key: "lessons" as const, label: "שיעורים" },
-                    { key: "regular" as const, label: "שריונים" },
-                    { key: "special" as const, label: "אירועים" },
-                    { key: "exam" as const, label: "מבחנים" },
-                    { key: "closed" as const, label: "סגירות" }
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    className={`admin-filter-option${scheduleFilter === opt.key ? " active" : ""}`}
-                    onClick={(event) => {
-                      setScheduleFilter(opt.key);
-                      closeFilterChip(event);
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </FilterChip>
-
             {includesLessons ? (
-              <FilterChip label="סמסטר" value={activeSemester === "A" ? "א׳" : "ב׳"}>
+              <FilterChip
+                label="סמסטר"
+                value={semesterOptions.find((option) => option.id === activeSemester)?.label || "בחר סמסטר"}
+              >
                 <div className="admin-filter-options">
-                  {(
-                    [
-                      { key: "A" as const, label: "סמסטר א׳" },
-                      { key: "B" as const, label: "סמסטר ב׳" }
-                    ] as const
-                  ).map((opt) => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      className={`admin-filter-option${activeSemester === opt.key ? " active" : ""}`}
-                      onClick={(event) => {
-                        setActiveSemester(opt.key);
-                        closeFilterChip(event);
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+                  {semesterOptions.length ? (
+                    semesterOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`admin-filter-option${activeSemester === option.id ? " active" : ""}`}
+                        onClick={(event) => {
+                          setActiveSemester(option.id);
+                          closeFilterChip(event);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="admin-meta">אין סמסטרים מוגדרים.</p>
+                  )}
                 </div>
               </FilterChip>
             ) : null}

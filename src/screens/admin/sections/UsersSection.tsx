@@ -30,11 +30,19 @@ type UsersSectionProps = {
 };
 
 type UserFilter = "all" | "pending" | "student" | "moderator" | "admin";
-type GradeFilter = "all" | "A" | "B" | "C" | "STAFF";
-type PhoneFilter = "all" | "has" | "missing";
+type GradeFilter = "all" | "A" | "B" | "C" | "GRADUATES" | "STAFF";
 type UserSort = "name" | "email" | "role" | "cohort";
 
 const isStaffUser = (user: DirectoryUser) => user.cohortStartYear == null;
+const gradeFilterFromCohort = (cohortStartYear?: number): Exclude<GradeFilter, "all" | "STAFF"> | null => {
+  if (!cohortStartYear) return null;
+  const label = gradeLabelFromCohort(cohortStartYear);
+  if (label === "א") return "A";
+  if (label === "ב") return "B";
+  if (label === "ג") return "C";
+  if (label === "בוגר") return "GRADUATES";
+  return null;
+};
 
 const roleLabel = (role: DirectoryUser["role"]) => {
   if (role === "admin") return "מנהל";
@@ -59,7 +67,6 @@ export default function UsersSection({
 }: UsersSectionProps) {
   const [filter, setFilter] = useState<UserFilter>("all");
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
-  const [phoneFilter, setPhoneFilter] = useState<PhoneFilter>("all");
   const [sortBy, setSortBy] = useState<UserSort>("name");
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(() => new Set());
   const [confirmDeleteEmails, setConfirmDeleteEmails] = useState<string[] | null>(null);
@@ -90,17 +97,15 @@ export default function UsersSection({
   }, [filter, users]);
 
   const gradeCounts = useMemo(() => {
-    const base = { all: roleFilteredUsers.length, A: 0, B: 0, C: 0, STAFF: 0 };
+    const base = { all: roleFilteredUsers.length, A: 0, B: 0, C: 0, GRADUATES: 0, STAFF: 0 };
     roleFilteredUsers.forEach((user) => {
       if (isStaffUser(user)) {
         base.STAFF += 1;
         return;
       }
-      if (user.cohortStartYear == null) return;
-      const grade = gradeValueFromCohort(user.cohortStartYear);
-      if (grade === "A") base.A += 1;
-      if (grade === "B") base.B += 1;
-      if (grade === "C") base.C += 1;
+      const grade = gradeFilterFromCohort(user.cohortStartYear);
+      if (!grade) return;
+      base[grade] += 1;
     });
     return base;
   }, [roleFilteredUsers]);
@@ -112,13 +117,7 @@ export default function UsersSection({
     } else if (gradeFilter !== "all") {
       list = list.filter((user) => {
         if (user.cohortStartYear == null) return false;
-        return gradeValueFromCohort(user.cohortStartYear) === gradeFilter;
-      });
-    }
-    if (phoneFilter !== "all") {
-      list = list.filter((user) => {
-        const hasPhone = Boolean(user.phone && user.phone.trim());
-        return phoneFilter === "has" ? hasPhone : !hasPhone;
+        return gradeFilterFromCohort(user.cohortStartYear) === gradeFilter;
       });
     }
     const q = query.trim().toLowerCase();
@@ -152,7 +151,7 @@ export default function UsersSection({
     });
 
     return sorted;
-  }, [gradeFilter, phoneFilter, query, roleFilteredUsers, sortBy]);
+  }, [gradeFilter, query, roleFilteredUsers, sortBy]);
 
   const filteredUsersCount = filteredUsers.length;
 
@@ -166,16 +165,6 @@ export default function UsersSection({
     () => Array.from(selectedEmails).filter((email) => filteredByEmail.has(email)),
     [filteredByEmail, selectedEmails]
   );
-
-  const phoneCounts = useMemo(() => {
-    const base = { all: roleFilteredUsers.length, has: 0, missing: 0 };
-    roleFilteredUsers.forEach((user) => {
-      const hasPhone = Boolean(user.phone && user.phone.trim());
-      if (hasPhone) base.has += 1;
-      else base.missing += 1;
-    });
-    return base;
-  }, [roleFilteredUsers]);
 
   const selectedUser = useMemo(() =>
     (selectedEmail ? users.find((user) => user.email === selectedEmail) || null : null),
@@ -329,13 +318,8 @@ export default function UsersSection({
     A: "א׳",
     B: "ב׳",
     C: "ג׳",
+    GRADUATES: "בוגרים",
     STAFF: "צוות"
-  };
-
-  const phoneFilterLabel: Record<PhoneFilter, string> = {
-    all: "הכל",
-    has: "קיים",
-    missing: "חסר"
   };
 
   return (
@@ -359,30 +343,11 @@ export default function UsersSection({
           <fieldset className="admin-fieldset">
             <div className="admin-form-grid">
               <label>
-                אימייל
-                <input
-                  type="email"
-                  value={userDraft.email}
-                  onChange={(event) =>
-                    setUserDraft((prev) => ({ ...prev, email: event.target.value.toLowerCase() }))
-                  }
-                  disabled={!isNewEntry}
-                />
-              </label>
-              <label>
                 שם
                 <input
                   type="text"
                   value={userDraft.name}
                   onChange={(event) => setUserDraft((prev) => ({ ...prev, name: event.target.value }))}
-                />
-              </label>
-              <label>
-                טלפון
-                <input
-                  type="tel"
-                  value={userDraft.phone || ""}
-                  onChange={(event) => setUserDraft((prev) => ({ ...prev, phone: event.target.value }))}
                 />
               </label>
               <label>
@@ -397,6 +362,25 @@ export default function UsersSection({
                   <option value="moderator">מתאם</option>
                   <option value="admin">מנהל</option>
                 </select>
+              </label>
+              <label>
+                אימייל
+                <input
+                  type="email"
+                  value={userDraft.email}
+                  onChange={(event) =>
+                    setUserDraft((prev) => ({ ...prev, email: event.target.value.toLowerCase() }))
+                  }
+                  disabled={!isNewEntry}
+                />
+              </label>
+              <label>
+                טלפון
+                <input
+                  type="tel"
+                  value={userDraft.phone || ""}
+                  onChange={(event) => setUserDraft((prev) => ({ ...prev, phone: event.target.value }))}
+                />
               </label>
               <label>
                 שנתון
@@ -430,15 +414,6 @@ export default function UsersSection({
                 </select>
               </label>
             </div>
-            {userDraft.cohortStartYear || userDraft.cohortStartYear == null ? (
-              <p className="admin-meta">
-                סטטוס נוכחי:{" "}
-                {userDraft.cohortStartYear == null ? "צוות" : gradeLabelFromCohort(userDraft.cohortStartYear)}
-                {userDraft.cohortStartYear
-                  ? ` · התחלת מחזור ${userDraft.cohortStartYear}-${userDraft.cohortStartYear + 1}`
-                  : ""}
-              </p>
-            ) : null}
             <div className="admin-actions">
               <button className="primary" type="button" onClick={() => onUpsert(userDraft)} disabled={!userDraft.email}>
                 {isNewEntry ? "הוספה" : "עדכון"}
@@ -493,6 +468,7 @@ export default function UsersSection({
                     { key: "A" as const, label: `א׳ (${gradeCounts.A})` },
                     { key: "B" as const, label: `ב׳ (${gradeCounts.B})` },
                     { key: "C" as const, label: `ג׳ (${gradeCounts.C})` },
+                    { key: "GRADUATES" as const, label: `בוגרים (${gradeCounts.GRADUATES})` },
                     { key: "STAFF" as const, label: `צוות (${gradeCounts.STAFF})` }
                   ] as const
                 ).map((opt) => (
@@ -511,29 +487,6 @@ export default function UsersSection({
               </div>
             </FilterChip>
 
-            <FilterChip label="טלפון" value={phoneFilterLabel[phoneFilter]}>
-              <div className="admin-filter-options">
-                {(
-                  [
-                    { key: "all" as const, label: `הכל (${phoneCounts.all})` },
-                    { key: "has" as const, label: `קיים (${phoneCounts.has})` },
-                    { key: "missing" as const, label: `חסר (${phoneCounts.missing})` }
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    className={`admin-filter-option${phoneFilter === opt.key ? " active" : ""}`}
-                    onClick={(event) => {
-                      setPhoneFilter(opt.key);
-                      closeFilterChip(event);
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </FilterChip>
           </div>
 
           <div className="admin-filter-group" aria-label="מיון">

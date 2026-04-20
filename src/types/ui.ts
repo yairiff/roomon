@@ -12,4 +12,4 @@ export type TopBarContext = {
   onNext?: () => void;
   controls?: ReactNode;
 };
-export type SemesterKey = "A" | "B";
+export type SemesterKey = string;

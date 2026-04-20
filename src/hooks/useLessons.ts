@@ -2,12 +2,26 @@ import { collection, deleteDoc, doc, onSnapshot, query, setDoc, where } from "fi
 import { useEffect, useState } from "react";
 import { db } from "../lib/firebase";
 import type { LessonRecord } from "../types/admin";
-import type { SemesterKey } from "../types/ui";
 
-export function useLessons(semester?: SemesterKey | null) {
+const toSemesterScope = (value?: string | null | string[]) => {
+  if (value === null) return null;
+  if (Array.isArray(value)) {
+    const ids = Array.from(new Set(value.map((entry) => entry.trim()).filter(Boolean)));
+    return ids.length ? ids : [];
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [];
+};
+
+export function useLessons(semesterId?: string | null | string[]) {
   const [lessons, setLessons] = useState<LessonRecord[]>([]);
   const [lessonsReady, setLessonsReady] = useState<boolean>(!db);
   const [lessonsError, setLessonsError] = useState<string>("");
+  const semesterScope = toSemesterScope(semesterId);
+  const semesterScopeKey = semesterScope === null ? "__none__" : semesterScope.join("|");
 
   useEffect(() => {
     if (!db) {
@@ -15,7 +29,7 @@ export function useLessons(semester?: SemesterKey | null) {
       setLessonsReady(true);
       return;
     }
-    if (semester === null) {
+    if (semesterScope === null) {
       setLessons([]);
       setLessonsError("");
       setLessonsReady(true);
@@ -23,7 +37,12 @@ export function useLessons(semester?: SemesterKey | null) {
     }
 
     const lessonsRef = collection(db, "lessons");
-    const q = semester ? query(lessonsRef, where("semester", "==", semester)) : lessonsRef;
+    const q =
+      semesterScope.length === 0
+        ? lessonsRef
+        : semesterScope.length === 1
+          ? query(lessonsRef, where("semester", "==", semesterScope[0]))
+          : query(lessonsRef, where("semester", "in", semesterScope.slice(0, 10)));
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -31,6 +50,7 @@ export function useLessons(semester?: SemesterKey | null) {
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as LessonRecord;
           if (!data) return;
+          if (semesterScope.length > 10 && !semesterScope.includes(String(data.semester || ""))) return;
           next.push({
             ...data,
             id: data.id || docSnap.id
@@ -52,7 +72,7 @@ export function useLessons(semester?: SemesterKey | null) {
     );
 
     return () => unsubscribe();
-  }, [semester]);
+  }, [semesterScopeKey]);
 
   const upsertLesson = async (lesson: LessonRecord) => {
     if (!db) return;

@@ -16,6 +16,11 @@ export type ReserveConfirmOverlayProps = {
   initialDuration: number;
   initialPrivateDescription?: string;
   userRemainingMinutes: number;
+  limitHoursPerRoomPerDay: number;
+  limitHoursPerRoomPerWeek: number;
+  limitHoursPerDayTotal: number;
+  limitHoursPerWeekTotal: number;
+  limitMaxDaysForward: number;
   mode?: "create" | "edit";
   onRelease?: () => void;
   onConfirm: (startMinutes: number, durationMinutes: number, privateDescription?: string) => void;
@@ -34,11 +39,17 @@ export default function ReserveConfirmOverlay({
   initialDuration,
   initialPrivateDescription = "",
   userRemainingMinutes,
+  limitHoursPerRoomPerDay,
+  limitHoursPerRoomPerWeek,
+  limitHoursPerDayTotal,
+  limitHoursPerWeekTotal,
+  limitMaxDaysForward,
   mode = "create",
   onRelease,
   onConfirm,
   onClose
 }: ReserveConfirmOverlayProps) {
+  const formatHoursLimit = (hours: number) => (hours <= 0 ? "ללא הגבלה" : `${hours}`);
   const [startMinutes, setStartMinutes] = useState(initialStart);
   const [endMinutes, setEndMinutes] = useState(initialStart + initialDuration);
   const [privateDescription, setPrivateDescription] = useState(initialPrivateDescription);
@@ -65,7 +76,7 @@ export default function ReserveConfirmOverlay({
 
   const STEP = 30;
   const MIN_DURATION = 30;
-  const maxDurationForStart = Math.floor(Math.min(limitEnd - startMinutes, userRemainingMinutes, 180) / STEP) * STEP;
+  const maxDurationForStart = Math.floor(Math.min(limitEnd - startMinutes, userRemainingMinutes) / STEP) * STEP;
   const endOptions = useMemo(() => {
     const options: { end: number; duration: number; label: string }[] = [];
     for (let duration = MIN_DURATION; duration <= maxDurationForStart; duration += STEP) {
@@ -118,7 +129,7 @@ export default function ReserveConfirmOverlay({
                 const nextStart = Number(event.target.value);
                 const previousDuration = Math.max(MIN_DURATION, endMinutes - startMinutes);
                 setStartMinutes(nextStart);
-                const nextMaxRaw = Math.min(limitEnd - nextStart, userRemainingMinutes, 180);
+                const nextMaxRaw = Math.min(limitEnd - nextStart, userRemainingMinutes);
                 const nextMax = Math.floor(nextMaxRaw / STEP) * STEP;
                 const nextDurationRaw = Math.max(MIN_DURATION, Math.min(previousDuration, nextMax));
                 const nextDuration = Math.max(MIN_DURATION, Math.floor(nextDurationRaw / STEP) * STEP);
@@ -149,7 +160,11 @@ export default function ReserveConfirmOverlay({
                 <InfoOutlinedIcon fontSize="small" />
               </button>
               <div className={`reserve-tooltip${infoOpen ? " open" : ""}`} role="tooltip">
-                <div>שמירת חדרים מוגבלת ל-3 שעות לחדר ליום.</div>
+                <div>חדר/יום: {formatHoursLimit(limitHoursPerRoomPerDay)}.</div>
+                <div>חדר/שבוע: {formatHoursLimit(limitHoursPerRoomPerWeek)}.</div>
+                <div>סה&quot;כ/יום: {formatHoursLimit(limitHoursPerDayTotal)}.</div>
+                <div>סה&quot;כ/שבוע: {formatHoursLimit(limitHoursPerWeekTotal)}.</div>
+                <div>קדימה: {limitMaxDaysForward <= 0 ? "ללא הגבלה" : `${limitMaxDaysForward} ימים`}.</div>
                 <div>להחרגה יש לפנות למנהל מורשה.</div>
               </div>
             </div>

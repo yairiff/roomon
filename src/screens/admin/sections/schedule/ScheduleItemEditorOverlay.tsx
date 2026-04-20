@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { rimonScheduleConfig, weekDays as weekDayOptions } from "../../../../config";
 import type { LessonOverride, LessonRecord, RoomRecord } from "../../../../types/admin";
-import type { SemesterKey } from "../../../../types/ui";
 import type { Reservation } from "../../../../types/reservations";
 import { useLessonOverrides } from "../../../../hooks/useLessonOverrides";
+import { buildYearlySemesterId, parseYearlySemesterId } from "../../../../lib/semesterScope";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import PropsOverlay from "../../components/PropsOverlay";
 import {
@@ -29,8 +29,9 @@ type Draft =
 type ScheduleItemEditorOverlayProps = {
   draft: Draft;
   setDraft: (draft: Draft) => void;
-  activeSemester: SemesterKey;
-  setActiveSemester: (semester: SemesterKey) => void;
+  activeSemester: string;
+  setActiveSemester: (semester: string) => void;
+  semesterOptions: { id: string; label: string; studyYear: number; letter: string }[];
   roomsRaw: RoomRecord[];
   roomLookup: Record<string, string>;
   dayLabel: (day: LessonRecord["day"]) => string;
@@ -64,11 +65,22 @@ const newReservationId = () =>
     ? crypto.randomUUID()
     : `res-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
+const formatAcademicYearLabel = (studyYear: number) => {
+  const nextYear = String((studyYear + 1) % 100).padStart(2, "0");
+  return `${studyYear}/${nextYear}`;
+};
+
+const isPrimarySemesterLetter = (letter: string) => {
+  const normalized = letter.trim();
+  return normalized === "א" || normalized === "ב" || normalized.toUpperCase() === "A" || normalized.toUpperCase() === "B";
+};
+
 export default function ScheduleItemEditorOverlay({
   draft,
   setDraft,
   activeSemester,
   setActiveSemester,
+  semesterOptions,
   roomsRaw,
   roomLookup,
   dayLabel,
@@ -112,6 +124,32 @@ export default function ScheduleItemEditorOverlay({
     if (h > 23 || m > 59) return null;
     return minutes;
   };
+  const semesterOptionById = useMemo(
+    () =>
+      semesterOptions.reduce<Record<string, { id: string; label: string; studyYear: number; letter: string }>>(
+        (acc, option) => {
+          acc[option.id] = option;
+          return acc;
+        },
+        {}
+      ),
+    [semesterOptions]
+  );
+  const lessonSemesterSelectOptions = useMemo(() => {
+    const yearlyByYear = new Map<number, { id: string; label: string; studyYear: number; letter: string }>();
+    semesterOptions.forEach((option) => {
+      if (!isPrimarySemesterLetter(option.letter || "")) return;
+      if (!yearlyByYear.has(option.studyYear)) {
+        yearlyByYear.set(option.studyYear, {
+          id: buildYearlySemesterId(option.studyYear),
+          label: `שנתי · ${formatAcademicYearLabel(option.studyYear)}`,
+          studyYear: option.studyYear,
+          letter: "שנתי"
+        });
+      }
+    });
+    return [...semesterOptions, ...Array.from(yearlyByYear.values())];
+  }, [semesterOptions]);
 
   const { overrides, upsertOverride, removeOverride } = useLessonOverrides();
   const [lessonOverridesOpen, setLessonOverridesOpen] = useState(false);
@@ -196,9 +234,14 @@ export default function ScheduleItemEditorOverlay({
         setDraftError("יש להזין שם שיעור.");
         return;
       }
-      const id = draft.value.id || `${activeSemester}-${Date.now()}`;
-      onUpsertLesson({ ...draft.value, id, semester: activeSemester });
-      setDraft({ kind: "lesson", value: { ...draft.value, id, semester: activeSemester } });
+      const semesterId = draft.value.semester || activeSemester;
+      if (!semesterId) {
+        setDraftError("יש לבחור סמסטר לשיעור.");
+        return;
+      }
+      const id = draft.value.id || `${semesterId}-${Date.now()}`;
+      onUpsertLesson({ ...draft.value, id, semester: semesterId });
+      setDraft({ kind: "lesson", value: { ...draft.value, id, semester: semesterId } });
       return;
     }
     const specialKind = draft.value.kind === "special" || draft.value.kind === "closed";
@@ -272,7 +315,7 @@ export default function ScheduleItemEditorOverlay({
                         roomId: draft.value.roomId,
                         startMinutes: draft.value.startMinutes,
                         durationMinutes: rimonScheduleConfig.academicHourMinutes,
-                        semester: activeSemester
+                        semester: activeSemester || semesterOptions[0]?.id || ""
                       };
                       setDraft({ kind: "lesson", value: base });
                     }}
@@ -377,15 +420,37 @@ export default function ScheduleItemEditorOverlay({
                   <label>
                     סמסטר
                     <select
-                      value={activeSemester}
+                      value={draft.value.semester || activeSemester}
                       onChange={(event) => {
-                        const next = event.target.value as SemesterKey;
-                        setActiveSemester(next);
+                        const next = event.target.value;
+                        if (semesterOptionById[next]) {
+                          setActiveSemester(next);
+                        }
                         setDraft({ kind: "lesson", value: { ...draft.value, semester: next } });
                       }}
                     >
-                      <option value="A">סמסטר א׳</option>
-                      <option value="B">סמסטר ב׳</option>
+                      {lessonSemesterSelectOptions.length ? (
+                        lessonSemesterSelectOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">אין סמסטרים</option>
+                      )}
+                      {!lessonSemesterSelectOptions.some(
+                        (option) => option.id === (draft.value.semester || activeSemester)
+                      ) &&
+                      (() => {
+                        const selectedId = draft.value.semester || activeSemester;
+                        const selectedYearly = parseYearlySemesterId(selectedId);
+                        if (selectedYearly === undefined) return false;
+                        return true;
+                      })() ? (
+                        <option value={draft.value.semester || activeSemester}>
+                          שנתי · {formatAcademicYearLabel(parseYearlySemesterId(draft.value.semester || activeSemester) || new Date().getFullYear())}
+                        </option>
+                      ) : null}
                     </select>
                   </label>
                 </div>
