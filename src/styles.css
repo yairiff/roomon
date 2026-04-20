@@ -1701,7 +1701,7 @@ body,
 @keyframes day-swipe-prev {
   from {
     opacity: 0.72;
-    transform: translateX(-12px);
+    transform: translateX(12px);
   }
   to {
     opacity: 1;
@@ -1712,7 +1712,7 @@ body,
 @keyframes day-swipe-next {
   from {
     opacity: 0.72;
-    transform: translateX(12px);
+    transform: translateX(-12px);
   }
   to {
     opacity: 1;
@@ -5665,6 +5665,12 @@ select,
   margin: 6px 0 0;
   font-size: 0.86rem;
   color: var(--ink);
+  display: grid;
+  gap: 4px;
+}
+
+.admin-policy-item-summary-line {
+  margin: 0;
 }
 
 .admin-policy-pill {
@@ -5799,8 +5805,11 @@ select,
   color: var(--muted);
 }
 
-.admin-form input,
-.admin-form select {
+.admin-form input:not([type="checkbox"]):not([type="radio"]),
+.admin-form select,
+.admin-section input:not([type="checkbox"]):not([type="radio"]),
+.admin-section select,
+.admin-section textarea {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 8px 10px;
@@ -5812,6 +5821,29 @@ select,
 .admin-actions .danger {
   border-color: #f5b7b1;
   color: #a72f24;
+}
+
+.admin-sync-endpoint-wrap {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.admin-sync-endpoint {
+  width: 100%;
+}
+
+.admin-sync-endpoint input {
+  width: 100%;
+  min-width: 0;
+}
+
+.admin-section input:not([type="checkbox"]):not([type="radio"]):focus,
+.admin-section select:focus,
+.admin-section textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* Signup */
@@ -6100,9 +6132,37 @@ select,
 
   .admin-section-tools {
     flex-wrap: nowrap;
+    min-width: max-content;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .admin-top-toolbar-main-row {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .admin-toolbar-title {
+    white-space: nowrap;
+  }
+
+  .admin-toolbar-controls {
+    order: 3;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 0 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
     padding-bottom: 4px;
+  }
+
+  .admin-toolbar-controls::-webkit-scrollbar {
+    display: none;
   }
 
   .admin-policy-matrix {

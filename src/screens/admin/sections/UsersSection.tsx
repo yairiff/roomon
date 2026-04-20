@@ -271,8 +271,11 @@ export default function UsersSection({
 
   useEffect(() => {
     onBulkStateChange?.(bulkState);
-    return () => onBulkStateChange?.(null);
   }, [bulkState, onBulkStateChange]);
+
+  useEffect(() => {
+    return () => onBulkStateChange?.(null);
+  }, [onBulkStateChange]);
 
   const confirmDelete = () => {
     if (!confirmDeleteEmails?.length) return;

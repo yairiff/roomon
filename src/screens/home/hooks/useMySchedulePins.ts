@@ -157,6 +157,27 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
     };
   }, [normalizedEmail]);
 
+  const persistPins = useCallback(
+    async (nextPins: MySchedulePin[]) => {
+      if (!normalizedEmail) return;
+      setPins(nextPins);
+      saveMySchedulePins(normalizedEmail, nextPins);
+
+      const firestore = db;
+      if (!firestore) return;
+      try {
+        await setDoc(
+          doc(firestore, "users", normalizedEmail),
+          { email: normalizedEmail, myPins: nextPins, myPinsUpdatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch {
+        // Best-effort: keep local state.
+      }
+    },
+    [normalizedEmail]
+  );
+
   const togglePin = useCallback(
     async (pin: Omit<MySchedulePin, "id" | "createdAt">) => {
       if (!normalizedEmail) return;
@@ -173,7 +194,6 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
       const exists = pins.some((entry) => entry.id === id);
       showToast?.(exists ? "הוסר מהמערכת שלי" : "נוסף למערכת שלי");
 
-      const firestore = db;
       // Optimistic local update (also serves offline mode).
       const optimisticNext = (() => {
         const now = Date.now();
@@ -191,21 +211,9 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
               }
             ];
       })();
-      setPins(optimisticNext);
-      saveMySchedulePins(normalizedEmail, optimisticNext);
-
-      if (!firestore) return;
-      try {
-        await setDoc(
-          doc(firestore, "users", normalizedEmail),
-          { email: normalizedEmail, myPins: optimisticNext, myPinsUpdatedAt: serverTimestamp() },
-          { merge: true }
-        );
-      } catch {
-        // Best-effort: keep local state.
-      }
+      await persistPins(optimisticNext);
     },
-    [normalizedEmail, pinIdFor, pins, showToast]
+    [normalizedEmail, pinIdFor, pins, persistPins, showToast]
   );
 
   const isPinned = useCallback(
@@ -213,5 +221,5 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
     [normalizedEmail, pinIdFor, pins]
   );
 
-  return { pins, setPins, togglePin, isPinned };
+  return { pins, setPins, togglePin, isPinned, persistPins };
 }

@@ -12,7 +12,7 @@ import MyScheduleTopBarSubtitle from "./topBar/MyScheduleTopBarSubtitle";
 import { useSchedule } from "../../hooks/useSchedule";
 import { useLessonOverrides } from "../../hooks/useLessonOverrides";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import {
   addDays,
@@ -32,6 +32,7 @@ import type { Reservation, ReservationMap, ReserveRequest } from "../../types/re
 import type { DayKey, Lesson, TimeSlot } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
 import type { MySchedulePin } from "../../types/mySchedule";
+import type { ReservationScopedPolicy } from "../../types/settings";
 import { useMySchedulePins } from "./hooks/useMySchedulePins";
 import { useReserveFlow } from "./hooks/useReserveFlow";
 import { useAdminDraftFlow } from "./hooks/useAdminDraftFlow";
@@ -53,16 +54,14 @@ export type HomeScreenProps = {
   adminMode?: boolean;
 };
 
-const isWeekend = (dateKey: string) => {
-  const day = parseDateKey(dateKey).getDay();
-  return day === 5 || day === 6;
-};
+const DEFAULT_POLICY_DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
 
-const shiftSchoolDay = (dateKey: string, delta: number) => {
+const shiftSchoolDay = (dateKey: string, delta: number, allowedDayKeys: DayKey[]) => {
+  const allowed = allowedDayKeys.length ? new Set<DayKey>(allowedDayKeys) : new Set<DayKey>(DEFAULT_POLICY_DAY_KEYS);
   let next = parseDateKey(dateKey);
   do {
     next = addDays(next, delta);
-  } while (next.getDay() === 5 || next.getDay() === 6);
+  } while (!allowed.has(getDayKeyFromDateKey(formatDateKey(next))));
   return formatDateKey(next);
 };
 
@@ -98,6 +97,63 @@ const parseTimeToMinutes = (value: string): number | null => {
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
   return hours * 60 + minutes;
+};
+
+const normalizeSeriesText = (value: string) => value.trim().replace(/\s+/g, " ");
+
+const lessonSeriesToken = (lesson: Pick<Lesson, "title" | "teacher" | "roomId" | "startMinutes" | "durationMinutes">) =>
+  [
+    normalizeSeriesText(lesson.title || ""),
+    normalizeSeriesText(lesson.teacher || ""),
+    lesson.roomId,
+    String(lesson.startMinutes),
+    String(lesson.durationMinutes)
+  ].join("|");
+
+const deriveActiveHoursFromPolicies = (
+  reservationPolicies: ReservationScopedPolicy[],
+  fallbackStartHour: number,
+  fallbackEndHour: number
+) => {
+  const fallbackStart = Math.max(0, fallbackStartHour * 60);
+  const fallbackEnd = Math.min(24 * 60, Math.max(fallbackStart + 60, fallbackEndHour * 60));
+  const enabled = reservationPolicies.filter((policy) => policy.enabled && policy.rules.blockReservations !== true);
+  if (!enabled.length) {
+    return {
+      startMinutes: fallbackStart,
+      endMinutes: fallbackEnd,
+      startHour: Math.floor(fallbackStart / 60),
+      endHour: Math.ceil(fallbackEnd / 60)
+    };
+  }
+
+  const ranges = enabled
+    .map((policy) => {
+      const scopeStart = typeof policy.scope.startMinutes === "number" ? policy.scope.startMinutes : fallbackStart;
+      const scopeEnd = typeof policy.scope.endMinutes === "number" ? policy.scope.endMinutes : fallbackEnd;
+      const start = Math.max(0, Math.min(24 * 60, scopeStart));
+      const end = Math.max(0, Math.min(24 * 60, scopeEnd));
+      if (end <= start) return null;
+      return { start, end };
+    })
+    .filter((entry): entry is { start: number; end: number } => Boolean(entry));
+
+  if (!ranges.length) {
+    return {
+      startMinutes: fallbackStart,
+      endMinutes: fallbackEnd,
+      startHour: Math.floor(fallbackStart / 60),
+      endHour: Math.ceil(fallbackEnd / 60)
+    };
+  }
+  const startMinutes = Math.max(0, Math.min(...ranges.map((entry) => entry.start)));
+  const endMinutes = Math.min(24 * 60, Math.max(...ranges.map((entry) => entry.end)));
+  return {
+    startMinutes,
+    endMinutes: Math.max(startMinutes + 60, endMinutes),
+    startHour: Math.floor(startMinutes / 60),
+    endHour: Math.max(Math.floor(startMinutes / 60) + 1, Math.ceil(endMinutes / 60))
+  };
 };
 
 export default function HomeScreen({
@@ -216,14 +272,29 @@ export default function HomeScreen({
     pins: myPins,
     setPins: setMyPins,
     togglePin,
-    isPinned
+    isPinned,
+    persistPins
   } = useMySchedulePins({
     email: currentUser?.email,
     pinIdFor,
     showToast: (message) => showToast(message)
   });
 
-  const { rooms, weekDays, timeSlots, lessons, config, roomMeta, reservationPolicy, reservationPolicies, semesters, apiSync } = useSchedule(scheduleDateKey);
+  const { rooms, weekDays, lessons, config, roomMeta, reservationPolicy, reservationPolicies, semesters, apiSync } = useSchedule(scheduleDateKey);
+  const policyDayKeys = useMemo(() => {
+    const next = weekDays.map((day) => day.key);
+    if (!next.length) return DEFAULT_POLICY_DAY_KEYS;
+    return Array.from(new Set(next));
+  }, [weekDays]);
+  const policyDayKeySet = useMemo(() => new Set<DayKey>(policyDayKeys), [policyDayKeys]);
+  const activeHours = useMemo(
+    () => deriveActiveHoursFromPolicies(reservationPolicies, config.startHour, config.endHour),
+    [config.endHour, config.startHour, reservationPolicies]
+  );
+  const policyTimeSlots = useMemo(
+    () => buildTimeSlotsRange(activeHours.startMinutes, activeHours.endMinutes, config.slotMinutes),
+    [activeHours.endMinutes, activeHours.startMinutes, config.slotMinutes]
+  );
   const overridesWeekDates = buildWeekDates(selectedDate, weekDays);
   const overridesWeekRange = {
     startDate: overridesWeekDates[0]?.dateKey || selectedDate,
@@ -358,10 +429,14 @@ export default function HomeScreen({
           available: false,
           message
         });
-        const mergedMessage =
-          payload.reason === "conflict" && Array.isArray(payload.conflicts) && payload.conflicts.length
-            ? `${message} המערכת עודכנה עם ההתנגשויות ביומן.`
-            : message;
+        const mergedMessage = (() => {
+          if (!(payload.reason === "conflict" && Array.isArray(payload.conflicts) && payload.conflicts.length)) {
+            return message;
+          }
+          const count = payload.conflicts.length;
+          const conflictsLabel = count === 1 ? "נמצאה התנגשות אחת" : `נמצאו ${count} התנגשויות`;
+          return `${conflictsLabel} בזמן שביקשת. היומן עודכן אוטומטית עם ההתנגשויות.`;
+        })();
         return { ok: false, message: mergedMessage };
       } catch {
         return { ok: false, message: "לא ניתן לאמת זמינות מול המערכת החיצונית כרגע." };
@@ -392,10 +467,10 @@ export default function HomeScreen({
 
   useEffect(() => {
     const isDailyView = view === "room" && (allRooms || roomMode === "day");
-    if (isDailyView && isWeekend(selectedDate)) {
-      setSelectedDate(shiftSchoolDay(selectedDate, 1));
+    if (isDailyView && !policyDayKeySet.has(getDayKeyFromDateKey(selectedDate))) {
+      setSelectedDate(shiftSchoolDay(selectedDate, 1, policyDayKeys));
     }
-  }, [allRooms, roomMode, selectedDate, view]);
+  }, [allRooms, policyDayKeySet, policyDayKeys, roomMode, selectedDate, view]);
 
   useEffect(() => {
     if (isLocked && view !== "live") {
@@ -442,14 +517,13 @@ export default function HomeScreen({
 
   const isStudyDateForLessons = useCallback(
     (dateKey: string, dayKey: DayKey) => {
-      const date = parseDateKey(dateKey);
-      if (date.getDay() === 5 || date.getDay() === 6) return false;
+      if (!policyDayKeySet.has(dayKey)) return false;
       const semester = getSemesterForDate(dateKey);
       if (!semester) return false;
       if (semester.holidays.some((holiday) => holiday.date === dateKey)) return false;
-      return semester.studyDayKeys.includes(dayKey);
+      return true;
     },
-    [getSemesterForDate]
+    [getSemesterForDate, policyDayKeySet]
   );
 
   const getLessonsForDate = useCallback(
@@ -564,8 +638,8 @@ export default function HomeScreen({
           id,
           date: dateKey,
           roomId: room.id,
-          time: config.startHour * 60,
-          durationMinutes: (config.endHour - config.startHour) * 60,
+          time: activeHours.startMinutes,
+          durationMinutes: activeHours.endMinutes - activeHours.startMinutes,
           reservedBy: holidayName,
           reservedEmail: "",
           kind: "closed"
@@ -576,8 +650,8 @@ export default function HomeScreen({
 
     return touched ? next : reservationMap;
   }, [
-    config.endHour,
-    config.startHour,
+    activeHours.endMinutes,
+    activeHours.startMinutes,
     effectiveAdminMode,
     finderWindow.endDate,
     finderWindow.startDate,
@@ -592,7 +666,7 @@ export default function HomeScreen({
   ]);
 
   const scheduleTimeSlots = useMemo(() => {
-    if (view !== "room") return timeSlots;
+    if (view !== "room") return policyTimeSlots;
 
     const relevantDates = allRooms
       ? [selectedDate]
@@ -605,7 +679,7 @@ export default function HomeScreen({
         ? [selectedRoom]
         : [];
 
-    if (!relevantDates.length || !relevantRoomIds.length) return timeSlots;
+    if (!relevantDates.length || !relevantRoomIds.length) return policyTimeSlots;
 
     let minStart = Number.POSITIVE_INFINITY;
     let maxEnd = Number.NEGATIVE_INFINITY;
@@ -625,20 +699,20 @@ export default function HomeScreen({
     });
 
     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd)) {
-      return timeSlots;
+      return policyTimeSlots;
     }
 
-    const baseStart = config.startHour * 60;
-    const baseEnd = config.endHour * 60;
+    const baseStart = activeHours.startMinutes;
+    const baseEnd = activeHours.endMinutes;
     const start = Math.min(baseStart, minStart);
     const end = Math.max(baseEnd, maxEnd);
     const next = buildTimeSlotsRange(start, end, config.slotMinutes);
-    return next.length ? next : timeSlots;
+    return next.length ? next : policyTimeSlots;
   }, [
     allRooms,
-    config.endHour,
+    activeHours.endMinutes,
     config.slotMinutes,
-    config.startHour,
+    activeHours.startMinutes,
     displayReservationMap,
     getLessonsForDate,
     roomDates,
@@ -646,7 +720,7 @@ export default function HomeScreen({
     rooms,
     selectedDate,
     selectedRoom,
-    timeSlots,
+    policyTimeSlots,
     view
   ]);
 
@@ -732,7 +806,7 @@ export default function HomeScreen({
     roomMeta,
     reservationPolicy,
     reservationPolicies,
-    config,
+    config: { startHour: activeHours.startHour, endHour: activeHours.endHour },
     getLessonsForDate,
     addReservation,
     upsertReservation,
@@ -855,7 +929,7 @@ export default function HomeScreen({
         setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), -7)));
         return;
       }
-      setSelectedDate(shiftSchoolDay(selectedDate, -1));
+      setSelectedDate(shiftSchoolDay(selectedDate, -1, policyDayKeys));
       return;
     }
     if (view === "room") {
@@ -866,12 +940,12 @@ export default function HomeScreen({
         setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), delta)));
         return;
       }
-      setSelectedDate(shiftSchoolDay(selectedDate, -1));
+      setSelectedDate(shiftSchoolDay(selectedDate, -1, policyDayKeys));
       return;
     }
     triggerDayTransition("prev");
-    setSelectedDate(shiftSchoolDay(selectedDate, -1));
-  }, [allRooms, myScheduleMode, roomMode, selectedDate, triggerDayTransition, view]);
+    setSelectedDate(shiftSchoolDay(selectedDate, -1, policyDayKeys));
+  }, [allRooms, myScheduleMode, policyDayKeys, roomMode, selectedDate, triggerDayTransition, view]);
 
   const handleNext = useCallback(() => {
     if (view === "mySchedule") {
@@ -881,7 +955,7 @@ export default function HomeScreen({
         setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), 7)));
         return;
       }
-      setSelectedDate(shiftSchoolDay(selectedDate, 1));
+      setSelectedDate(shiftSchoolDay(selectedDate, 1, policyDayKeys));
       return;
     }
     if (view === "room") {
@@ -892,12 +966,12 @@ export default function HomeScreen({
         setSelectedDate(formatDateKey(addDays(parseDateKey(selectedDate), delta)));
         return;
       }
-      setSelectedDate(shiftSchoolDay(selectedDate, 1));
+      setSelectedDate(shiftSchoolDay(selectedDate, 1, policyDayKeys));
       return;
     }
     triggerDayTransition("next");
-    setSelectedDate(shiftSchoolDay(selectedDate, 1));
-  }, [allRooms, myScheduleMode, roomMode, selectedDate, triggerDayTransition, view]);
+    setSelectedDate(shiftSchoolDay(selectedDate, 1, policyDayKeys));
+  }, [allRooms, myScheduleMode, policyDayKeys, roomMode, selectedDate, triggerDayTransition, view]);
 
   useEffect(() => {
     if (!onContextChange) return;
@@ -977,7 +1051,7 @@ export default function HomeScreen({
       const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(today);
       const todayReservations = displayReservationMap[todayDateKey] || [];
       const isWeekend = today.getDay() === 5 || today.getDay() === 6;
-      const isClosedNow = isWeekend || nowMinutes < config.startHour * 60 || nowMinutes >= config.endHour * 60;
+      const isClosedNow = isWeekend || nowMinutes < activeHours.startMinutes || nowMinutes >= activeHours.endMinutes;
       const todayLessons = getLessonsForDate(todayDateKey, todayDayKey);
       const reservationDuration = (durationMinutes: number | undefined) => {
         const numeric = Number(durationMinutes);
@@ -985,7 +1059,7 @@ export default function HomeScreen({
       };
 
       const availableCount = rooms.filter((room) => {
-        if (isClosedNow || nowMinutes < config.startHour * 60 || nowMinutes >= config.endHour * 60) return false;
+        if (isClosedNow || nowMinutes < activeHours.startMinutes || nowMinutes >= activeHours.endMinutes) return false;
         const activeLesson = todayLessons.some((lesson) => {
           if (lesson.roomId !== room.id) return false;
           return lesson.startMinutes <= nowMinutes && lesson.startMinutes + lesson.durationMinutes > nowMinutes;
@@ -1032,8 +1106,8 @@ export default function HomeScreen({
     todayDayKey,
     displayReservationMap,
     getLessonsForDate,
-    config.startHour,
-    config.endHour,
+    activeHours.startMinutes,
+    activeHours.endMinutes,
     roomMeta
   ]);
 
@@ -1076,6 +1150,207 @@ export default function HomeScreen({
     [getAvailability, rooms]
   );
 
+  const toggleAssociatedLessonPins = useCallback(
+    async (lessonDetails: {
+      lessonId?: string;
+      dateKey: string;
+      roomId: string;
+      startMinutes: number;
+      durationMinutes: number;
+      title: string;
+      meta: string;
+    }) => {
+      if (!lessonDetails.lessonId) {
+        await togglePin({
+          kind: "lesson",
+          dateKey: lessonDetails.dateKey,
+          lessonId: lessonDetails.lessonId,
+          roomId: lessonDetails.roomId,
+          startMinutes: lessonDetails.startMinutes,
+          durationMinutes: lessonDetails.durationMinutes,
+          title: lessonDetails.title,
+          meta: lessonDetails.meta
+        });
+        return;
+      }
+
+      if (!apiSync.entities.lessons.enabled || !db) {
+        await togglePin({
+          kind: "lesson",
+          dateKey: lessonDetails.dateKey,
+          lessonId: lessonDetails.lessonId,
+          roomId: lessonDetails.roomId,
+          startMinutes: lessonDetails.startMinutes,
+          durationMinutes: lessonDetails.durationMinutes,
+          title: lessonDetails.title,
+          meta: lessonDetails.meta
+        });
+        return;
+      }
+
+      const semester = getSemesterForDate(lessonDetails.dateKey);
+      if (!semester?.startDate || !semester?.endDate) {
+        await togglePin({
+          kind: "lesson",
+          dateKey: lessonDetails.dateKey,
+          lessonId: lessonDetails.lessonId,
+          roomId: lessonDetails.roomId,
+          startMinutes: lessonDetails.startMinutes,
+          durationMinutes: lessonDetails.durationMinutes,
+          title: lessonDetails.title,
+          meta: lessonDetails.meta
+        });
+        return;
+      }
+
+      const seriesToken = lessonSeriesToken({
+        title: lessonDetails.title,
+        teacher: lessonDetails.meta,
+        roomId: lessonDetails.roomId,
+        startMinutes: lessonDetails.startMinutes,
+        durationMinutes: lessonDetails.durationMinutes
+      });
+      const nextById = new Map<string, MySchedulePin>();
+      const pushPin = (
+        dateKey: string,
+        lesson: Pick<Lesson, "id" | "roomId" | "startMinutes" | "durationMinutes" | "title" | "teacher">
+      ) => {
+        const base = {
+          kind: "lesson" as const,
+          dateKey,
+          lessonId: lesson.id,
+          roomId: lesson.roomId,
+          startMinutes: lesson.startMinutes,
+          durationMinutes: lesson.durationMinutes
+        };
+        const id = pinIdFor(base);
+        nextById.set(id, {
+          id,
+          ...base,
+          title: lesson.title,
+          meta: lesson.teacher || "ללא מרצה",
+          createdAt: Date.now()
+        });
+      };
+      pushPin(lessonDetails.dateKey, {
+        id: lessonDetails.lessonId,
+        roomId: lessonDetails.roomId,
+        startMinutes: lessonDetails.startMinutes,
+        durationMinutes: lessonDetails.durationMinutes,
+        title: lessonDetails.title,
+        teacher: lessonDetails.meta
+      });
+
+      try {
+        const overridesRef = collection(db, "lessonOverrides");
+        const parseCandidate = (
+          data: Record<string, unknown>
+        ): { date: string; externalId: string; lesson: Lesson } | null => {
+          if (data.syncSource !== "api") return null;
+          if (data.action !== "add") return null;
+          const lessonRaw = data.lesson;
+          if (!lessonRaw || typeof lessonRaw !== "object") return null;
+          const lesson = lessonRaw as Record<string, unknown>;
+          const date = typeof data.date === "string" ? data.date : "";
+          const id = typeof lesson.id === "string" ? lesson.id : "";
+          const roomId = typeof lesson.roomId === "string" ? lesson.roomId : "";
+          const title = typeof lesson.title === "string" ? lesson.title : "";
+          const teacher = typeof lesson.teacher === "string" ? lesson.teacher : "";
+          const startMinutes = Number(lesson.startMinutes);
+          const durationMinutes = Number(lesson.durationMinutes);
+          if (!date || !id || !roomId) return null;
+          if (!Number.isFinite(startMinutes) || !Number.isFinite(durationMinutes)) return null;
+          return {
+            date,
+            externalId: typeof data.externalId === "string" ? data.externalId.trim() : "",
+            lesson: {
+              id,
+              title,
+              teacher,
+              day: getDayKeyFromDateKey(date),
+              roomId,
+              startMinutes: Math.round(startMinutes),
+              durationMinutes: Math.round(durationMinutes)
+            }
+          };
+        };
+
+        let externalSeriesId = "";
+        const currentLessonSnapshot = await getDocs(query(overridesRef, where("lesson.id", "==", lessonDetails.lessonId)));
+        currentLessonSnapshot.forEach((docSnap) => {
+          if (externalSeriesId) return;
+          const parsed = parseCandidate(docSnap.data() as Record<string, unknown>);
+          if (!parsed) return;
+          if (parsed.date !== lessonDetails.dateKey) return;
+          if (!parsed.externalId) return;
+          externalSeriesId = parsed.externalId;
+        });
+
+        if (externalSeriesId) {
+          const seriesSnapshot = await getDocs(query(overridesRef, where("externalId", "==", externalSeriesId)));
+          seriesSnapshot.forEach((docSnap) => {
+            const parsed = parseCandidate(docSnap.data() as Record<string, unknown>);
+            if (!parsed) return;
+            if (parsed.date < semester.startDate || parsed.date > semester.endDate) return;
+            pushPin(parsed.date, parsed.lesson);
+          });
+        }
+
+        if (nextById.size <= 1) {
+          const snapshot = await getDocs(
+            query(overridesRef, where("date", ">=", semester.startDate), where("date", "<=", semester.endDate))
+          );
+          snapshot.forEach((docSnap) => {
+            const parsed = parseCandidate(docSnap.data() as Record<string, unknown>);
+            if (!parsed) return;
+            if (lessonSeriesToken(parsed.lesson) !== seriesToken) return;
+            pushPin(parsed.date, parsed.lesson);
+          });
+        }
+      } catch {
+        await togglePin({
+          kind: "lesson",
+          dateKey: lessonDetails.dateKey,
+          lessonId: lessonDetails.lessonId,
+          roomId: lessonDetails.roomId,
+          startMinutes: lessonDetails.startMinutes,
+          durationMinutes: lessonDetails.durationMinutes,
+          title: lessonDetails.title,
+          meta: lessonDetails.meta
+        });
+        return;
+      }
+
+      const candidatePins = Array.from(nextById.values());
+      if (candidatePins.length <= 1) {
+        await togglePin({
+          kind: "lesson",
+          dateKey: lessonDetails.dateKey,
+          lessonId: lessonDetails.lessonId,
+          roomId: lessonDetails.roomId,
+          startMinutes: lessonDetails.startMinutes,
+          durationMinutes: lessonDetails.durationMinutes,
+          title: lessonDetails.title,
+          meta: lessonDetails.meta
+        });
+        return;
+      }
+
+      const currentIds = new Set(myPins.map((pin) => pin.id));
+      const candidateIds = new Set(candidatePins.map((pin) => pin.id));
+      const allPinned = candidatePins.every((pin) => currentIds.has(pin.id));
+      const nextPins = allPinned
+        ? myPins.filter((pin) => !candidateIds.has(pin.id))
+        : [
+            ...myPins,
+            ...candidatePins.filter((pin) => !currentIds.has(pin.id))
+          ];
+      await persistPins(nextPins);
+      showToast(allPinned ? "כל המופעים הוסרו מהמערכת שלי." : "כל המופעים המשויכים נוספו למערכת שלי.");
+    },
+    [apiSync.entities.lessons.enabled, db, getSemesterForDate, myPins, persistPins, pinIdFor, showToast, togglePin]
+  );
+
   const viewNode = (
     <HomeViewRouter
       view={view}
@@ -1084,8 +1359,8 @@ export default function HomeScreen({
       reservationMap={displayReservationMap}
       roomMeta={roomMeta}
       getLessonsForDate={getLessonsForDate}
-      startHour={config.startHour}
-      endHour={config.endHour}
+      startHour={activeHours.startHour}
+      endHour={activeHours.endHour}
       nowMinutes={nowMinutes}
       todayDateKey={todayDateKey}
       todayDayKey={todayDayKey}
@@ -1102,7 +1377,7 @@ export default function HomeScreen({
       roomMode={roomMode}
       weekDates={weekDates}
       roomDates={roomDates}
-      timeSlots={view === "room" ? scheduleTimeSlots : timeSlots}
+      timeSlots={view === "room" ? scheduleTimeSlots : policyTimeSlots}
       selectedDate={selectedDate}
       selectedDayKey={selectedDayKey}
       selectedRoom={selectedRoom}
@@ -1466,16 +1741,29 @@ export default function HomeScreen({
         }
         onTogglePin={
           blockDetails && currentUser?.email
-            ? () => togglePin({
-                kind: blockDetails.kind,
-                dateKey: blockDetails.dateKey,
-                lessonId: blockDetails.kind === "lesson" ? blockDetails.lessonId : undefined,
-                roomId: blockDetails.roomId,
-                startMinutes: blockDetails.startMinutes,
-                durationMinutes: blockDetails.durationMinutes,
-                title: blockDetails.title,
-                meta: blockDetails.meta
-              })
+            ? () => {
+                if (blockDetails.kind === "lesson") {
+                  void toggleAssociatedLessonPins({
+                    lessonId: blockDetails.lessonId,
+                    dateKey: blockDetails.dateKey,
+                    roomId: blockDetails.roomId,
+                    startMinutes: blockDetails.startMinutes,
+                    durationMinutes: blockDetails.durationMinutes,
+                    title: blockDetails.title,
+                    meta: blockDetails.meta
+                  });
+                  return;
+                }
+                void togglePin({
+                  kind: blockDetails.kind,
+                  dateKey: blockDetails.dateKey,
+                  roomId: blockDetails.roomId,
+                  startMinutes: blockDetails.startMinutes,
+                  durationMinutes: blockDetails.durationMinutes,
+                  title: blockDetails.title,
+                  meta: blockDetails.meta
+                });
+              }
             : undefined
         }
         onClose={() => setBlockDetails(null)}

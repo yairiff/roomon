@@ -1,4 +1,4 @@
-export type DayKey = "sun" | "mon" | "tue" | "wed" | "thu";
+export type DayKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
 
 export type WeekDay = {
   key: DayKey;

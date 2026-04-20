@@ -7,6 +7,7 @@ import type {
   ApiSyncEntityKey,
   ApiSyncSettings,
   ReservationPolicy,
+  ReservationPolicyScope,
   ReservationScopedPolicy,
   SemesterEntity,
   SemesterHoliday,
@@ -15,7 +16,8 @@ import type {
 import type { DayKey } from "../types/schedule";
 import { DEFAULT_API_SYNC_SETTINGS, DEFAULT_RESERVATION_POLICY } from "../types/settings";
 
-const validDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+const validStudyDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+const validPolicyDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_POLICY_ID = "default-policy";
 
@@ -30,12 +32,12 @@ const trimDateKey = (value: unknown) => {
   return DATE_KEY_PATTERN.test(trimmed) ? trimmed : "";
 };
 
-const uniqueDayKeys = (raw: unknown): DayKey[] => {
-  if (!Array.isArray(raw)) return [...validDayKeys];
+const uniqueStudyDayKeys = (raw: unknown): DayKey[] => {
+  if (!Array.isArray(raw)) return [...validStudyDayKeys];
   const entries = raw.filter(
-    (entry): entry is DayKey => typeof entry === "string" && validDayKeys.includes(entry as DayKey)
+    (entry): entry is DayKey => typeof entry === "string" && validStudyDayKeys.includes(entry as DayKey)
   );
-  return entries.length ? Array.from(new Set(entries)) : [...validDayKeys];
+  return entries.length ? Array.from(new Set(entries)) : [...validStudyDayKeys];
 };
 
 const uniqueHolidays = (raw: unknown): SemesterHoliday[] => {
@@ -113,7 +115,7 @@ const seedSemestersFromRanges = (ranges: SemesterRange[]) => {
         letter,
         startDate,
         endDate,
-        studyDayKeys: [...validDayKeys],
+        studyDayKeys: [...validStudyDayKeys],
         holidays: []
       };
     })
@@ -278,10 +280,10 @@ const sanitizeSemesters = (
           const studyYearRaw =
             typeof item.studyYear === "number" || typeof item.studyYear === "string"
               ? Number(item.studyYear)
-              : toYearFromDateKey(startDate, fallbackYear);
+              : toYearFromDateKey(endDate, fallbackYear) - 1;
           const studyYear = Number.isFinite(studyYearRaw)
             ? Math.max(2000, Math.min(2100, Math.floor(studyYearRaw)))
-            : toYearFromDateKey(startDate, fallbackYear);
+            : toYearFromDateKey(endDate, fallbackYear) - 1;
           const idRaw =
             typeof item.id === "string" && item.id.trim()
               ? item.id.trim()
@@ -307,7 +309,7 @@ const sanitizeSemesters = (
                     : undefined,
             startDate,
             endDate,
-            studyDayKeys: uniqueDayKeys(item.studyDayKeys),
+            studyDayKeys: uniqueStudyDayKeys(item.studyDayKeys),
             holidays: uniqueHolidays(item.holidays)
           };
         })
@@ -352,14 +354,34 @@ const semesterRangesFromSemesters = (semesters: SemesterEntity[]): SemesterRange
 
 const buildDefaultPolicyRow = (
   policy: ReservationPolicy,
-  previous?: { id?: string; name?: string; enabled?: boolean }
+  previous?: {
+    id?: string;
+    name?: string;
+    enabled?: boolean;
+    scope?: ReservationPolicyScope;
+  }
 ): ReservationScopedPolicy => ({
   id: previous?.id || DEFAULT_POLICY_ID,
   name: "כל המקרים",
   enabled: true,
   isDefault: true,
-  scope: { roomIds: [], dayKeys: [], semesterIds: [] },
-  rules: { ...policy }
+  scope: {
+    roomIds: [],
+    semesterIds: [],
+    dayKeys:
+      previous?.scope?.dayKeys?.length
+        ? previous.scope.dayKeys.filter((key): key is DayKey => validPolicyDayKeys.includes(key as DayKey))
+        : [...validStudyDayKeys],
+    startMinutes:
+      typeof previous?.scope?.startMinutes === "number"
+        ? clampMinutes(previous.scope.startMinutes, rimonScheduleConfig.startHour * 60)
+        : rimonScheduleConfig.startHour * 60,
+    endMinutes:
+      typeof previous?.scope?.endMinutes === "number"
+        ? clampMinutes(previous.scope.endMinutes, rimonScheduleConfig.endHour * 60)
+        : rimonScheduleConfig.endHour * 60
+  },
+  rules: { ...policy, blockReservations: false }
 });
 
 const ensureDefaultPolicyRow = (
@@ -418,20 +440,38 @@ const sanitizeScopedPolicies = (
                 .map((entry) => entry.trim())
                 .filter(Boolean)
             : [];
+          const defaultScope = {
+            roomIds: [],
+            semesterIds: [],
+            dayKeys: Array.isArray(scopeRaw.dayKeys)
+              ? scopeRaw.dayKeys.filter(
+                  (entry): entry is DayKey =>
+                    typeof entry === "string" && validPolicyDayKeys.includes(entry as DayKey)
+                )
+              : [...validStudyDayKeys],
+            startMinutes:
+              scopeRaw.startMinutes !== undefined
+                ? clampMinutes(scopeRaw.startMinutes, rimonScheduleConfig.startHour * 60)
+                : rimonScheduleConfig.startHour * 60,
+            endMinutes:
+              scopeRaw.endMinutes !== undefined
+                ? clampMinutes(scopeRaw.endMinutes, rimonScheduleConfig.endHour * 60)
+                : rimonScheduleConfig.endHour * 60
+          };
           return {
             id,
             name: isDefault ? "כל המקרים" : name,
             enabled: item.enabled !== false,
             isDefault,
             scope: isDefault
-              ? { roomIds: [], dayKeys: [], semesterIds: [] }
+              ? defaultScope
               : {
                   roomIds: scopeRoomIds,
                   semesterIds: scopeSemesterIds,
                   dayKeys: Array.isArray(scopeRaw.dayKeys)
                     ? scopeRaw.dayKeys.filter(
                         (entry): entry is DayKey =>
-                          typeof entry === "string" && validDayKeys.includes(entry as DayKey)
+                          typeof entry === "string" && validPolicyDayKeys.includes(entry as DayKey)
                       )
                     : [],
                   dateStart: typeof scopeRaw.dateStart === "string" ? scopeRaw.dateStart : undefined,
@@ -564,11 +604,11 @@ export function useScheduleSettings() {
     const ranges = semesterRangesFromSemesters(sanitized);
     await setDoc(
       doc(db, "settings", "schedule"),
-      {
+      stripUndefinedDeep({
         semesters: sanitized,
         // Keep legacy field for older readers.
         semesterRanges: ranges
-      },
+      }),
       { merge: true }
     );
   };
@@ -583,11 +623,11 @@ export function useScheduleSettings() {
     const defaultPolicy = sanitizePolicy(sanitized.find((entry) => entry.isDefault)?.rules);
     await setDoc(
       doc(db, "settings", "schedule"),
-      {
+      stripUndefinedDeep({
         reservationPolicies: sanitized,
         // Keep a mirrored legacy field for backward compatibility.
         reservationPolicy: defaultPolicy
-      },
+      }),
       { merge: true }
     );
   };

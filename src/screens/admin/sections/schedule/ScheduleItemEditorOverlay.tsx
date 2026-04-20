@@ -468,11 +468,6 @@ export default function ScheduleItemEditorOverlay({
                   <br />
                   לשינוי חד-פעמי בתאריך מסוים: השתמש/י ב״הצג החרגות״.
                 </p>
-                {draft.value.syncSource === "api" ? (
-                  <p className="admin-meta">שיעור מסונכרן: ניתן לצפות ולהחריג, אבל לא לערוך את הסדרה.</p>
-                ) : lessonsSyncEnabled ? (
-                  <p className="admin-meta">סנכרון שיעורים פעיל. שיעורים ידניים נשמרים בנפרד.</p>
-                ) : null}
                 <div className="admin-form-grid">
                   <label>
                     שם שיעור

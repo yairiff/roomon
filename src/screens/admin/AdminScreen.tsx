@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { httpsCallable } from "firebase/functions";
-import { rimonScheduleConfig, weekDays as scheduleWeekDays } from "../../config";
+import { rimonScheduleConfig } from "../../config";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
 import { useLessons } from "../../hooks/useLessons";
 import { useReservations } from "../../hooks/useReservations";
@@ -79,10 +79,11 @@ type SemesterDraft = {
   studyYearLabel: string;
   letterMode: SemesterLetterMode;
   letterOther: string;
+  displayName: string;
   startDate: string;
   endDate: string;
   studyDayKeys: DayKey[];
-  holidays: Array<{ id: string; date: string; name: string }>;
+  holidays: Array<{ id: string; date: string; name: string; displayName?: string; syncSource?: "manual" | "api" }>;
 };
 
 type ApiSyncInvocationEntityResult = {
@@ -104,6 +105,15 @@ type ApiSyncInvocationResult = {
 };
 
 const DAY_KEYS_DEFAULT: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+const POLICY_DAY_OPTIONS: Array<{ key: DayKey; label: string; short: string }> = [
+  { key: "sun", label: "ראשון", short: "א" },
+  { key: "mon", label: "שני", short: "ב" },
+  { key: "tue", label: "שלישי", short: "ג" },
+  { key: "wed", label: "רביעי", short: "ד" },
+  { key: "thu", label: "חמישי", short: "ה" },
+  { key: "fri", label: "שישי", short: "ו" },
+  { key: "sat", label: "שבת", short: "ז" }
+];
 
 const createSemesterId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -151,14 +161,21 @@ const getStatNumber = (stats: Record<string, unknown> | undefined, key: string) 
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 };
 
-const normalizeHolidayEntries = (entries: Array<{ date: string; name: string }>): SemesterHoliday[] => {
+const normalizeHolidayEntries = (
+  entries: Array<{ date: string; name: string; displayName?: string; syncSource?: "manual" | "api" }>
+): SemesterHoliday[] => {
   const map = new Map<string, SemesterHoliday>();
   entries.forEach((entry) => {
     const date = entry.date.trim();
     const name = entry.name.trim();
     if (!DATE_KEY_PATTERN.test(date)) return;
     if (!name) return;
-    map.set(date, { date, name });
+    map.set(date, {
+      date,
+      name,
+      displayName: (entry.displayName || "").trim() || undefined,
+      syncSource: entry.syncSource
+    });
   });
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
 };
@@ -209,13 +226,16 @@ const toSemesterDraft = (semester: SemesterEntity): SemesterDraft => ({
   studyYearLabel: formatAcademicYearLabel(semester.studyYear),
   letterMode: semester.letter === "א" || semester.letter === "ב" ? semester.letter : "other",
   letterOther: semester.letter === "א" || semester.letter === "ב" ? "" : semester.letter || "",
+  displayName: semester.displayName || "",
   startDate: semester.startDate || "",
   endDate: semester.endDate || "",
   studyDayKeys: semester.studyDayKeys.length ? semester.studyDayKeys : [...DAY_KEYS_DEFAULT],
   holidays: (semester.holidays || []).map((holiday) => ({
     id: createHolidayId(),
     date: holiday.date,
-    name: holiday.name
+    name: holiday.name,
+    displayName: holiday.displayName,
+    syncSource: holiday.syncSource
   }))
 });
 
@@ -225,6 +245,7 @@ const createEmptySemesterDraft = (studyYear?: number): SemesterDraft => ({
   studyYearLabel: formatAcademicYearLabel(studyYear || new Date().getFullYear()),
   letterMode: "א",
   letterOther: "",
+  displayName: "",
   startDate: "",
   endDate: "",
   studyDayKeys: [...DAY_KEYS_DEFAULT],
@@ -232,18 +253,27 @@ const createEmptySemesterDraft = (studyYear?: number): SemesterDraft => ({
 });
 
 const toSemesterEntity = (draft: SemesterDraft): SemesterEntity => {
-  const inferredYear = draft.startDate ? Number(draft.startDate.slice(0, 4)) : new Date().getFullYear();
-  const studyYear = parseAcademicYearStart(draft.studyYearLabel) ?? inferredYear;
+  const endYear = draft.endDate ? Number(draft.endDate.slice(0, 4)) : Number.NaN;
+  const inferredYear = Number.isFinite(endYear) ? endYear - 1 : (draft.startDate ? Number(draft.startDate.slice(0, 4)) : new Date().getFullYear());
+  const studyYear = Number.isFinite(inferredYear) ? inferredYear : parseAcademicYearStart(draft.studyYearLabel) ?? new Date().getFullYear();
   const letter = draft.letterMode === "other" ? draft.letterOther.trim() : draft.letterMode;
   return {
     id: draft.id,
     syncSource: draft.syncSource === "api" ? "api" : "manual",
     studyYear,
     letter: letter || "אחר",
+    displayName: draft.displayName.trim() || undefined,
     startDate: draft.startDate,
     endDate: draft.endDate,
     studyDayKeys: draft.studyDayKeys.length ? Array.from(new Set(draft.studyDayKeys)) : [...DAY_KEYS_DEFAULT],
-    holidays: normalizeHolidayEntries(draft.holidays.map((holiday) => ({ date: holiday.date, name: holiday.name })))
+    holidays: normalizeHolidayEntries(
+      draft.holidays.map((holiday) => ({
+        date: holiday.date,
+        name: holiday.name,
+        displayName: holiday.displayName,
+        syncSource: holiday.syncSource
+      }))
+    )
   };
 };
 
@@ -289,20 +319,27 @@ const toScopedPolicyDraft = (policy: ReservationScopedPolicy): ScopedPolicyDraft
   name: policy.name,
   enabled: policy.enabled,
   isDefault: policy.isDefault,
-  useConditionRooms: !policy.isDefault && policy.scope.roomIds.length > 0,
-  useConditionDays: !policy.isDefault && policy.scope.dayKeys.length > 0,
-  useConditionSemesters: !policy.isDefault && (policy.scope.semesterIds || []).length > 0,
-  useConditionDateRange: !policy.isDefault && Boolean(policy.scope.dateStart || policy.scope.dateEnd),
-  useConditionTimeRange: !policy.isDefault && (policy.scope.startMinutes !== undefined || policy.scope.endMinutes !== undefined),
-  roomIds: policy.scope.roomIds || [],
-  dayKeys: policy.scope.dayKeys || [],
-  semesterIds: policy.scope.semesterIds || [],
-  dateStart: policy.scope.dateStart || "",
-  dateEnd: policy.scope.dateEnd || "",
-  startTime: policy.scope.startMinutes !== undefined ? toTimeInput(policy.scope.startMinutes) : "",
-  endTime: policy.scope.endMinutes !== undefined ? toTimeInput(policy.scope.endMinutes) : "",
+  useConditionRooms: policy.isDefault ? false : policy.scope.roomIds.length > 0,
+  useConditionDays: policy.isDefault ? true : policy.scope.dayKeys.length > 0,
+  useConditionSemesters: policy.isDefault ? false : (policy.scope.semesterIds || []).length > 0,
+  useConditionDateRange: policy.isDefault ? false : Boolean(policy.scope.dateStart || policy.scope.dateEnd),
+  useConditionTimeRange:
+    policy.isDefault ? true : policy.scope.startMinutes !== undefined || policy.scope.endMinutes !== undefined,
+  roomIds: policy.isDefault ? [] : policy.scope.roomIds || [],
+  dayKeys: policy.scope.dayKeys || [...DAY_KEYS_DEFAULT],
+  semesterIds: policy.isDefault ? [] : policy.scope.semesterIds || [],
+  dateStart: policy.isDefault ? "" : policy.scope.dateStart || "",
+  dateEnd: policy.isDefault ? "" : policy.scope.dateEnd || "",
+  startTime:
+    policy.scope.startMinutes !== undefined
+      ? toTimeInput(policy.scope.startMinutes)
+      : toTimeInput(rimonScheduleConfig.startHour * 60),
+  endTime:
+    policy.scope.endMinutes !== undefined
+      ? toTimeInput(policy.scope.endMinutes)
+      : toTimeInput(rimonScheduleConfig.endHour * 60),
   collapseHourQuota: true,
-  blockReservations: policy.rules.blockReservations === true,
+  blockReservations: policy.isDefault ? false : policy.rules.blockReservations === true,
   useHourQuota:
     Number(policy.rules.maxHoursPerRoomPerDay || 0) > 0 ||
     Number(policy.rules.maxHoursPerRoomPerWeek || 0) > 0 ||
@@ -335,23 +372,32 @@ const parseOptionalNumber = (value: string) => {
 const parseLimitNumber = (value: string) => Math.max(0, parseOptionalNumber(value) || 0);
 
 const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
-  if (draft.blockReservations) {
+  const defaultDayKeys = Array.from(new Set(draft.dayKeys.filter((dayKey) => DAY_KEYS_DEFAULT.includes(dayKey))));
+  const scope = draft.isDefault
+    ? {
+        roomIds: [],
+        dayKeys: defaultDayKeys.length ? defaultDayKeys : [...DAY_KEYS_DEFAULT],
+        semesterIds: [],
+        startMinutes: draft.startTime ? parseTimeInput(draft.startTime) : rimonScheduleConfig.startHour * 60,
+        endMinutes: draft.endTime ? parseTimeInput(draft.endTime) : rimonScheduleConfig.endHour * 60
+      }
+    : {
+        roomIds: draft.useConditionRooms ? Array.from(new Set(draft.roomIds.filter(Boolean))) : [],
+        dayKeys: draft.useConditionDays ? Array.from(new Set(draft.dayKeys)) : [],
+        semesterIds: draft.useConditionSemesters ? Array.from(new Set(draft.semesterIds.filter(Boolean))) : [],
+        ...(draft.useConditionDateRange && draft.dateStart ? { dateStart: draft.dateStart } : {}),
+        ...(draft.useConditionDateRange && draft.dateEnd ? { dateEnd: draft.dateEnd } : {}),
+        ...(draft.useConditionTimeRange && draft.startTime ? { startMinutes: parseTimeInput(draft.startTime) } : {}),
+        ...(draft.useConditionTimeRange && draft.endTime ? { endMinutes: parseTimeInput(draft.endTime) } : {})
+      };
+
+  if (draft.blockReservations && !draft.isDefault) {
     return {
       id: draft.id || createPolicyId(),
       name: draft.isDefault ? "כל המקרים" : draft.name.trim() || "מדיניות חדשה",
       enabled: draft.isDefault ? true : draft.enabled,
       isDefault: draft.isDefault,
-      scope: draft.isDefault
-        ? { roomIds: [], dayKeys: [], semesterIds: [] }
-        : {
-            roomIds: draft.useConditionRooms ? Array.from(new Set(draft.roomIds.filter(Boolean))) : [],
-            dayKeys: draft.useConditionDays ? Array.from(new Set(draft.dayKeys)) : [],
-            semesterIds: draft.useConditionSemesters ? Array.from(new Set(draft.semesterIds.filter(Boolean))) : [],
-            ...(draft.useConditionDateRange && draft.dateStart ? { dateStart: draft.dateStart } : {}),
-            ...(draft.useConditionDateRange && draft.dateEnd ? { dateEnd: draft.dateEnd } : {}),
-            ...(draft.useConditionTimeRange && draft.startTime ? { startMinutes: parseTimeInput(draft.startTime) } : {}),
-            ...(draft.useConditionTimeRange && draft.endTime ? { endMinutes: parseTimeInput(draft.endTime) } : {})
-          },
+      scope,
       rules: { blockReservations: true }
     };
   }
@@ -375,17 +421,7 @@ const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
     name: draft.isDefault ? "כל המקרים" : draft.name.trim() || "מדיניות חדשה",
     enabled: draft.isDefault ? true : draft.enabled,
     isDefault: draft.isDefault,
-    scope: draft.isDefault
-      ? { roomIds: [], dayKeys: [], semesterIds: [] }
-      : {
-          roomIds: draft.useConditionRooms ? Array.from(new Set(draft.roomIds.filter(Boolean))) : [],
-          dayKeys: draft.useConditionDays ? Array.from(new Set(draft.dayKeys)) : [],
-          semesterIds: draft.useConditionSemesters ? Array.from(new Set(draft.semesterIds.filter(Boolean))) : [],
-          ...(draft.useConditionDateRange && draft.dateStart ? { dateStart: draft.dateStart } : {}),
-          ...(draft.useConditionDateRange && draft.dateEnd ? { dateEnd: draft.dateEnd } : {}),
-          ...(draft.useConditionTimeRange && draft.startTime ? { startMinutes: parseTimeInput(draft.startTime) } : {}),
-          ...(draft.useConditionTimeRange && draft.endTime ? { endMinutes: parseTimeInput(draft.endTime) } : {})
-        },
+    scope,
     rules
   };
 };
@@ -405,7 +441,7 @@ const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
   pushLimit(policy.rules.maxHoursPerRoomPerWeek, (numeric) => `עד ${numeric} שעות לחדר בשבוע`);
   pushLimit(policy.rules.maxHoursPerDayTotal, (numeric) => `עד ${numeric} שעות ביום`);
   pushLimit(policy.rules.maxHoursPerWeekTotal, (numeric) => `עד ${numeric} שעות בשבוע`);
-  pushLimit(policy.rules.maxDaysForward, (numeric) => `עד ${numeric} ימים קדימה`);
+  pushLimit(policy.rules.maxDaysForward, (numeric) => `עד ${numeric} ימים מראש`);
 
   if ((policy.rules.minLeadHours || 0) > 0) {
     parts.push(`לפחות ${policy.rules.minLeadHours} שעות מראש`);
@@ -424,25 +460,23 @@ const summarizePolicyConditionsParts = (
   roomNameById: Record<string, string>,
   semesterNameById: Record<string, string>
 ) => {
-  if (policy.isDefault) return ["כל המקרים"];
   const parts: string[] = [];
   if (policy.scope.dayKeys.length) {
-    const labels = policy.scope.dayKeys.map((dayKey) => scheduleWeekDays.find((day) => day.key === dayKey)?.label || dayKey);
-    parts.push(`רק בימים ${labels.join(", ")}`);
+    parts.push(`ימים ${summarizeStudyDaysCompact(policy.scope.dayKeys)}`);
   }
   if (policy.scope.roomIds.length) {
     const names = policy.scope.roomIds.map((roomId) => roomNameById[roomId] || roomId);
-    parts.push(`רק בחדרים ${names.join(", ")}`);
+    parts.push(`חדרים ${names.join(", ")}`);
   }
   if ((policy.scope.semesterIds || []).length) {
     const names = (policy.scope.semesterIds || []).map((semesterId) => semesterNameById[semesterId] || semesterId);
-    parts.push(`רק בסמסטר ${names.join(", ")}`);
+    parts.push(`סמסטרים ${names.join(", ")}`);
   }
   if (policy.scope.dateStart || policy.scope.dateEnd) {
-    parts.push(`בטווח תאריכים ${policy.scope.dateStart || "..."}–${policy.scope.dateEnd || "..."}`);
+    parts.push(`תאריכים ${policy.scope.dateStart || "..."}–${policy.scope.dateEnd || "..."}`);
   }
   if (policy.scope.startMinutes !== undefined || policy.scope.endMinutes !== undefined) {
-    parts.push(`בשעות ${policy.scope.startMinutes !== undefined ? formatMinutes(policy.scope.startMinutes) : "..."}–${policy.scope.endMinutes !== undefined ? formatMinutes(policy.scope.endMinutes) : "..."}`);
+    parts.push(`שעות ${policy.scope.startMinutes !== undefined ? formatMinutes(policy.scope.startMinutes) : "..."}–${policy.scope.endMinutes !== undefined ? formatMinutes(policy.scope.endMinutes) : "..."}`);
   }
   return parts.length ? parts : ["כל המקרים"];
 };
@@ -454,22 +488,29 @@ const summarizePolicySentence = (
 ) => {
   const conditions = summarizePolicyConditionsParts(policy, roomNameById, semesterNameById).join(" ו־");
   const rules = summarizePolicyRulesParts(policy);
-  if (policy.isDefault || conditions === "כל המקרים") {
+  if (conditions === "כל המקרים") {
     return `${rules.join(", ")}.`;
   }
   return `כאשר ${conditions}, ${rules.join(", ")}.`;
 };
 
 const summarizeStudyDaysCompact = (dayKeys: DayKey[]) => {
-  const order = scheduleWeekDays.map((day) => day.key);
-  const unique = Array.from(new Set(dayKeys)).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const order = POLICY_DAY_OPTIONS.map((day) => day.key);
+  const rank = (key: DayKey) => {
+    const index = order.indexOf(key);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  const unique = Array.from(new Set(dayKeys)).sort((a, b) => rank(a) - rank(b));
   if (!unique.length) return "ללא";
-  const labels = unique.map((key) => scheduleWeekDays.find((day) => day.key === key)?.short || key);
+  const labels = unique.map((key) => {
+    const short = POLICY_DAY_OPTIONS.find((day) => day.key === key)?.short || key;
+    return short.endsWith("׳") ? short : `${short}׳`;
+  });
   const contiguous =
     unique.length > 1 &&
     unique.every((key, index) => {
       if (index === 0) return true;
-      return order.indexOf(key) === order.indexOf(unique[index - 1]) + 1;
+      return rank(key) === rank(unique[index - 1]) + 1;
     });
   if (contiguous) {
     return `${labels[0]}-${labels[labels.length - 1]}`;
@@ -480,6 +521,27 @@ const summarizeStudyDaysCompact = (dayKeys: DayKey[]) => {
 const isPrimarySemesterLetter = (letter: string) => {
   const normalized = letter.trim();
   return normalized === "א" || normalized === "ב" || normalized.toUpperCase() === "A" || normalized.toUpperCase() === "B";
+};
+
+const bulkStateEquivalent = (a: BulkState | null, b: BulkState | null) => {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.selectedCount !== b.selectedCount || a.totalCount !== b.totalCount) return false;
+  if (Boolean(a.selectAll) !== Boolean(b.selectAll)) return false;
+  if (a.selectAll && b.selectAll) {
+    if (a.selectAll.checked !== b.selectAll.checked) return false;
+    if (a.selectAll.indeterminate !== b.selectAll.indeterminate) return false;
+  }
+  if (a.actions.length !== b.actions.length) return false;
+  for (let i = 0; i < a.actions.length; i += 1) {
+    const left = a.actions[i];
+    const right = b.actions[i];
+    if (left.id !== right.id) return false;
+    if (left.label !== right.label) return false;
+    if ((left.tone || "default") !== (right.tone || "default")) return false;
+    if (Boolean(left.disabled) !== Boolean(right.disabled)) return false;
+  }
+  return true;
 };
 
 export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps) {
@@ -602,6 +664,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     closeMinutes: rimonScheduleConfig.endHour * 60,
     sortOrder: 0
   });
+  const handleBulkStateChange = useCallback((next: BulkState | null) => {
+    setBulkState((prev) => (bulkStateEquivalent(prev, next) ? prev : next));
+  }, []);
   useEffect(() => {
     const stored = window.localStorage.getItem("adminSideCollapsed");
     if (stored) {
@@ -726,7 +791,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   useEffect(() => {
     setActiveSemester((previous) => {
       if (previous && semesters.some((semester) => semester.id === previous)) return previous;
-      return semesters[0]?.id || "";
+      const now = new Date();
+      const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const activeNow = semesters.find(
+        (semester) => semester.startDate && semester.endDate && todayKey >= semester.startDate && todayKey <= semester.endDate
+      );
+      return activeNow?.id || semesters[0]?.id || "";
     });
   }, [semesters]);
 
@@ -759,10 +829,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleEditSemester = (semester: SemesterEntity) => {
-    if (isSyncedSemester(semester)) {
-      showToast("סמסטר מסונכרן: ניתן לשנות שם תצוגה וסדר בלבד.", "error");
-      return;
-    }
     setEditingSemesterId(semester.id);
     setSemesterEditorDraft(toSemesterDraft(semester));
     setSemesterHolidayEditingId("");
@@ -790,61 +856,73 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleApplySemesterEditor = async () => {
-    if (!parseAcademicYearStart(semesterEditorDraft.studyYearLabel)) {
+    const previousSemester = semestersDraft.find((semester) => semester.id === semesterEditorDraft.id);
+    const immutableFieldsLocked = Boolean(previousSemester && isSyncedSemester(previousSemester));
+
+    if (!immutableFieldsLocked && !parseAcademicYearStart(semesterEditorDraft.studyYearLabel)) {
       showToast("שנת לימוד חייבת להיות בפורמט 20XX/XX (למשל 2025/26).", "error");
       return;
     }
-    if (semesterEditorDraft.letterMode === "other" && !semesterEditorDraft.letterOther.trim()) {
+    if (!immutableFieldsLocked && semesterEditorDraft.letterMode === "other" && !semesterEditorDraft.letterOther.trim()) {
       showToast("יש להזין ערך לסמסטר כאשר בוחרים \"אחר\".", "error");
       return;
     }
-    const next = toSemesterEntity(semesterEditorDraft);
-    if (!next.letter.trim()) {
+    const nextRaw = toSemesterEntity(semesterEditorDraft);
+    if (!immutableFieldsLocked && !nextRaw.letter.trim()) {
       showToast("יש להזין סימון סמסטר (למשל א / ב / אחר).", "error");
       return;
     }
-    if (!next.startDate || !next.endDate) {
+    if (!immutableFieldsLocked && (!nextRaw.startDate || !nextRaw.endDate)) {
       showToast("יש להזין תאריכי התחלה וסיום.", "error");
       return;
     }
-    if (next.endDate < next.startDate) {
+    if (!immutableFieldsLocked && nextRaw.endDate < nextRaw.startDate) {
       showToast("תאריך הסיום חייב להיות אחרי תאריך ההתחלה.", "error");
       return;
     }
-    const invalidHoliday = semesterEditorDraft.holidays.find(
-      (holiday) => (holiday.date || holiday.name) && (!DATE_KEY_PATTERN.test(holiday.date.trim()) || !holiday.name.trim())
-    );
-    if (invalidHoliday) {
-      showToast("יש למלא תאריך תקין ושם עבור כל חג.", "error");
-      return;
-    }
-    if (editingSemesterId) {
-      const current = semestersDraft.find((semester) => semester.id === editingSemesterId);
-      if (current && isSyncedSemester(current)) {
-        showToast("סמסטר מסונכרן: ניתן לשנות שם תצוגה וסדר בלבד.", "error");
+    if (!immutableFieldsLocked) {
+      const invalidHoliday = semesterEditorDraft.holidays.find(
+        (holiday) => (holiday.date || holiday.name) && (!DATE_KEY_PATTERN.test(holiday.date.trim()) || !holiday.name.trim())
+      );
+      if (invalidHoliday) {
+        showToast("יש למלא תאריך תקין ושם עבור כל חג.", "error");
         return;
       }
+    }
+    let next = nextRaw;
+    if (previousSemester && immutableFieldsLocked) {
+      const displayNameByDate = semesterEditorDraft.holidays.reduce<Record<string, string>>((acc, holiday) => {
+        const date = holiday.date.trim();
+        if (!DATE_KEY_PATTERN.test(date)) return acc;
+        const displayName = (holiday.displayName || "").trim();
+        acc[date] = displayName;
+        return acc;
+      }, {});
+      next = {
+        ...nextRaw,
+        id: previousSemester.id,
+        syncSource: previousSemester.syncSource || "api",
+        studyYear: previousSemester.studyYear,
+        letter: previousSemester.letter,
+        startDate: previousSemester.startDate,
+        endDate: previousSemester.endDate,
+        studyDayKeys: [...previousSemester.studyDayKeys],
+        holidays: previousSemester.holidays.map((holiday) => ({
+          ...holiday,
+          displayName: displayNameByDate[holiday.date] || undefined
+        }))
+      };
     }
     const nextSemesters = (() => {
       const index = semestersDraft.findIndex((semester) => semester.id === next.id);
       if (index === -1) return [...semestersDraft, next];
       return semestersDraft.map((semester) => {
         if (semester.id !== next.id) return semester;
-        const holidayDisplayByDate = new Map<string, string>();
-        semester.holidays.forEach((holiday) => {
-          if (!holiday.date) return;
-          const displayName = (holiday.displayName || "").trim();
-          if (displayName) holidayDisplayByDate.set(holiday.date, displayName);
-        });
         return {
           ...next,
           syncSource: semester.syncSource || next.syncSource || "manual",
-          displayName: semester.displayName,
           sortOrder: semester.sortOrder,
-          holidays: next.holidays.map((holiday) => ({
-            ...holiday,
-            displayName: holidayDisplayByDate.get(holiday.date) || undefined
-          }))
+          holidays: next.holidays
         };
       });
     })();
@@ -857,67 +935,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     setSemesterHolidayEditingId("");
     setSemesterEditorDraft(createEmptySemesterDraft(currentAcademicYear));
     showToast(editingSemesterId ? "הסמסטר עודכן." : "הסמסטר נוסף.");
-  };
-
-  const handleSemesterDisplayNameChange = (semesterId: string, displayName: string) => {
-    setSemestersDraft((previous) =>
-      previous.map((semester) =>
-        semester.id === semesterId
-          ? {
-              ...semester,
-              displayName
-            }
-          : semester
-      )
-    );
-  };
-
-  const handleHolidayDisplayNameChange = (semesterId: string, holidayDate: string, displayName: string) => {
-    setSemestersDraft((previous) =>
-      previous.map((semester) =>
-        semester.id === semesterId
-          ? {
-              ...semester,
-              holidays: semester.holidays.map((holiday) =>
-                holiday.date === holidayDate
-                  ? {
-                      ...holiday,
-                      displayName
-                    }
-                  : holiday
-              )
-            }
-          : semester
-      )
-    );
-  };
-
-  const moveSemester = (semesterId: string, direction: -1 | 1) => {
-    setSemestersDraft((previous) => {
-      const sorted = [...previous].sort((a, b) => {
-        const orderA = typeof a.sortOrder === "number" ? a.sortOrder : Number.MAX_SAFE_INTEGER;
-        const orderB = typeof b.sortOrder === "number" ? b.sortOrder : Number.MAX_SAFE_INTEGER;
-        if (orderA !== orderB) return orderA - orderB;
-        return a.startDate.localeCompare(b.startDate) || a.id.localeCompare(b.id);
-      });
-      const index = sorted.findIndex((semester) => semester.id === semesterId);
-      if (index < 0) return previous;
-      const nextIndex = index + direction;
-      if (nextIndex < 0 || nextIndex >= sorted.length) return previous;
-      const next = [...sorted];
-      const [moved] = next.splice(index, 1);
-      next.splice(nextIndex, 0, moved);
-      return next.map((semester, orderIndex) => ({
-        ...semester,
-        sortOrder: orderIndex + 1
-      }));
-    });
-  };
-
-  const handleSaveSemesterCustomizations = async () => {
-    const ok = await persistSemesters(semestersDraft);
-    if (!ok) return;
-    showToast("התאמות שמות וסדר לסמסטרים/חגים נשמרו.");
   };
 
   const persistScopedPolicies = async (nextPolicies: ReservationScopedPolicy[], withToast = false) => {
@@ -1156,8 +1173,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const roomsSyncEnabled = apiSyncDraft.entities.rooms.enabled;
   const lessonsSyncEnabled = apiSyncDraft.entities.lessons.enabled;
   const semestersSyncEnabled = apiSyncDraft.entities.semesters.enabled;
-  const holidaysSyncEnabled = apiSyncDraft.entities.holidays.enabled;
-  const semestersSyncLocked = semestersSyncEnabled || holidaysSyncEnabled;
+  const semesterFieldsLocked = semesterEditorDraft.syncSource === "api";
 
   const isSyncedRoom = useCallback((room: RoomRecord) => room.syncSource === "api", []);
   const isSyncedLesson = useCallback((lesson: LessonRecord) => lesson.syncSource === "api", []);
@@ -1291,22 +1307,56 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const showSemesterSettings = activeSection === "semesterSettings";
   const showPolicySettings = activeSection === "policySettings";
   const syncAllEnabled = API_SYNC_ENTITY_ORDER.every((entity) => apiSyncDraft.entities[entity].enabled);
+  const apiSyncLastSuccessAt = useMemo(() => {
+    const values = API_SYNC_ENTITY_ORDER
+      .map((entity) => Number(apiSyncDraft.entities[entity].lastSuccessAt || 0))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    if (!values.length) return undefined;
+    return Math.max(...values);
+  }, [apiSyncDraft.entities]);
 
   const settingsSectionContent = (
     <section className="admin-section">
       <div className="admin-section-body">
         {showSyncSettings ? (
-        <div className="admin-card">
-          <p className="admin-meta">סנכרון מתבצע דרך job יחיד. הכפתור מפעיל סנכרון ידני מלא.</p>
-          <div className="admin-form-grid">
-            <label className="admin-policy-toggle">
-              <input
-                type="checkbox"
-                checked={syncAllEnabled}
-                onChange={(event) => setApiSyncAllEnabled(event.target.checked)}
-              />
-              סנכרון הכל
-            </label>
+        <div>
+          <p className="admin-meta">סנכרון אחרון: {formatSyncDateTime(apiSyncLastSuccessAt)}</p>
+          <label className="admin-policy-toggle">
+            <input
+              type="checkbox"
+              checked={syncAllEnabled}
+              onChange={(event) => setApiSyncAllEnabled(event.target.checked)}
+            />
+            סנכרון הכל
+          </label>
+          <div className="admin-table">
+            {API_SYNC_ENTITY_ORDER.map((entity) => {
+              const entry = apiSyncDraft.entities[entity];
+              return (
+                <div key={entity} className="admin-row">
+                  <div className="admin-row-actions">
+                    <label className="admin-policy-toggle admin-policy-row-switch">
+                      <input
+                        type="checkbox"
+                        checked={entry.enabled}
+                        aria-label={`הפעלת סנכרון ${API_SYNC_ENTITY_LABEL[entity]}`}
+                        onChange={(event) => setApiSyncEntityEnabled(entity, event.target.checked)}
+                      />
+                    </label>
+                  </div>
+                  <div className="admin-row-main">
+                    <p className="admin-row-title">{API_SYNC_ENTITY_LABEL[entity]}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="admin-actions">
+            <button className="secondary" type="button" onClick={() => void triggerApiSyncNow()}>
+              סנכרון עכשיו
+            </button>
+          </div>
+          <div className="admin-sync-endpoint-wrap">
             <label>
               תדירות
               <select
@@ -1325,56 +1375,24 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 ))}
               </select>
             </label>
+            <label className="admin-sync-endpoint">
+              כתובת API
+              <input
+                type="url"
+                value={apiSyncDraft.primaryEndpoint}
+                placeholder="https://rimon-school-plan.base44.app/functions/scheduleApi"
+                onChange={(event) =>
+                  setApiSyncDraft((prev) => ({
+                    ...prev,
+                    primaryEndpoint: event.target.value
+                  }))
+                }
+                onBlur={() => {
+                  void persistApiSyncSettings(apiSyncDraft, { silentSuccess: true });
+                }}
+              />
+            </label>
           </div>
-          <div className="admin-table">
-            {API_SYNC_ENTITY_ORDER.map((entity) => {
-              const entry = apiSyncDraft.entities[entity];
-              return (
-                <div key={entity} className="admin-row">
-                  <div className="admin-row-main">
-                    <p className="admin-row-title">{API_SYNC_ENTITY_LABEL[entity]}</p>
-                    <p className="admin-row-meta">
-                      סנכרון אחרון: {formatSyncDateTime(entry.lastSuccessAt)} ·
-                      ניסיון אחרון: {formatSyncDateTime(entry.lastAttemptAt)}
-                    </p>
-                    {entry.lastError ? <p className="admin-error">{entry.lastError}</p> : null}
-                  </div>
-                  <div className="admin-row-actions">
-                    <label className="admin-policy-toggle admin-policy-row-switch">
-                      <input
-                        type="checkbox"
-                        checked={entry.enabled}
-                        onChange={(event) => setApiSyncEntityEnabled(entity, event.target.checked)}
-                      />
-                      פעיל
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="admin-actions">
-            <button className="secondary" type="button" onClick={() => void triggerApiSyncNow()}>
-              סנכרון עכשיו
-            </button>
-          </div>
-          <label>
-            כתובת API
-            <input
-              type="url"
-              value={apiSyncDraft.primaryEndpoint}
-              placeholder="https://rimon-school-plan.base44.app/functions/scheduleApi"
-              onChange={(event) =>
-                setApiSyncDraft((prev) => ({
-                  ...prev,
-                  primaryEndpoint: event.target.value
-                }))
-              }
-              onBlur={() => {
-                void persistApiSyncSettings(apiSyncDraft, { silentSuccess: true });
-              }}
-            />
-          </label>
           {apiSyncLastRunResult ? (
             <div className="admin-table">
               <div className="admin-row">
@@ -1388,44 +1406,29 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                   </p>
                 </div>
               </div>
-              {API_SYNC_ENTITY_ORDER.map((entity) => {
-                const result = apiSyncLastRunResult.entities?.[entity];
-                if (!result) return null;
-                const changed = getStatNumber(result.stats, "changed");
-                return (
-                  <div key={`run-result-${entity}`} className="admin-row">
-                    <div className="admin-row-main">
-                      <p className="admin-row-title">
-                        {API_SYNC_ENTITY_LABEL[entity]} · {result.success ? "הצלחה" : result.attempted ? "נכשל" : "לא רץ"}
-                      </p>
-                      <p className="admin-row-meta">
-                        פעיל: {result.enabled ? "כן" : "לא"} · נדרש: {result.due ? "כן" : "לא"}
-                        {typeof changed === "number" ? ` · שינויים: ${changed}` : ""}
-                      </p>
-                      {result.error ? <p className="admin-error">{result.error}</p> : null}
-                    </div>
-                  </div>
-                );
-              })}
+              <div className="admin-row">
+                <div className="admin-row-main">
+                  <p className="admin-row-meta">
+                    חדרים: {getStatNumber(apiSyncLastRunResult.entities?.rooms?.stats, "changed") ?? 0} · שיעורים:{" "}
+                    {getStatNumber(apiSyncLastRunResult.entities?.lessons?.stats, "changed") ?? 0} · סמסטרים:{" "}
+                    {getStatNumber(apiSyncLastRunResult.entities?.semesters?.stats, "changed") ?? 0} · חגים:{" "}
+                    {getStatNumber(apiSyncLastRunResult.entities?.holidays?.stats, "changed") ?? 0}
+                  </p>
+                </div>
+              </div>
             </div>
           ) : null}
         </div>
         ) : null}
 
         {showSemesterSettings ? (
-        <div className="admin-card">
-          <p className="admin-meta">ניתן לנהל סמסטרים ידניים לצד סמסטרים מסונכרנים.</p>
+        <div>
+          {semestersSyncEnabled ? <p className="admin-meta">סנכרון סמסטרים פעיל</p> : null}
           {settingsError ? <p className="admin-error">{settingsError}</p> : null}
-          {semestersSyncLocked ? <p className="admin-meta">לסמסטרים מסונכרנים: מזהים ותאריכים נעולים, אפשר לערוך שם תצוגה וסדר.</p> : null}
           <div className="admin-actions">
             <button className="secondary" type="button" onClick={handleNewSemester}>
               סמסטר חדש
             </button>
-            {semestersSyncLocked ? (
-              <button className="primary" type="button" onClick={() => void handleSaveSemesterCustomizations()}>
-                שמירת התאמות
-              </button>
-            ) : null}
           </div>
           <div className="admin-policy-list">
             {semestersDraft.length ? (
@@ -1438,63 +1441,14 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                       {activeSemester === semester.id ? <span className="admin-policy-pill">פעיל</span> : null}
                     </p>
                     <p className="admin-policy-item-summary">
-                      טווח: {semester.startDate || "..."}–{semester.endDate || "..."} · ימי לימוד:{" "}
-                      {summarizeStudyDaysCompact(semester.studyDayKeys)} ·
-                      חגים: {semester.holidays.length}
+                      טווח: {semester.startDate || "..."}–{semester.endDate || "..."} · חגים: {semester.holidays.length}
                     </p>
-                    {semestersSyncLocked ? (
-                      <div className="admin-form-row">
-                        <label>
-                          שם תצוגה (אופציונלי)
-                          <input
-                            type="text"
-                            value={semester.displayName || ""}
-                            placeholder={semester.letter || "Semester"}
-                            onChange={(event) => handleSemesterDisplayNameChange(semester.id, event.target.value)}
-                          />
-                        </label>
-                        <div className="admin-actions">
-                          <button className="secondary" type="button" onClick={() => moveSemester(semester.id, -1)}>
-                            למעלה
-                          </button>
-                          <button className="secondary" type="button" onClick={() => moveSemester(semester.id, 1)}>
-                            למטה
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                    {semestersSyncLocked && semester.holidays.length ? (
-                      <div className="admin-table">
-                        {semester.holidays.map((holiday) => (
-                          <div key={`${semester.id}-${holiday.date}`} className="admin-row">
-                            <div className="admin-row-main">
-                              <p className="admin-row-title">{holiday.date}</p>
-                              <p className="admin-row-meta">{resolveHolidayName(holiday)}</p>
-                            </div>
-                            <div className="admin-row-actions">
-                              <label>
-                                שם תצוגה
-                                <input
-                                  type="text"
-                                  value={holiday.displayName || ""}
-                                  placeholder={holiday.name || "סגירת קמפוס"}
-                                  onChange={(event) =>
-                                    handleHolidayDisplayNameChange(semester.id, holiday.date, event.target.value)
-                                  }
-                                />
-                              </label>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
                   </div>
                   <div className="admin-row-actions">
                     <button
                       className="secondary"
                       type="button"
                       onClick={() => handleEditSemester(semester)}
-                      disabled={isSyncedSemester(semester)}
                     >
                       עריכה
                     </button>
@@ -1543,7 +1497,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               </div>
 
               <div className="admin-form">
-                <fieldset className="admin-fieldset" disabled={semesterEditorDraft.syncSource === "api"}>
                 <div className="admin-form-row">
                   <label>
                     שנת לימוד (20XX/XX)
@@ -1551,6 +1504,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                       type="text"
                       value={semesterEditorDraft.studyYearLabel}
                       placeholder="2025/26"
+                      disabled={semesterFieldsLocked}
                       onChange={(event) =>
                         setSemesterEditorDraft((previous) => ({
                           ...previous,
@@ -1563,6 +1517,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     סמסטר
                     <select
                       value={semesterEditorDraft.letterMode}
+                      disabled={semesterFieldsLocked}
                       onChange={(event) =>
                         setSemesterEditorDraft((previous) => ({
                           ...previous,
@@ -1589,6 +1544,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                         type="text"
                         value={semesterEditorDraft.letterOther}
                         placeholder="קיץ / ג / מיוחד"
+                        disabled={semesterFieldsLocked}
                         onChange={(event) =>
                           setSemesterEditorDraft((previous) => ({
                             ...previous,
@@ -1600,12 +1556,30 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                   </div>
                 ) : null}
 
+                <div className="admin-form-row single">
+                  <label>
+                    שם תצוגה
+                    <input
+                      type="text"
+                      value={semesterEditorDraft.displayName}
+                      placeholder="אם ריק - יוצג שם הסמסטר מהמערכת החיצונית"
+                      onChange={(event) =>
+                        setSemesterEditorDraft((previous) => ({
+                          ...previous,
+                          displayName: event.target.value
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
                 <div className="admin-form-row">
                   <label>
                     מתאריך
                     <input
                       type="date"
                       value={semesterEditorDraft.startDate}
+                      disabled={semesterFieldsLocked}
                       onChange={(event) =>
                         setSemesterEditorDraft((previous) => ({
                           ...previous,
@@ -1619,6 +1593,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     <input
                       type="date"
                       value={semesterEditorDraft.endDate}
+                      disabled={semesterFieldsLocked}
                       onChange={(event) =>
                         setSemesterEditorDraft((previous) => ({
                           ...previous,
@@ -1630,37 +1605,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 </div>
 
                 <div className="admin-policy-editor-panel">
-                  <h4>ימי לימוד</h4>
-                  <div className="admin-policy-rooms">
-                    {scheduleWeekDays.map((day) => {
-                      const checked = semesterEditorDraft.studyDayKeys.includes(day.key);
-                      return (
-                        <label key={day.key} className="admin-policy-room-chip">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() =>
-                              setSemesterEditorDraft((previous) => ({
-                                ...previous,
-                                studyDayKeys: checked
-                                  ? previous.studyDayKeys.filter((dayKey) => dayKey !== day.key)
-                                  : [...previous.studyDayKeys, day.key]
-                              }))
-                            }
-                          />
-                          <span>{day.label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="admin-policy-editor-panel">
                   <div className="admin-card-header">
                     <h4>חגים וסגירות</h4>
                     <button
                       type="button"
                       className="secondary"
+                      disabled={semesterFieldsLocked}
                       onClick={() => {
                         const id = createHolidayId();
                         setSemesterEditorDraft((previous) => ({
@@ -1677,16 +1627,18 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     <div className="admin-table">
                       {semesterEditorDraft.holidays.map((holiday) => {
                         const isEditingHoliday = semesterHolidayEditingId === holiday.id;
+                        const holidayFieldsLocked = semesterFieldsLocked || holiday.syncSource === "api";
                         return (
                           <div key={holiday.id} className="admin-row">
                             <div className="admin-row-main">
                               {isEditingHoliday ? (
-                                <div className="admin-form-row">
+                                <div className="admin-form-row single">
                                   <label>
                                     תאריך
                                     <input
                                       type="date"
                                       value={holiday.date}
+                                      disabled={holidayFieldsLocked}
                                       onChange={(event) =>
                                         setSemesterEditorDraft((previous) => ({
                                           ...previous,
@@ -1704,6 +1656,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                                     <input
                                       type="text"
                                       value={holiday.name}
+                                      disabled={holidayFieldsLocked}
                                       onChange={(event) =>
                                         setSemesterEditorDraft((previous) => ({
                                           ...previous,
@@ -1717,11 +1670,32 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                                       placeholder="פסח / יום הזיכרון"
                                     />
                                   </label>
+                                  <label>
+                                    שם תצוגה
+                                    <input
+                                      type="text"
+                                      value={holiday.displayName || ""}
+                                      placeholder="אם ריק - יוצג שם ברירת המחדל"
+                                      onChange={(event) =>
+                                        setSemesterEditorDraft((previous) => ({
+                                          ...previous,
+                                          holidays: previous.holidays.map((entry) =>
+                                            entry.id === holiday.id
+                                              ? { ...entry, displayName: event.target.value }
+                                              : entry
+                                          )
+                                        }))
+                                      }
+                                    />
+                                  </label>
                                 </div>
                               ) : (
                                 <>
-                                  <p className="admin-row-title">{holiday.name || "ללא שם"}</p>
-                                  <p className="admin-row-meta">{holiday.date || "ללא תאריך"}</p>
+                                  <p className="admin-row-title">{resolveHolidayName(holiday)}</p>
+                                  <p className="admin-row-meta">
+                                    {holiday.date || "ללא תאריך"}
+                                    {holiday.syncSource === "api" ? " · מסונכרן" : " · ידני"}
+                                  </p>
                                 </>
                               )}
                             </div>
@@ -1740,6 +1714,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                               <button
                                 type="button"
                                 className="secondary danger"
+                                disabled={holidayFieldsLocked}
                                 onClick={() =>
                                   setSemesterEditorDraft((previous) => ({
                                     ...previous,
@@ -1774,14 +1749,13 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     {editingSemesterId ? "עדכון סמסטר" : "הוספת סמסטר"}
                   </button>
                 </div>
-                </fieldset>
               </div>
             </div>
           </div>
         ) : null}
 
         {showPolicySettings ? (
-        <div className="admin-card">
+        <div>
           <p className="admin-meta">
             עדיפות גבוהה למעלה. ברירת המחדל נשארת תמיד בשורה התחתונה.
           </p>
@@ -1817,7 +1791,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                       {policy.isDefault ? <span className="admin-policy-pill">ברירת מחדל</span> : null}
                       {!policy.enabled ? <span className="admin-policy-pill muted">מושבתת</span> : null}
                     </p>
-                    <p className="admin-policy-item-summary">{summarizePolicySentence(policy, roomNameById, semesterNameById)}</p>
+                    <div className="admin-policy-item-summary">
+                      <p className="admin-policy-item-summary-line">
+                        כאשר {summarizePolicyConditionsParts(policy, roomNameById, semesterNameById).join(" ו־")}
+                      </p>
+                      <p className="admin-policy-item-summary-line">{summarizePolicyRulesParts(policy).join(", ")}</p>
+                    </div>
                   </div>
                   <div className="admin-row-actions">
                     <label className="admin-policy-toggle admin-policy-row-switch">
@@ -1903,379 +1882,434 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                   </label>
                 </div>
 
-                <div className="admin-policy-editor-panel">
-                  <h4>תנאים</h4>
-                  {policyEditorDraft.isDefault ? (
-                    <p className="admin-meta">ברירת המחדל חלה על כל המקרים.</p>
-                  ) : (
-                    <>
-                      <label className="admin-policy-toggle">
-                        <input
-                          type="checkbox"
-                          checked={policyEditorDraft.useConditionDays}
-                          onChange={(event) =>
-                            setPolicyEditorDraft((prev) => ({
-                              ...prev,
-                              useConditionDays: event.target.checked,
-                              dayKeys: event.target.checked ? prev.dayKeys : []
-                            }))
-                          }
-                        />
-                        רק בימים מסוימים
-                      </label>
-                      {policyEditorDraft.useConditionDays ? (
-                        <div className="admin-policy-rooms">
-                          {scheduleWeekDays.map((day) => {
-                            const checked = policyEditorDraft.dayKeys.includes(day.key);
-                            return (
-                              <label key={day.key} className="admin-policy-room-chip">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() =>
-                                    setPolicyEditorDraft((prev) => ({
-                                      ...prev,
-                                      dayKeys: checked
-                                        ? prev.dayKeys.filter((key) => key !== day.key)
-                                        : [...prev.dayKeys, day.key]
-                                    }))
-                                  }
-                                />
-                                <span>{day.label}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-
-                      <label className="admin-policy-toggle">
-                        <input
-                          type="checkbox"
-                          checked={policyEditorDraft.useConditionRooms}
-                          onChange={(event) =>
-                            setPolicyEditorDraft((prev) => ({
-                              ...prev,
-                              useConditionRooms: event.target.checked,
-                              roomIds: event.target.checked ? prev.roomIds : []
-                            }))
-                          }
-                        />
-                        רק בחדרים מסוימים
-                      </label>
-                      {policyEditorDraft.useConditionRooms ? (
-                        <div className="admin-policy-rooms">
-                          {roomsRaw.map((room) => {
-                            const checked = policyEditorDraft.roomIds.includes(room.id);
-                            return (
-                              <label key={room.id} className="admin-policy-room-chip">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() =>
-                                    setPolicyEditorDraft((prev) => ({
-                                      ...prev,
-                                      roomIds: checked
-                                        ? prev.roomIds.filter((roomId) => roomId !== room.id)
-                                        : [...prev.roomIds, room.id]
-                                    }))
-                                  }
-                                />
-                                <span>{room.name || room.shortName || room.id}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-
-                      <label className="admin-policy-toggle">
-                        <input
-                          type="checkbox"
-                          checked={policyEditorDraft.useConditionDateRange}
-                          onChange={(event) =>
-                            setPolicyEditorDraft((prev) => ({
-                              ...prev,
-                              useConditionDateRange: event.target.checked,
-                              dateStart: event.target.checked ? prev.dateStart : "",
-                              dateEnd: event.target.checked ? prev.dateEnd : ""
-                            }))
-                          }
-                        />
-                        רק בטווח תאריכים
-                      </label>
-                      {policyEditorDraft.useConditionDateRange ? (
-                        <div className="admin-form-row">
-                          <label>
-                            מתאריך
-                            <input
-                              type="date"
-                              value={policyEditorDraft.dateStart}
-                              onChange={(event) =>
-                                setPolicyEditorDraft((prev) => ({
-                                  ...prev,
-                                  dateStart: event.target.value
-                                }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            עד תאריך
-                            <input
-                              type="date"
-                              value={policyEditorDraft.dateEnd}
-                              onChange={(event) =>
-                                setPolicyEditorDraft((prev) => ({
-                                  ...prev,
-                                  dateEnd: event.target.value
-                                }))
-                              }
-                            />
-                          </label>
-                        </div>
-                      ) : null}
-
-                      <label className="admin-policy-toggle">
-                        <input
-                          type="checkbox"
-                          checked={policyEditorDraft.useConditionTimeRange}
-                          onChange={(event) =>
-                            setPolicyEditorDraft((prev) => ({
-                              ...prev,
-                              useConditionTimeRange: event.target.checked,
-                              startTime: event.target.checked ? prev.startTime : "",
-                              endTime: event.target.checked ? prev.endTime : ""
-                            }))
-                          }
-                        />
-                        רק בטווח שעות
-                      </label>
-                      {policyEditorDraft.useConditionTimeRange ? (
-                        <div className="admin-form-row">
-                          <label>
-                            משעה
-                            <input
-                              type="time"
-                              value={policyEditorDraft.startTime}
-                              onChange={(event) =>
-                                setPolicyEditorDraft((prev) => ({
-                                  ...prev,
-                                  startTime: event.target.value
-                                }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            עד שעה
-                            <input
-                              type="time"
-                              value={policyEditorDraft.endTime}
-                              onChange={(event) =>
-                                setPolicyEditorDraft((prev) => ({
-                                  ...prev,
-                                  endTime: event.target.value
-                                }))
-                              }
-                            />
-                          </label>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-
-                <div className="admin-policy-editor-panel">
-                  <h4>כללים</h4>
-
-                  <label className="admin-policy-toggle">
-                    <input
-                      type="checkbox"
-                      checked={policyEditorDraft.useHourQuota}
-                      onChange={(event) =>
-                        setPolicyEditorDraft((prev) => ({
-                          ...prev,
-                          useHourQuota: event.target.checked,
-                          maxHoursPerRoomPerDay: event.target.checked ? prev.maxHoursPerRoomPerDay : "",
-                          maxHoursPerRoomPerWeek: event.target.checked ? prev.maxHoursPerRoomPerWeek : "",
-                          maxHoursPerDayTotal: event.target.checked ? prev.maxHoursPerDayTotal : "",
-                          maxHoursPerWeekTotal: event.target.checked ? prev.maxHoursPerWeekTotal : ""
-                        }))
-                      }
-                    />
-                    הקצבת שעות
-                  </label>
-
-                  <div className="admin-policy-matrix">
-                    <div className="admin-policy-matrix-head" />
-                    <div className="admin-policy-matrix-head">לחדר</div>
-                    <div className="admin-policy-matrix-head">סה״כ</div>
-
-                    <div className="admin-policy-matrix-rowlabel">ליום</div>
-                    <div className="admin-policy-matrix-cell rich">
+                <fieldset className="admin-fieldset">
+                  <div className="admin-policy-editor-panel">
+                    <h4>תנאים</h4>
+                    <label className="admin-policy-toggle">
                       <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        placeholder="ללא מגבלה"
-                        disabled={!policyEditorDraft.useHourQuota}
-                        value={policyEditorDraft.maxHoursPerRoomPerDay}
+                        type="checkbox"
+                        checked={policyEditorDraft.isDefault || policyEditorDraft.useConditionDays}
+                        disabled={policyEditorDraft.isDefault}
                         onChange={(event) =>
                           setPolicyEditorDraft((prev) => ({
                             ...prev,
-                            maxHoursPerRoomPerDay: normalizeUnlimitedInput(event.target.value)
+                            useConditionDays: event.target.checked,
+                            dayKeys: event.target.checked ? prev.dayKeys : []
                           }))
                         }
                       />
-                    </div>
-                    <div className="admin-policy-matrix-cell rich">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        placeholder="ללא מגבלה"
-                        disabled={!policyEditorDraft.useHourQuota}
-                        value={policyEditorDraft.maxHoursPerDayTotal}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            maxHoursPerDayTotal: normalizeUnlimitedInput(event.target.value)
-                          }))
-                        }
-                      />
-                    </div>
+                      ימים
+                    </label>
+                    {policyEditorDraft.isDefault || policyEditorDraft.useConditionDays ? (
+                      <div className="admin-policy-rooms">
+                        {POLICY_DAY_OPTIONS.map((day) => {
+                          const checked = policyEditorDraft.dayKeys.includes(day.key);
+                          return (
+                            <label key={day.key} className="admin-policy-room-chip">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    dayKeys: checked
+                                      ? prev.dayKeys.filter((key) => key !== day.key)
+                                      : [...prev.dayKeys, day.key]
+                                  }))
+                                }
+                              />
+                              <span>{day.label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : null}
 
-                    <div className="admin-policy-matrix-rowlabel">לשבוע</div>
-                    <div className="admin-policy-matrix-cell rich">
+                    <label className="admin-policy-toggle">
                       <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        placeholder="ללא מגבלה"
-                        disabled={!policyEditorDraft.useHourQuota}
-                        value={policyEditorDraft.maxHoursPerRoomPerWeek}
+                        type="checkbox"
+                        checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionRooms}
+                        disabled={policyEditorDraft.isDefault}
                         onChange={(event) =>
                           setPolicyEditorDraft((prev) => ({
                             ...prev,
-                            maxHoursPerRoomPerWeek: normalizeUnlimitedInput(event.target.value)
+                            useConditionRooms: event.target.checked,
+                            roomIds: event.target.checked ? prev.roomIds : []
                           }))
                         }
                       />
-                    </div>
-                    <div className="admin-policy-matrix-cell rich">
+                      חדרים
+                    </label>
+                    {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionRooms ? (
+                      <div className="admin-policy-rooms">
+                        {roomsRaw.map((room) => {
+                          const checked = policyEditorDraft.roomIds.includes(room.id);
+                          return (
+                            <label key={room.id} className="admin-policy-room-chip">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    roomIds: checked
+                                      ? prev.roomIds.filter((roomId) => roomId !== room.id)
+                                      : [...prev.roomIds, room.id]
+                                  }))
+                                }
+                              />
+                              <span>{room.name || room.shortName || room.id}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    <label className="admin-policy-toggle">
                       <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        placeholder="ללא מגבלה"
-                        disabled={!policyEditorDraft.useHourQuota}
-                        value={policyEditorDraft.maxHoursPerWeekTotal}
+                        type="checkbox"
+                        checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionSemesters}
+                        disabled={policyEditorDraft.isDefault}
                         onChange={(event) =>
                           setPolicyEditorDraft((prev) => ({
                             ...prev,
-                            maxHoursPerWeekTotal: normalizeUnlimitedInput(event.target.value)
+                            useConditionSemesters: event.target.checked,
+                            semesterIds: event.target.checked ? prev.semesterIds : []
                           }))
                         }
                       />
-                    </div>
+                      סמסטרים
+                    </label>
+                    {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionSemesters ? (
+                      <div className="admin-policy-rooms">
+                        {semestersDraft.map((semester) => {
+                          const checked = policyEditorDraft.semesterIds.includes(semester.id);
+                          return (
+                            <label key={semester.id} className="admin-policy-room-chip">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    semesterIds: checked
+                                      ? prev.semesterIds.filter((semesterId) => semesterId !== semester.id)
+                                      : [...prev.semesterIds, semester.id]
+                                  }))
+                                }
+                              />
+                              <span>{formatAcademicYearLabel(semester.studyYear)} · {resolveSemesterName(semester)}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    <label className="admin-policy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionDateRange}
+                        disabled={policyEditorDraft.isDefault}
+                        onChange={(event) =>
+                          setPolicyEditorDraft((prev) => ({
+                            ...prev,
+                            useConditionDateRange: event.target.checked,
+                            dateStart: event.target.checked ? prev.dateStart : "",
+                            dateEnd: event.target.checked ? prev.dateEnd : ""
+                          }))
+                        }
+                      />
+                      תאריכים
+                    </label>
+                    {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionDateRange ? (
+                      <div className="admin-form-row">
+                        <label>
+                          מתאריך
+                          <input
+                            type="date"
+                            value={policyEditorDraft.dateStart}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                dateStart: event.target.value
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          עד תאריך
+                          <input
+                            type="date"
+                            value={policyEditorDraft.dateEnd}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                dateEnd: event.target.value
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+
+                    <label className="admin-policy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={policyEditorDraft.isDefault || policyEditorDraft.useConditionTimeRange}
+                        disabled={policyEditorDraft.isDefault}
+                        onChange={(event) =>
+                          setPolicyEditorDraft((prev) => ({
+                            ...prev,
+                            useConditionTimeRange: event.target.checked,
+                            startTime: event.target.checked ? prev.startTime : "",
+                            endTime: event.target.checked ? prev.endTime : ""
+                          }))
+                        }
+                      />
+                      שעות
+                    </label>
+                    {policyEditorDraft.isDefault || policyEditorDraft.useConditionTimeRange ? (
+                      <div className="admin-form-row">
+                        <label>
+                          משעה
+                          <input
+                            type="time"
+                            value={policyEditorDraft.startTime}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                startTime: event.target.value
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          עד שעה
+                          <input
+                            type="time"
+                            value={policyEditorDraft.endTime}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                endTime: event.target.value
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <label className="admin-policy-toggle">
-                    <input
-                      type="checkbox"
-                      checked={policyEditorDraft.useMaxDaysForward}
-                      onChange={(event) =>
-                        setPolicyEditorDraft((prev) => ({
-                          ...prev,
-                          useMaxDaysForward: event.target.checked,
-                          maxDaysForward: event.target.checked ? prev.maxDaysForward : ""
-                        }))
-                      }
-                    />
-                    ימים קדימה
-                  </label>
-                  {policyEditorDraft.useMaxDaysForward ? (
-                    <div className="admin-form-row single">
+                  <div className="admin-policy-editor-panel">
+                    <h4>כללים</h4>
+
+                    <label className="admin-policy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={policyEditorDraft.blockReservations}
+                        disabled={policyEditorDraft.isDefault}
+                        onChange={(event) =>
+                          setPolicyEditorDraft((prev) => ({
+                            ...prev,
+                            blockReservations: event.target.checked
+                          }))
+                        }
+                      />
+                      חסימת שריונים
+                    </label>
+
+                    <fieldset className="admin-fieldset" disabled={policyEditorDraft.blockReservations}>
+                    <label className="admin-policy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={policyEditorDraft.useHourQuota}
+                        onChange={(event) =>
+                          setPolicyEditorDraft((prev) => ({
+                            ...prev,
+                            useHourQuota: event.target.checked,
+                            maxHoursPerRoomPerDay: event.target.checked ? prev.maxHoursPerRoomPerDay : "",
+                            maxHoursPerRoomPerWeek: event.target.checked ? prev.maxHoursPerRoomPerWeek : "",
+                            maxHoursPerDayTotal: event.target.checked ? prev.maxHoursPerDayTotal : "",
+                            maxHoursPerWeekTotal: event.target.checked ? prev.maxHoursPerWeekTotal : ""
+                          }))
+                        }
+                      />
+                      מגבלת שעות
+                    </label>
+
+                    {policyEditorDraft.useHourQuota ? (
+                      <div className="admin-policy-matrix">
+                        <div className="admin-policy-matrix-head" />
+                        <div className="admin-policy-matrix-head">לחדר</div>
+                        <div className="admin-policy-matrix-head">סה״כ</div>
+
+                        <div className="admin-policy-matrix-rowlabel">ליום</div>
+                        <div className="admin-policy-matrix-cell rich">
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            placeholder="ללא מגבלה"
+                            value={policyEditorDraft.maxHoursPerRoomPerDay}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                maxHoursPerRoomPerDay: normalizeUnlimitedInput(event.target.value)
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="admin-policy-matrix-cell rich">
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            placeholder="ללא מגבלה"
+                            value={policyEditorDraft.maxHoursPerDayTotal}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                maxHoursPerDayTotal: normalizeUnlimitedInput(event.target.value)
+                              }))
+                            }
+                          />
+                        </div>
+
+                        <div className="admin-policy-matrix-rowlabel">לשבוע</div>
+                        <div className="admin-policy-matrix-cell rich">
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            placeholder="ללא מגבלה"
+                            value={policyEditorDraft.maxHoursPerRoomPerWeek}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                maxHoursPerRoomPerWeek: normalizeUnlimitedInput(event.target.value)
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="admin-policy-matrix-cell rich">
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            placeholder="ללא מגבלה"
+                            value={policyEditorDraft.maxHoursPerWeekTotal}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                maxHoursPerWeekTotal: normalizeUnlimitedInput(event.target.value)
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <label className="admin-policy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={policyEditorDraft.useMaxDaysForward}
+                        onChange={(event) =>
+                          setPolicyEditorDraft((prev) => ({
+                            ...prev,
+                            useMaxDaysForward: event.target.checked,
+                            maxDaysForward: event.target.checked ? prev.maxDaysForward : ""
+                          }))
+                        }
+                      />
+                      ימים מראש
+                    </label>
+                    {policyEditorDraft.useMaxDaysForward ? (
+                      <div className="admin-form-row single">
+                        <label>
+                          מקסימום ימים מראש
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            placeholder="ללא מגבלה"
+                            value={policyEditorDraft.maxDaysForward}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                maxDaysForward: normalizeUnlimitedInput(event.target.value)
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+
+                    <label className="admin-policy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={policyEditorDraft.useMinLeadHours}
+                        onChange={(event) =>
+                          setPolicyEditorDraft((prev) => ({
+                            ...prev,
+                            useMinLeadHours: event.target.checked,
+                            useMinLeadDayBefore: event.target.checked ? false : prev.useMinLeadDayBefore,
+                            minLeadHours: event.target.checked ? prev.minLeadHours || "1" : "0"
+                          }))
+                        }
+                      />
+                      שעות מראש
+                    </label>
+                    {policyEditorDraft.useMinLeadHours ? (
                       <label>
-                        ימים קדימה
+                        מינימום שעות מראש
                         <input
                           type="number"
                           min={0}
-                          step={1}
-                          placeholder="ללא מגבלה"
-                          value={policyEditorDraft.maxDaysForward}
+                          step={0.5}
+                          value={policyEditorDraft.minLeadHours}
                           onChange={(event) =>
                             setPolicyEditorDraft((prev) => ({
                               ...prev,
-                              maxDaysForward: normalizeUnlimitedInput(event.target.value)
+                              minLeadHours: event.target.value
                             }))
                           }
                         />
                       </label>
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                  <label className="admin-policy-toggle">
-                    <input
-                      type="checkbox"
-                      checked={policyEditorDraft.useMinLeadHours}
-                      onChange={(event) =>
-                        setPolicyEditorDraft((prev) => ({
-                          ...prev,
-                          useMinLeadHours: event.target.checked,
-                          useMinLeadDayBefore: event.target.checked ? false : prev.useMinLeadDayBefore,
-                          minLeadHours: event.target.checked ? prev.minLeadHours || "1" : "0"
-                        }))
-                      }
-                    />
-                    זמן לפני תחילת הסלוט
-                  </label>
-                  {policyEditorDraft.useMinLeadHours ? (
-                    <label>
-                      שעות לפני תחילת סלוט
+                    <label className="admin-policy-toggle">
                       <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        value={policyEditorDraft.minLeadHours}
+                        type="checkbox"
+                        checked={policyEditorDraft.useMinLeadDayBefore}
                         onChange={(event) =>
                           setPolicyEditorDraft((prev) => ({
                             ...prev,
-                            minLeadHours: event.target.value
+                            useMinLeadDayBefore: event.target.checked,
+                            useMinLeadHours: event.target.checked ? false : prev.useMinLeadHours,
+                            minLeadDayBeforeTime: event.target.checked ? prev.minLeadDayBeforeTime || "18:00" : "18:00"
                           }))
                         }
                       />
+                      נעילה ביום שלפני
                     </label>
-                  ) : null}
-
-                  <label className="admin-policy-toggle">
-                    <input
-                      type="checkbox"
-                      checked={policyEditorDraft.useMinLeadDayBefore}
-                      onChange={(event) =>
-                        setPolicyEditorDraft((prev) => ({
-                          ...prev,
-                          useMinLeadDayBefore: event.target.checked,
-                          useMinLeadHours: event.target.checked ? false : prev.useMinLeadHours,
-                          minLeadDayBeforeTime: event.target.checked ? prev.minLeadDayBeforeTime || "18:00" : "18:00"
-                        }))
-                      }
-                    />
-                    שעה ביום לפני
-                  </label>
-                  {policyEditorDraft.useMinLeadDayBefore ? (
-                    <label>
-                      שעה ביום שלפני
-                      <input
-                        type="time"
-                        value={policyEditorDraft.minLeadDayBeforeTime}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            minLeadDayBeforeTime: event.target.value
-                          }))
-                        }
-                      />
-                    </label>
-                  ) : null}
-                </div>
+                    {policyEditorDraft.useMinLeadDayBefore ? (
+                      <label>
+                        שעת נעילה ביום שלפני
+                        <input
+                          type="time"
+                          value={policyEditorDraft.minLeadDayBeforeTime}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              minLeadDayBeforeTime: event.target.value
+                            }))
+                          }
+                        />
+                      </label>
+                    ) : null}
+                    </fieldset>
+                  </div>
+                </fieldset>
 
                 <div className="admin-actions">
                   <button className="secondary" type="button" onClick={() => setPolicyEditorOpen(false)}>
@@ -2383,7 +2417,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     <div className={`admin-shell${menuCollapsed ? " collapsed" : ""}`}>
       <div className="admin-main">
         <div className="admin-top-toolbar">
-          <div className="admin-top-toolbar-row">
+          <div className="admin-top-toolbar-row admin-top-toolbar-main-row">
             {isNarrow ? (
               <button
                 type="button"
@@ -2551,7 +2585,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 cohortStartYear: currentAcademicYear
               })
             }
-            onBulkStateChange={setBulkState}
+            onBulkStateChange={handleBulkStateChange}
           />
         ) : null}
 
@@ -2576,7 +2610,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             onRemoveReservation={(reservation) => { void releaseReservation(reservation.date, reservation.id); }}
             lessonsSyncEnabled={lessonsSyncEnabled}
             isSyncedLesson={isSyncedLesson}
-            onBulkStateChange={setBulkState}
+            onBulkStateChange={handleBulkStateChange}
           />
         ) : null}
 
@@ -2604,7 +2638,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 sortOrder: 0
               })
             }
-            onBulkStateChange={setBulkState}
+            onBulkStateChange={handleBulkStateChange}
           />
         ) : null}
 

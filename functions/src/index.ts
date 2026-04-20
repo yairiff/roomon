@@ -26,6 +26,12 @@ const sendgridApiKey = process.env.SENDGRID_API_KEY || "";
 const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const googleOauthClient = new OAuth2Client();
 
+type VerifiedGoogleIdentity = {
+  email: string;
+  sub: string;
+  picture: string;
+};
+
 const sendEmail = async (to: string[], subject: string, text: string) => {
   if (!sendgridApiKey || !fromEmail || !to.length) return;
   const payload = {
@@ -137,7 +143,7 @@ const normalizeGooglePhotoUrl = (url: string, size: number) => {
   return `${url}=s${size}-c`;
 };
 
-const verifyGoogleIdToken = async (idToken: string) => {
+const verifyGoogleIdToken = async (idToken: string): Promise<VerifiedGoogleIdentity | null> => {
   if (!idToken) return null;
   try {
     const ticket = await googleOauthClient.verifyIdToken(
@@ -146,38 +152,101 @@ const verifyGoogleIdToken = async (idToken: string) => {
     const payload = ticket.getPayload();
     const email = String(payload?.email || "").toLowerCase();
     const sub = String(payload?.sub || "");
+    const picture = String(payload?.picture || "");
     const verified = payload?.email_verified !== false;
     if (!email || !sub || !verified) return null;
-    return { email, sub };
+    return { email, sub, picture };
   } catch {
     return null;
   }
 };
 
+const verifyGoogleAccessToken = async (accessToken: string): Promise<VerifiedGoogleIdentity | null> => {
+  if (!accessToken) return null;
+  try {
+    const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as Record<string, unknown>;
+    const email = String(payload.email || "").toLowerCase();
+    const sub = String(payload.sub || "");
+    const picture = String(payload.picture || "");
+    const emailVerifiedRaw = payload.email_verified;
+    const emailVerified =
+      typeof emailVerifiedRaw === "boolean"
+        ? emailVerifiedRaw
+        : typeof emailVerifiedRaw === "string"
+          ? emailVerifiedRaw.toLowerCase() !== "false"
+          : true;
+    if (!email || !sub || !emailVerified) return null;
+    return { email, sub, picture };
+  } catch {
+    return null;
+  }
+};
+
+const verifyGoogleIdentityTokens = async (args: {
+  idToken?: string;
+  accessToken?: string;
+}): Promise<VerifiedGoogleIdentity | null> => {
+  const idToken = String(args.idToken || "");
+  const accessToken = String(args.accessToken || "");
+  const byIdToken = await verifyGoogleIdToken(idToken);
+  if (byIdToken) return byIdToken;
+  return await verifyGoogleAccessToken(accessToken);
+};
+
+const extensionFromContentType = (contentType: string) =>
+  contentType.includes("png")
+    ? "png"
+    : contentType.includes("webp")
+      ? "webp"
+      : contentType.includes("gif")
+        ? "gif"
+        : "jpg";
+
+const buildStorageDownloadUrl = (bucketName: string, path: string, token: string) => {
+  const objectName = encodeURIComponent(path);
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${objectName}?alt=media&token=${token}`;
+};
+
 export const syncProfilePhoto = onCall(
-  async (request: CallableRequest<{ sourceUrl?: string; targetSize?: number; idToken?: string }>) => {
+  async (request: CallableRequest<{ sourceUrl?: string; targetSize?: number; idToken?: string; accessToken?: string; force?: boolean }>) => {
     // We don't require Firebase Auth (this app uses Google Identity Services).
     // Instead, we optionally verify the Google ID token when provided.
     const authedEmailRaw = request.auth?.token?.email;
     const authedUid = request.auth?.uid;
     const googleIdToken = String(request.data?.idToken || "");
+    const googleAccessToken = String(request.data?.accessToken || "");
 
     let email = authedEmailRaw ? String(authedEmailRaw).toLowerCase() : "";
     let uid = authedUid ? String(authedUid) : "";
 
+    let googlePictureFromToken = "";
     if (!email || !uid) {
-      const verified = await verifyGoogleIdToken(googleIdToken);
+      const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken });
       if (!verified) {
         throw new HttpsError("unauthenticated", "Missing auth context.");
       }
       email = verified.email;
       uid = verified.sub;
+      googlePictureFromToken = verified.picture;
+    } else if (googleIdToken || googleAccessToken) {
+      const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken });
+      if (verified && verified.email === email) {
+        googlePictureFromToken = verified.picture;
+      }
     }
 
-    const sourceUrl = String(request.data?.sourceUrl || "");
+    const requestedSourceUrl = String(request.data?.sourceUrl || "");
+    const sourceUrl = requestedSourceUrl || googlePictureFromToken;
     if (!sourceUrl || !isGooglePhotoUrl(sourceUrl)) {
       throw new HttpsError("invalid-argument", "Invalid sourceUrl.");
     }
+    const force = request.data?.force === true;
 
     const requestedSize = Number(request.data?.targetSize);
     const targetSize = Number.isFinite(requestedSize) ? Math.round(requestedSize) : 1024;
@@ -188,7 +257,7 @@ export const syncProfilePhoto = onCall(
       const snap = await admin.firestore().doc(`users/${email}`).get();
       if (snap.exists) {
         const data = snap.data() as any;
-        if (data?.pictureRemoved === true) {
+        if (data?.pictureRemoved === true && !force) {
           return { pictureUrl: "" };
         }
         const existingUrl = typeof data?.pictureUrl === "string" ? String(data.pictureUrl) : "";
@@ -229,14 +298,7 @@ export const syncProfilePhoto = onCall(
       throw new HttpsError("invalid-argument", "Profile photo is too large.");
     }
 
-    const ext =
-      contentType.includes("png")
-        ? "png"
-        : contentType.includes("webp")
-          ? "webp"
-          : contentType.includes("gif")
-            ? "gif"
-            : "jpg";
+    const ext = extensionFromContentType(contentType);
 
     const path = `profilePhotos/${uid}/avatar.${ext}`;
     const token = randomUUID();
@@ -253,8 +315,7 @@ export const syncProfilePhoto = onCall(
     });
 
     const bucketName = bucket.name;
-    const objectName = encodeURIComponent(path); // keep "/" as %2F
-    const pictureUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${objectName}?alt=media&token=${token}`;
+    const pictureUrl = buildStorageDownloadUrl(bucketName, path, token);
 
     await admin.firestore().doc(`users/${email}`).set(
       {
@@ -262,6 +323,65 @@ export const syncProfilePhoto = onCall(
         pictureUrl,
         pictureRemoved: false,
         pictureSize: clampedSize,
+        pictureUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+
+    return { pictureUrl };
+  }
+);
+
+export const uploadProfilePhoto = onCall(
+  async (request: CallableRequest<{ imageDataUrl?: string; contentType?: string; idToken?: string; accessToken?: string }>) => {
+    const googleIdToken = String(request.data?.idToken || "");
+    const googleAccessToken = String(request.data?.accessToken || "");
+    const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken });
+    if (!verified) {
+      throw new HttpsError("unauthenticated", "Missing auth context.");
+    }
+
+    const email = verified.email;
+    const uid = verified.sub;
+    const imageDataUrl = String(request.data?.imageDataUrl || "");
+    const dataUrlMatch = imageDataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=]+)$/);
+    if (!dataUrlMatch) {
+      throw new HttpsError("invalid-argument", "Invalid imageDataUrl.");
+    }
+
+    const contentType = String(request.data?.contentType || dataUrlMatch[1] || "").toLowerCase();
+    if (!contentType.startsWith("image/")) {
+      throw new HttpsError("invalid-argument", "Unsupported content type.");
+    }
+    const bytes = Buffer.from(dataUrlMatch[2], "base64");
+    const MAX_BYTES = 5 * 1024 * 1024;
+    if (bytes.byteLength <= 0 || bytes.byteLength > MAX_BYTES) {
+      throw new HttpsError("invalid-argument", "Profile photo is too large.");
+    }
+
+    const ext = extensionFromContentType(contentType);
+    const path = `profilePhotos/${uid}/avatar.${ext}`;
+    const token = randomUUID();
+    const bucket = admin.storage().bucket();
+    await bucket.file(path).save(bytes, {
+      resumable: false,
+      metadata: {
+        contentType,
+        cacheControl: "public, max-age=604800",
+        metadata: {
+          firebaseStorageDownloadTokens: token
+        }
+      }
+    });
+
+    const pictureUrl = buildStorageDownloadUrl(bucket.name, path, token);
+
+    await admin.firestore().doc(`users/${email}`).set(
+      {
+        email,
+        pictureUrl,
+        pictureRemoved: false,
+        pictureSize: 1024,
         pictureUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
       },
       { merge: true }
@@ -505,11 +625,13 @@ const sanitizeExistingSemesters = (raw: unknown): SemesterEntity[] => {
       const startDate = typeof item.startDate === "string" ? item.startDate.trim() : "";
       const endDate = typeof item.endDate === "string" ? item.endDate.trim() : "";
       if (!id || !DATE_KEY_PATTERN.test(startDate) || !DATE_KEY_PATTERN.test(endDate)) return null;
+      const endYear = Number(endDate.slice(0, 4));
+      const inferredStudyYear = Number.isFinite(endYear) ? endYear - 1 : Number(startDate.slice(0, 4));
       const studyYearRaw =
         typeof item.studyYear === "number" || typeof item.studyYear === "string"
           ? Number(item.studyYear)
-          : Number(startDate.slice(0, 4));
-      const studyYear = Number.isFinite(studyYearRaw) ? Math.floor(studyYearRaw) : Number(startDate.slice(0, 4));
+          : inferredStudyYear;
+      const studyYear = Number.isFinite(studyYearRaw) ? Math.floor(studyYearRaw) : inferredStudyYear;
       const dayKeys = Array.isArray(item.studyDayKeys)
         ? item.studyDayKeys.filter((day): day is string => typeof day === "string")
         : ["sun", "mon", "tue", "wed", "thu"];
@@ -795,7 +917,8 @@ const syncSemestersAndHolidaysFromApi = async (
         const endDate = typeof entry.end_date === "string" ? entry.end_date.trim() : "";
         if (!DATE_KEY_PATTERN.test(startDate) || !DATE_KEY_PATTERN.test(endDate)) return null;
         const code = typeof entry.code === "string" && entry.code.trim() ? entry.code.trim() : String(index + 1);
-        const studyYear = Number(startDate.slice(0, 4));
+        const endYear = Number(endDate.slice(0, 4));
+        const studyYear = Number.isFinite(endYear) ? endYear - 1 : Number(startDate.slice(0, 4));
         const id = `api-semester-${code}`;
         const previous = previousById.get(id);
         return {
@@ -986,10 +1109,14 @@ const syncLessonsFromApi = async (
     const existingDoc = existing.get(docId);
     if (existingDoc) {
       const data = existingDoc.data();
+      const payloadExternalId = typeof payload.externalId === "string" ? payload.externalId : "";
+      const existingExternalId = typeof data.externalId === "string" ? data.externalId : "";
       if (
         data.syncHash === payload.syncHash &&
         data.date === payload.date &&
-        data.action === payload.action
+        data.action === payload.action &&
+        existingExternalId === payloadExternalId &&
+        data.syncSource === payload.syncSource
       ) {
         unchanged += 1;
         return;

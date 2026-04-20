@@ -429,8 +429,11 @@ export default function ScheduleSection({
 
   useEffect(() => {
     onBulkStateChange?.(bulkState);
-    return () => onBulkStateChange?.(null);
   }, [bulkState, onBulkStateChange]);
+
+  useEffect(() => {
+    return () => onBulkStateChange?.(null);
+  }, [onBulkStateChange]);
 
   return (
     <section className="admin-section">
@@ -623,7 +626,7 @@ export default function ScheduleSection({
             {selectedInView.length ? `${selectedInView.length} מתוך ${items.length} תוצאות` : `${items.length} תוצאות`}
           </span>
         </div>
-        {lessonsSyncEnabled ? <span className="admin-meta">סנכרון שיעורים פעיל. אפשר לערוך שיעורים ידניים בלבד.</span> : null}
+        {lessonsSyncEnabled ? <span className="admin-meta">סנכרון שיעורים פעיל</span> : null}
         {lessonsError || reservationsError ? <span className="admin-error">{lessonsError || reservationsError}</span> : null}
       </div>
 

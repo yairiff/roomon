@@ -242,8 +242,11 @@ export default function RoomsSection({
 
   useEffect(() => {
     onBulkStateChange?.(bulkState);
-    return () => onBulkStateChange?.(null);
   }, [bulkState, onBulkStateChange]);
+
+  useEffect(() => {
+    return () => onBulkStateChange?.(null);
+  }, [onBulkStateChange]);
 
   const confirmDelete = () => {
     if (!confirmDeleteIds?.length) return;
@@ -301,7 +304,6 @@ export default function RoomsSection({
             <h3>פרטי חדר</h3>
             {roomStatus ? <span className="admin-meta">{roomStatus}</span> : null}
           </div>
-          {syncEnabled ? <p className="admin-meta">סנכרון חדרים פעיל. חדרים מסונכרנים נעולים למחיקת מזהה/מחיקה.</p> : null}
           <fieldset className="admin-fieldset" disabled={!isEditing}>
             <div className="admin-form-grid">
               <label>
@@ -394,7 +396,7 @@ export default function RoomsSection({
           </span>
           {canDragRooms ? <span className="admin-meta">גרור/י שורות כדי לשנות סדר.</span> : null}
         </div>
-        {syncEnabled ? <span className="admin-meta">סנכרון חדרים פעיל. אפשר לערוך שם/קיצור/סדר ולהוסיף חדרים ידניים.</span> : null}
+        {syncEnabled ? <span className="admin-meta">סנכרון חדרים פעיל</span> : null}
         {roomsError ? <span className="admin-error">{roomsError}</span> : null}
       </div>
       <div className="admin-section-body">

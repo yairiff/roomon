@@ -6,6 +6,7 @@ import { buildYearlySemesterId } from "../lib/semesterScope";
 import { useLessons } from "./useLessons";
 import { useRooms } from "./useRooms";
 import { useScheduleSettings } from "./useScheduleSettings";
+import type { DayKey, WeekDay } from "../types/schedule";
 
 const weekDayByDate = (dateKey: string) => {
   const day = parseDateKey(dateKey).getDay();
@@ -18,8 +19,28 @@ const isPrimarySemesterLetter = (letter: string) => {
   return normalized === "א" || normalized === "ב" || normalized.toUpperCase() === "A" || normalized.toUpperCase() === "B";
 };
 
+const DEFAULT_POLICY_DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+const ALL_WEEK_DAYS: WeekDay[] = [
+  { key: "sun", label: "ראשון", short: "א" },
+  { key: "mon", label: "שני", short: "ב" },
+  { key: "tue", label: "שלישי", short: "ג" },
+  { key: "wed", label: "רביעי", short: "ד" },
+  { key: "thu", label: "חמישי", short: "ה" },
+  { key: "fri", label: "שישי", short: "ו" },
+  { key: "sat", label: "שבת", short: "ש" }
+];
+
 export function useSchedule(dateKey: string) {
   const { semesters, reservationPolicy, reservationPolicies, apiSync } = useScheduleSettings();
+  const policyDayKeys = useMemo(() => {
+    const defaultPolicy = reservationPolicies.find((policy) => policy.isDefault && policy.enabled);
+    const next = (defaultPolicy?.scope.dayKeys || []).filter(
+      (key): key is DayKey =>
+        key === "sun" || key === "mon" || key === "tue" || key === "wed" || key === "thu" || key === "fri" || key === "sat"
+    );
+    if (!next.length) return DEFAULT_POLICY_DAY_KEYS;
+    return Array.from(new Set(next));
+  }, [reservationPolicies]);
   const activeSemester = useMemo(() => {
     const selectedDate = parseDateKey(dateKey);
     return semesters.find((semester) => {
@@ -33,9 +54,13 @@ export function useSchedule(dateKey: string) {
     if (!activeSemester) return false;
     if (activeSemester.holidays.some((holiday) => holiday.date === dateKey)) return false;
     const dateDay = weekDayByDate(dateKey);
-    if (dateDay === "fri" || dateDay === "sat") return false;
-    return activeSemester.studyDayKeys.includes(dateDay);
-  }, [activeSemester, dateKey]);
+    return policyDayKeys.includes(dateDay);
+  }, [activeSemester, dateKey, policyDayKeys]);
+  const visibleWeekDays = useMemo(() => {
+    const allowed = new Set(policyDayKeys);
+    const filtered = ALL_WEEK_DAYS.filter((day) => allowed.has(day.key));
+    return filtered.length ? filtered : weekDays;
+  }, [policyDayKeys]);
 
   const semesterScope = useMemo(() => {
     if (!activeSemester || !isStudyDate) return null;
@@ -64,7 +89,7 @@ export function useSchedule(dateKey: string) {
     lessons,
     rooms,
     config: rimonScheduleConfig,
-    weekDays,
+    weekDays: visibleWeekDays,
     timeSlots,
     lessonIndex,
     semester: semesterScope?.[0] || null,

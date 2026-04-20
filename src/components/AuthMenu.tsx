@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { httpsCallable } from "firebase/functions";
 import type { User } from "../types/auth";
-import { db, storage } from "../lib/firebase";
+import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
 import { AdminIcon, ShortcutIcon, CalendarIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon } from "./Icons";
 
@@ -12,6 +12,8 @@ export type AuthMenuProps = {
   onClose: () => void;
   onSignOut: () => void;
   onLoginClick: () => void;
+  getGoogleIdToken?: () => string;
+  getGoogleAccessToken?: (interactive?: boolean) => Promise<string>;
   onProfileUpdated?: (updates: Partial<User>) => void;
   onOpenMySchedule?: () => void;
   adminMode?: boolean;
@@ -29,6 +31,8 @@ export default function AuthMenu({
   onClose,
   onSignOut,
   onLoginClick,
+  getGoogleIdToken,
+  getGoogleAccessToken,
   onProfileUpdated,
   onOpenMySchedule,
   adminMode = false,
@@ -174,22 +178,75 @@ export default function AuthMenu({
 
     setProfileSaving(true);
     try {
+      const toDataUrl = (file: File) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("read_failed"));
+          reader.readAsDataURL(file);
+        });
+      const resolveGoogleTokens = async (interactive = false) => {
+        const idToken = (getGoogleIdToken?.() || "").trim();
+        const accessToken = getGoogleAccessToken ? (await getGoogleAccessToken(interactive || !idToken)) : "";
+        return {
+          idToken,
+          accessToken: String(accessToken || "").trim()
+        };
+      };
+
       let nextPicture = (user.picture || "").trim();
       let nextPictureRemoved = profilePictureRemoved;
-      if (profilePictureRemoved) {
-        nextPicture = "";
-      }
       if (profileFile) {
-        if (!storage) {
-          setProfileError("אחסון תמונות לא זמין כרגע.");
+        if (!functions) {
+          setProfileError("שירות העלאת תמונות לא זמין כרגע.");
           setProfileSaving(false);
           return;
         }
-        const ext = profileFile.name.split(".").pop()?.toLowerCase() || "jpg";
-        const safeEmail = encodeURIComponent(user.email.toLowerCase());
-        const imageRef = ref(storage, `users/${safeEmail}/avatar-${Date.now()}.${ext}`);
-        await uploadBytes(imageRef, profileFile, { contentType: profileFile.type || "image/jpeg" });
-        nextPicture = await getDownloadURL(imageRef);
+        const { idToken, accessToken } = await resolveGoogleTokens(true);
+        if (!idToken && !accessToken) {
+          setProfileError("פג תוקף ההתחברות. התחבר/י מחדש ונסה/י שוב.");
+          setProfileSaving(false);
+          return;
+        }
+        const uploadPhoto = httpsCallable(functions, "uploadProfilePhoto");
+        const imageDataUrl = await toDataUrl(profileFile);
+        const response = await uploadPhoto({
+          imageDataUrl,
+          contentType: profileFile.type || "image/jpeg",
+          idToken: idToken || undefined,
+          accessToken: accessToken || undefined
+        });
+        const result = response.data as { pictureUrl?: string };
+        nextPicture = String(result.pictureUrl || "").trim();
+        if (!nextPicture) {
+          throw new Error("missing_picture_url");
+        }
+        nextPictureRemoved = false;
+      } else if (profilePictureRemoved) {
+        nextPicture = "";
+        if (functions) {
+          const { idToken, accessToken } = await resolveGoogleTokens(false);
+          if (idToken || accessToken) {
+            try {
+              const syncGooglePhoto = httpsCallable(functions, "syncProfilePhoto");
+              const response = await syncGooglePhoto({
+                idToken: idToken || undefined,
+                accessToken: accessToken || undefined,
+                targetSize: 1024,
+                force: true
+              });
+              const result = response.data as { pictureUrl?: string };
+              const restoredPicture = String(result.pictureUrl || "").trim();
+              if (restoredPicture) {
+                nextPicture = restoredPicture;
+                nextPictureRemoved = false;
+              }
+            } catch {
+              // If Google fallback sync fails we still keep the explicit removal.
+            }
+          }
+        }
+      } else {
         nextPictureRemoved = false;
       }
       const persistedPicture = nextPictureRemoved
@@ -204,7 +261,7 @@ export default function AuthMenu({
           email: user.email.toLowerCase(),
           name,
           phone: profilePhone.trim(),
-          pictureUrl: persistedPicture,
+          pictureUrl: persistedPicture || null,
           pictureRemoved: nextPictureRemoved,
           updatedAt: serverTimestamp()
         },

@@ -33,6 +33,8 @@ type MyScheduleViewProps = {
   timeSlots: TimeSlot[];
   startHour: number;
   endHour: number;
+  onNavigatePrev?: () => void;
+  onNavigateNext?: () => void;
 };
 
 const MY_ROOM_ID = "__my_schedule__";
@@ -85,7 +87,9 @@ export default function MyScheduleView({
   getScheduleLessonsForDate,
   timeSlots,
   startHour,
-  endHour
+  endHour,
+  onNavigatePrev,
+  onNavigateNext
 }: MyScheduleViewProps) {
   const email = (currentUser?.email || "").trim().toLowerCase();
 
@@ -561,6 +565,8 @@ export default function MyScheduleView({
           selectedRoom={MY_ROOM_ID}
           showHeaders={false}
           footer={<Legend />}
+          onNavigatePrev={onNavigatePrev}
+          onNavigateNext={onNavigateNext}
         />
       ) : (
         <ScheduleGrid
@@ -577,6 +583,8 @@ export default function MyScheduleView({
             onModeChange("day");
           }}
           footer={<Legend />}
+          onNavigatePrev={onNavigatePrev}
+          onNavigateNext={onNavigateNext}
         />
       )}
     </section>

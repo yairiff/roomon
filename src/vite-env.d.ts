@@ -6,6 +6,25 @@ declare module "*.csv?raw" {
 }
 
 declare global {
+  interface GoogleTokenResponse {
+    access_token?: string;
+    expires_in?: number;
+    error?: string;
+  }
+
+  interface GoogleTokenClient {
+    requestAccessToken: (options?: { prompt?: "" | "consent" | "select_account" | "none" }) => void;
+  }
+
+  interface GoogleOauth2 {
+    initTokenClient: (config: {
+      client_id: string;
+      scope: string;
+      callback: (response: GoogleTokenResponse) => void;
+      error_callback?: () => void;
+    }) => GoogleTokenClient;
+  }
+
   interface GoogleAccountsId {
     initialize: (config: { client_id: string; callback: (response: { credential: string }) => void }) => void;
     renderButton: (element: HTMLElement, options: Record<string, unknown>) => void;
@@ -14,6 +33,7 @@ declare global {
 
   interface GoogleAccounts {
     id: GoogleAccountsId;
+    oauth2?: GoogleOauth2;
   }
 
   interface GoogleIdentity {

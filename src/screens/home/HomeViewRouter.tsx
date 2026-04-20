@@ -173,6 +173,8 @@ export default function HomeViewRouter({
         getScheduleLessonsForDate={getLessonsForDate}
         onOpenPinned={onOpenPinned}
         onAddSlot={onMyScheduleAddSlot}
+        onNavigatePrev={onNavigatePrev}
+        onNavigateNext={onNavigateNext}
       />
     );
   }

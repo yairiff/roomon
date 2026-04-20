@@ -324,9 +324,9 @@ export default function ScheduleGrid({
       if (Math.abs(dx) < 60) return;
       if (Math.abs(dx) < Math.abs(dy) * 1.4) return;
 
-      // Match RTL header arrows: swipe left => previous, swipe right => next.
-      if (dx < 0) onNavigatePrev?.();
-      else onNavigateNext?.();
+      // Requested UX: swipe right => next, swipe left => previous.
+      if (dx > 0) onNavigateNext?.();
+      else onNavigatePrev?.();
       state.navigated = true;
     };
 

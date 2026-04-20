@@ -26,9 +26,7 @@ export function addDays(date: Date, days: number) {
 export function getDayKeyFromDateKey(dateKey: string): DayKey {
   const date = parseDateKey(dateKey);
   const map = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
-  const day = map[date.getDay()] || "sun";
-  if (day === "fri" || day === "sat") return "sun";
-  return day;
+  return map[date.getDay()] || "sun";
 }
 
 export function formatShortDate(dateKey: string) {
@@ -46,9 +44,18 @@ export function getWeekStart(dateKey: string) {
 export function buildWeekDates(dateKey: string, weekDays: WeekDay[]): WeekDate[] {
   if (!weekDays.length) return [];
   const startOfWeek = getWeekStart(dateKey);
+  const dayOffsets: Record<DayKey, number> = {
+    sun: 0,
+    mon: 1,
+    tue: 2,
+    wed: 3,
+    thu: 4,
+    fri: 5,
+    sat: 6
+  };
 
-  return weekDays.map((day, index) => {
-    const date = addDays(startOfWeek, index);
+  return weekDays.map((day) => {
+    const date = addDays(startOfWeek, dayOffsets[day.key] ?? 0);
     const key = formatDateKey(date);
     return {
       ...day,
@@ -73,8 +80,23 @@ export function getWeekNumber(dateKey: string) {
 
 export function formatWeekRange(dateKey: string, weekDays: WeekDay[]) {
   if (!weekDays.length) return "";
-  const start = formatShortDate(formatDateKey(getWeekStart(dateKey)));
-  const endDate = addDays(getWeekStart(dateKey), weekDays.length - 1);
+  const startOfWeek = getWeekStart(dateKey);
+  const dayOffsets = weekDays.map((day) => {
+    const map: Record<DayKey, number> = {
+      sun: 0,
+      mon: 1,
+      tue: 2,
+      wed: 3,
+      thu: 4,
+      fri: 5,
+      sat: 6
+    };
+    return map[day.key] ?? 0;
+  });
+  const startOffset = Math.min(...dayOffsets);
+  const endOffset = Math.max(...dayOffsets);
+  const start = formatShortDate(formatDateKey(addDays(startOfWeek, startOffset)));
+  const endDate = addDays(startOfWeek, endOffset);
   const end = formatShortDate(formatDateKey(endDate));
   return `${start}–${end}`;
 }

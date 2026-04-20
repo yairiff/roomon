@@ -25,7 +25,11 @@ if (isFirebaseConfigured) {
   app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
   db = getFirestore(app);
   functions = getFunctions(app);
-  storage = getStorage(app);
+  const bucketRaw = String(firebaseConfig.storageBucket || "").trim();
+  const normalizedBucket = bucketRaw.endsWith(".firebasestorage.app")
+    ? bucketRaw.replace(/\.firebasestorage\.app$/, ".appspot.com")
+    : bucketRaw;
+  storage = normalizedBucket ? getStorage(app, `gs://${normalizedBucket}`) : getStorage(app);
   // Cache Firestore data locally to dramatically reduce repeat reads across app sessions.
   // Ignore errors (e.g. multiple tabs, unsupported browser).
   enableIndexedDbPersistence(db).catch(() => {});
