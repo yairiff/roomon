@@ -1,1 +1,7 @@
-export type AdminSection = "users" | "schedule" | "rooms" | "settings";
+export type AdminSection =
+  | "users"
+  | "schedule"
+  | "rooms"
+  | "syncSettings"
+  | "semesterSettings"
+  | "policySettings";

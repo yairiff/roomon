@@ -32,6 +32,8 @@ type ScheduleSectionProps = {
   onRemoveLesson: (lessonId: string) => void;
   onUpdateReservation: (reservation: Reservation) => void;
   onRemoveReservation: (reservation: Reservation) => void;
+  lessonsSyncEnabled?: boolean;
+  isSyncedLesson?: (lesson: LessonRecord) => boolean;
   onBulkStateChange?: (state: BulkState | null) => void;
   onFilteredLessonsChange?: (lessons: LessonRecord[]) => void;
   onFilteredReservationsChange?: (reservations: Reservation[]) => void;
@@ -83,6 +85,8 @@ export default function ScheduleSection({
   onRemoveLesson,
   onUpdateReservation,
   onRemoveReservation,
+  lessonsSyncEnabled = false,
+  isSyncedLesson = (lesson) => lesson.syncSource === "api",
   onBulkStateChange,
   onFilteredLessonsChange,
   onFilteredReservationsChange
@@ -252,6 +256,15 @@ export default function ScheduleSection({
     [itemsByKey, selectedKeys]
   );
 
+  const selectionIncludesLockedLesson = useMemo(
+    () =>
+      selectedInView.some((key) => {
+        const item = itemsByKey.get(key);
+        return item?.kind === "lesson" && isSyncedLesson(item.lesson);
+      }),
+    [isSyncedLesson, itemsByKey, selectedInView]
+  );
+
   const toggleAll = useCallback(() => {
     setSelectedKeys((prev) => {
       const keysInView = items.map((item) => item.key);
@@ -283,15 +296,13 @@ export default function ScheduleSection({
     const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const firstRoom = roomsRaw[0]?.id || "";
     const day = dayFilter !== "all" ? dayFilter : "sun";
-    setDraft({
-      kind: "choose",
-      value: {
-        date,
-        roomId: roomFilter !== "all" ? roomFilter : firstRoom,
-        startMinutes: rimonScheduleConfig.startHour * 60,
-        day
-      }
-    });
+    const base = {
+      date,
+      roomId: roomFilter !== "all" ? roomFilter : firstRoom,
+      startMinutes: rimonScheduleConfig.startHour * 60,
+      day
+    };
+    setDraft({ kind: "choose", value: base });
   }, [dayFilter, roomFilter, roomsRaw]);
 
   const bulkEdit = useCallback(() => {
@@ -301,17 +312,19 @@ export default function ScheduleSection({
   }, [itemsByKey, selectOne, selectedInView]);
 
   const duplicateLesson = useCallback((lesson: LessonRecord) => {
+    if (isSyncedLesson(lesson)) return;
     const semesterId = lesson.semester || activeSemester || "semester";
     const newId = `${semesterId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const copy: LessonRecord = {
       ...lesson,
       id: newId,
       semester: semesterId,
+      syncSource: "manual",
       title: lesson.title ? `${lesson.title} (עותק)` : "שיעור (עותק)"
     };
     onUpsertLesson(copy);
     setDraft({ kind: "lesson", value: copy });
-  }, [activeSemester, onUpsertLesson]);
+  }, [activeSemester, isSyncedLesson, onUpsertLesson]);
 
   const duplicateReservation = useCallback((reservation: Reservation) => {
     const kind =
@@ -339,15 +352,17 @@ export default function ScheduleSection({
   }, [duplicateLesson, duplicateReservation, itemsByKey, selectedInView]);
 
   const bulkDelete = useCallback(() => {
+    if (selectionIncludesLockedLesson) return;
     if (!selectedInView.length) return;
     setConfirmDeleteKeys(selectedInView);
-  }, [selectedInView]);
+  }, [selectedInView, selectionIncludesLockedLesson]);
 
   const confirmDelete = useCallback(() => {
     if (!confirmDeleteKeys?.length) return;
     confirmDeleteKeys.forEach((key) => {
       const item = itemsByKey.get(key);
       if (!item) return;
+      if (item.kind === "lesson" && isSyncedLesson(item.lesson)) return;
       if (item.kind === "lesson") onRemoveLesson(item.lesson.id);
       else onRemoveReservation(item.reservation);
     });
@@ -362,7 +377,7 @@ export default function ScheduleSection({
       if (draftKey && confirmDeleteKeys.includes(draftKey)) setDraft(null);
     }
     setConfirmDeleteKeys(null);
-  }, [confirmDeleteKeys, draft, itemsByKey, onRemoveLesson, onRemoveReservation]);
+  }, [confirmDeleteKeys, draft, isSyncedLesson, itemsByKey, onRemoveLesson, onRemoveReservation]);
 
   const selectionState = useMemo(() => {
     const total = items.length;
@@ -390,14 +405,14 @@ export default function ScheduleSection({
           id: "edit",
           label: "עריכה",
           icon: <EditIcon />,
-          disabled: selectionState.selectedCount !== 1,
+          disabled: selectionState.selectedCount !== 1 || selectionIncludesLockedLesson,
           onClick: bulkEdit
         },
         {
           id: "duplicate",
           label: "שכפול",
           icon: <DuplicateIcon />,
-          disabled: selectionState.selectedCount === 0,
+          disabled: selectionState.selectedCount === 0 || selectionIncludesLockedLesson,
           onClick: bulkDuplicate
         },
         {
@@ -405,12 +420,12 @@ export default function ScheduleSection({
           label: "מחיקה",
           icon: <ReleaseIcon />,
           tone: "danger",
-          disabled: selectionState.selectedCount === 0,
+          disabled: selectionState.selectedCount === 0 || selectionIncludesLockedLesson,
           onClick: bulkDelete
         }
       ]
     };
-  }, [bulkDelete, bulkDuplicate, bulkEdit, handleNew, selectionState.checked, selectionState.indeterminate, selectionState.selectedCount, selectionState.total, toggleAll]);
+  }, [bulkDelete, bulkDuplicate, bulkEdit, handleNew, selectionIncludesLockedLesson, selectionState.checked, selectionState.indeterminate, selectionState.selectedCount, selectionState.total, toggleAll]);
 
   useEffect(() => {
     onBulkStateChange?.(bulkState);
@@ -445,6 +460,7 @@ export default function ScheduleSection({
         onDuplicateLesson={duplicateLesson}
         onDuplicateReservation={duplicateReservation}
         onRequestDeleteKeys={(keys) => setConfirmDeleteKeys(keys)}
+        lessonsSyncEnabled={lessonsSyncEnabled}
       />
 
       <div className="admin-section-toolbar">
@@ -607,6 +623,7 @@ export default function ScheduleSection({
             {selectedInView.length ? `${selectedInView.length} מתוך ${items.length} תוצאות` : `${items.length} תוצאות`}
           </span>
         </div>
+        {lessonsSyncEnabled ? <span className="admin-meta">סנכרון שיעורים פעיל. אפשר לערוך שיעורים ידניים בלבד.</span> : null}
         {lessonsError || reservationsError ? <span className="admin-error">{lessonsError || reservationsError}</span> : null}
       </div>
 
@@ -663,7 +680,12 @@ export default function ScheduleSection({
                       }
                     />
                     <div className="admin-row-main">
-                      <p className="admin-row-title">{title}</p>
+                      <p className="admin-row-title">
+                        {title}
+                        {item.kind === "lesson" ? (
+                          <span className="admin-policy-pill">{isSyncedLesson(item.lesson) ? "מסונכרן" : "ידני"}</span>
+                        ) : null}
+                      </p>
                       <p className="admin-row-meta">{meta}</p>
                       {item.kind === "reservation" && item.reservation.reservedEmail ? (
                         <p className="admin-row-meta">{item.reservation.reservedEmail}</p>
@@ -679,6 +701,7 @@ export default function ScheduleSection({
                             e.stopPropagation();
                             selectOne(item);
                           }}
+                          disabled={item.kind === "lesson" && isSyncedLesson(item.lesson)}
                         >
                           <EditIcon />
                         </button>
@@ -691,6 +714,7 @@ export default function ScheduleSection({
                             if (item.kind === "lesson") duplicateLesson(item.lesson);
                             else duplicateReservation(item.reservation);
                           }}
+                          disabled={item.kind === "lesson" && isSyncedLesson(item.lesson)}
                         >
                           <DuplicateIcon />
                         </button>
@@ -702,6 +726,7 @@ export default function ScheduleSection({
                             e.stopPropagation();
                             setConfirmDeleteKeys([item.key]);
                           }}
+                          disabled={item.kind === "lesson" && isSyncedLesson(item.lesson)}
                         >
                           <ReleaseIcon />
                         </button>

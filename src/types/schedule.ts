@@ -25,6 +25,7 @@ export type Room = {
   id: string;
   name: string;
   shortName: string;
+  externalId?: string;
 };
 
 export type ScheduleConfig = {

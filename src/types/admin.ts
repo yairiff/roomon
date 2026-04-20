@@ -27,10 +27,18 @@ export type RoomRecord = {
   id: string;
   name: string;
   shortName: string;
+  apiName?: string;
+  apiShortName?: string;
+  externalId?: string;
+  externalSlug?: string;
+  syncSource?: "manual" | "api";
+  syncHash?: string;
 } & RoomMeta;
 
 export type LessonRecord = Lesson & {
   semester: SemesterKey;
+  syncSource?: "manual" | "api";
+  externalId?: string;
 };
 
 export type LessonOverrideAction = "add" | "update" | "delete";
@@ -43,4 +51,7 @@ export type LessonOverride = {
   lesson?: Lesson;
   createdAt?: number;
   createdBy?: string;
+  syncSource?: "manual" | "api";
+  externalId?: string;
+  syncHash?: string;
 };

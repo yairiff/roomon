@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 import { db } from "../lib/firebase";
 import { rimonScheduleConfig } from "../config";
 import type {
+  ApiSyncEntityConfig,
+  ApiSyncEntityKey,
+  ApiSyncSettings,
   ReservationPolicy,
   ReservationScopedPolicy,
   SemesterEntity,
@@ -10,7 +13,7 @@ import type {
   SemesterRange
 } from "../types/settings";
 import type { DayKey } from "../types/schedule";
-import { DEFAULT_RESERVATION_POLICY } from "../types/settings";
+import { DEFAULT_API_SYNC_SETTINGS, DEFAULT_RESERVATION_POLICY } from "../types/settings";
 
 const validDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -46,7 +49,8 @@ const uniqueHolidays = (raw: unknown): SemesterHoliday[] => {
       if (!merged.has(date)) {
         merged.set(date, {
           date,
-          name: "חג"
+          name: "חג",
+          displayName: undefined
         });
       }
       return;
@@ -55,12 +59,25 @@ const uniqueHolidays = (raw: unknown): SemesterHoliday[] => {
     const item = entry as Record<string, unknown>;
     const date = typeof item.date === "string" ? item.date.trim() : "";
     const name = typeof item.name === "string" ? item.name.trim() : "";
+    const displayName = typeof item.displayName === "string" ? item.displayName.trim() : "";
+    const sortOrderRaw = Number(item.sortOrder);
+    const sortOrder = Number.isFinite(sortOrderRaw) ? Math.round(sortOrderRaw) : undefined;
     if (!DATE_KEY_PATTERN.test(date)) return;
-    if (!name) return;
-    merged.set(date, { date, name });
+    merged.set(date, {
+      date,
+      name: name || "סגירת קמפוס",
+      displayName: displayName || undefined,
+      sortOrder,
+      syncSource: item.syncSource === "api" ? "api" : item.syncSource === "manual" ? "manual" : undefined
+    });
   });
 
-  return Array.from(merged.values()).sort((a, b) => a.date.localeCompare(b.date));
+  return Array.from(merged.values()).sort((a, b) => {
+    const orderA = typeof a.sortOrder === "number" ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+    const orderB = typeof b.sortOrder === "number" ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.date.localeCompare(b.date);
+  });
 };
 
 const semesterIdSlug = (value: string) => {
@@ -128,6 +145,28 @@ const clampDays = (value: unknown, fallback: number) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(0, Math.min(365, Math.round(numeric)));
+};
+
+const API_SYNC_ENTITY_KEYS: ApiSyncEntityKey[] = ["rooms", "lessons", "semesters", "holidays"];
+
+const clampIntervalMinutes = (value: unknown, fallback: number) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(15, Math.min(7 * 24 * 60, Math.round(numeric)));
+};
+
+const stripUndefinedDeep = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripUndefinedDeep(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, entry]) => {
+      if (entry === undefined) return acc;
+      acc[key] = stripUndefinedDeep(entry);
+      return acc;
+    }, {});
+  }
+  return value;
 };
 
 const sanitizePolicy = (policy?: Partial<ReservationPolicy>): ReservationPolicy => ({
@@ -249,10 +288,23 @@ const sanitizeSemesters = (
               : typeof item.key === "string" && item.key.trim()
                 ? item.key.trim()
                 : "";
+          const displayName = typeof item.displayName === "string" ? item.displayName.trim() : "";
+          const sortOrderRaw = Number(item.sortOrder);
+          const sortOrder = Number.isFinite(sortOrderRaw) ? Math.round(sortOrderRaw) : undefined;
           return {
             id: idRaw || buildSemesterId(studyYear, rawLetter, index),
             studyYear,
             letter: rawLetter,
+            displayName: displayName || undefined,
+            sortOrder,
+            syncSource:
+              item.syncSource === "api"
+                ? "api"
+                : item.syncSource === "manual"
+                  ? "manual"
+                  : (idRaw || "").startsWith("api-semester-")
+                    ? "api"
+                    : undefined,
             startDate,
             endDate,
             studyDayKeys: uniqueDayKeys(item.studyDayKeys),
@@ -271,7 +323,8 @@ const sanitizeSemesters = (
   if (!list.length) return [];
 
   const usedIds = new Set<string>();
-  return list.map((semester, index) => {
+  return list
+    .map((semester, index) => {
     let id = semester.id || buildSemesterId(semester.studyYear, semester.letter, index);
     while (usedIds.has(id)) {
       id = `${id}-${index + 1}`;
@@ -281,7 +334,13 @@ const sanitizeSemesters = (
       ...semester,
       id
     };
-  });
+    })
+    .sort((a, b) => {
+      const orderA = typeof a.sortOrder === "number" ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+      const orderB = typeof b.sortOrder === "number" ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.startDate.localeCompare(b.startDate) || a.id.localeCompare(b.id);
+    });
 };
 
 const semesterRangesFromSemesters = (semesters: SemesterEntity[]): SemesterRange[] =>
@@ -392,12 +451,74 @@ const sanitizeScopedPolicies = (
   return ensureDefaultPolicyRow(mapped, fallbackDefault);
 };
 
+const sanitizeApiSyncEntity = (
+  raw: unknown,
+  fallback: ApiSyncEntityConfig
+): ApiSyncEntityConfig => {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    enabled: source.enabled === true,
+    lastSuccessAt:
+      typeof source.lastSuccessAt === "number" ? Math.max(0, Math.round(source.lastSuccessAt)) : undefined,
+    lastAttemptAt:
+      typeof source.lastAttemptAt === "number" ? Math.max(0, Math.round(source.lastAttemptAt)) : undefined,
+    lastError: typeof source.lastError === "string" ? source.lastError : undefined
+  };
+};
+
+const sanitizeRoomIdMap = (raw: unknown): Record<string, string> => {
+  if (!raw || typeof raw !== "object") return {};
+  return Object.entries(raw as Record<string, unknown>).reduce<Record<string, string>>((acc, [remote, local]) => {
+    if (typeof local !== "string") return acc;
+    const remoteTrimmed = remote.trim();
+    const localTrimmed = local.trim();
+    if (!remoteTrimmed || !localTrimmed) return acc;
+    acc[remoteTrimmed] = localTrimmed;
+    return acc;
+  }, {});
+};
+
+const sanitizeApiSyncSettings = (raw: unknown): ApiSyncSettings => {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const entitiesRaw =
+    source.entities && typeof source.entities === "object"
+      ? (source.entities as Record<string, unknown>)
+      : {};
+  const entities = API_SYNC_ENTITY_KEYS.reduce<Record<ApiSyncEntityKey, ApiSyncEntityConfig>>((acc, key) => {
+    acc[key] = sanitizeApiSyncEntity(entitiesRaw[key], DEFAULT_API_SYNC_SETTINGS.entities[key]);
+    return acc;
+  }, { ...DEFAULT_API_SYNC_SETTINGS.entities });
+  const legacyInterval =
+    Object.values(entitiesRaw)
+      .map((entry) =>
+        entry && typeof entry === "object"
+          ? Number((entry as Record<string, unknown>).intervalMinutes)
+          : Number.NaN
+      )
+      .find((value) => Number.isFinite(value)) ?? DEFAULT_API_SYNC_SETTINGS.intervalMinutes;
+
+  return {
+    primaryEndpoint: (() => {
+      if (typeof source.primaryEndpoint !== "string") return DEFAULT_API_SYNC_SETTINGS.primaryEndpoint;
+      const trimmed = source.primaryEndpoint.trim();
+      return trimmed || DEFAULT_API_SYNC_SETTINGS.primaryEndpoint;
+    })(),
+    intervalMinutes: clampIntervalMinutes(
+      source.intervalMinutes,
+      clampIntervalMinutes(legacyInterval, DEFAULT_API_SYNC_SETTINGS.intervalMinutes)
+    ),
+    entities,
+    roomIdMap: sanitizeRoomIdMap(source.roomIdMap)
+  };
+};
+
 export function useScheduleSettings() {
   const [semesters, setSemesters] = useState<SemesterEntity[]>(DEFAULT_SEMESTERS);
   const [semesterRanges, setSemesterRanges] = useState<SemesterRange[]>(DEFAULT_RANGES);
   const [reservationPolicies, setReservationPolicies] = useState<ReservationScopedPolicy[]>([
     buildDefaultPolicyRow(DEFAULT_RESERVATION_POLICY)
   ]);
+  const [apiSync, setApiSync] = useState<ApiSyncSettings>(DEFAULT_API_SYNC_SETTINGS);
   const [settingsReady, setSettingsReady] = useState<boolean>(!db);
   const [settingsError, setSettingsError] = useState<string>("");
 
@@ -417,12 +538,14 @@ export function useScheduleSettings() {
           semesterRanges?: SemesterRange[];
           reservationPolicy?: Partial<ReservationPolicy>;
           reservationPolicies?: unknown;
+          apiSync?: unknown;
         } | undefined;
         const legacyDefault = sanitizePolicy(data?.reservationPolicy);
         const nextSemesters = sanitizeSemesters(data?.semesters, data?.semesterRanges);
         setSemesters(nextSemesters);
         setSemesterRanges(semesterRangesFromSemesters(nextSemesters));
         setReservationPolicies(sanitizeScopedPolicies(data?.reservationPolicies, legacyDefault));
+        setApiSync(sanitizeApiSyncSettings(data?.apiSync));
         setSettingsError("");
         setSettingsReady(true);
       },
@@ -469,6 +592,18 @@ export function useScheduleSettings() {
     );
   };
 
+  const saveApiSync = async (next: ApiSyncSettings) => {
+    if (!db) return;
+    const sanitized = sanitizeApiSyncSettings(next);
+    await setDoc(
+      doc(db, "settings", "schedule"),
+      {
+        apiSync: stripUndefinedDeep(sanitized)
+      },
+      { merge: true }
+    );
+  };
+
   const reservationPolicy = sanitizePolicy(reservationPolicies.find((entry) => entry.isDefault)?.rules);
 
   return {
@@ -476,10 +611,12 @@ export function useScheduleSettings() {
     semesterRanges,
     reservationPolicy,
     reservationPolicies,
+    apiSync,
     settingsReady,
     settingsError,
     saveSemesters,
     saveSemesterRanges,
-    saveReservationPolicies
+    saveReservationPolicies,
+    saveApiSync
   };
 }

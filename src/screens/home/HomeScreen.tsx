@@ -89,6 +89,17 @@ const buildTimeSlotsRange = (startMinutes: number, endMinutes: number, slotMinut
   return slots;
 };
 
+const parseTimeToMinutes = (value: string): number | null => {
+  const trimmed = value.trim();
+  const matched = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (!matched) return null;
+  const hours = Number(matched[1]);
+  const minutes = Number(matched[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+};
+
 export default function HomeScreen({
   currentUser,
   setAuthError,
@@ -135,6 +146,9 @@ export default function HomeScreen({
   const lastContextKeyRef = useRef<string>("");
   const dayTransitionRafRef = useRef<number | null>(null);
   const contactCacheRef = useRef<Map<string, { name: string; phone: string; pictureUrl?: string }>>(new Map());
+  const externalAvailabilityCacheRef = useRef<
+    Map<string, { checkedAt: number; available: boolean; message: string }>
+  >(new Map());
   const [detailsContact, setDetailsContact] = useState<{ name: string; phone: string; pictureUrl?: string } | null>(null);
   const lastWindowKeyRef = useRef<string>("");
   const [finderWindow, setFinderWindow] = useState<{ startDate: string; endDate: string }>(() => {
@@ -209,7 +223,7 @@ export default function HomeScreen({
     showToast: (message) => showToast(message)
   });
 
-  const { rooms, weekDays, timeSlots, lessons, config, roomMeta, reservationPolicy, reservationPolicies, semesters } = useSchedule(scheduleDateKey);
+  const { rooms, weekDays, timeSlots, lessons, config, roomMeta, reservationPolicy, reservationPolicies, semesters, apiSync } = useSchedule(scheduleDateKey);
   const overridesWeekDates = buildWeekDates(selectedDate, weekDays);
   const overridesWeekRange = {
     startDate: overridesWeekDates[0]?.dateKey || selectedDate,
@@ -228,13 +242,133 @@ export default function HomeScreen({
               ? { startDate: selectedDate, endDate: selectedDate }
               : overridesWeekRange)
           : overridesWeekRange;
-  const { overridesByDate, addOverride } = useLessonOverrides(overridesWindow);
+  const { overridesByDate, addOverride, upsertOverride } = useLessonOverrides(overridesWindow);
   const { users } = useDirectoryUsers(adminMode && isAdmin);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
   }, []);
+
+  const checkExternalAvailability = useCallback(
+    async ({
+      date,
+      roomId,
+      startMinutes,
+      durationMinutes
+    }: {
+      date: string;
+      roomId: string;
+      startMinutes: number;
+      durationMinutes: number;
+    }) => {
+      const endpoint = apiSync.primaryEndpoint.trim();
+      if (!endpoint) return { ok: true };
+
+      const room = rooms.find((entry) => entry.id === roomId);
+      const mappedExternalId =
+        room?.externalId ||
+        Object.entries(apiSync.roomIdMap).find(([, localRoomId]) => localRoomId === roomId)?.[0] ||
+        roomId;
+
+      const startTime = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
+      const cacheKey = `${mappedExternalId}|${date}|${startTime}|${durationMinutes}`;
+      const cached = externalAvailabilityCacheRef.current.get(cacheKey);
+      const nowMs = Date.now();
+      if (cached && nowMs - cached.checkedAt < 5 * 60 * 1000) {
+        return cached.available ? { ok: true } : { ok: false, message: cached.message };
+      }
+
+      try {
+        const url = new URL(endpoint);
+        url.searchParams.set("resource", "availability");
+        url.searchParams.set("room_id", mappedExternalId);
+        url.searchParams.set("date", date);
+        url.searchParams.set("start_time", startTime);
+        url.searchParams.set("duration_minutes", String(durationMinutes));
+        const response = await fetch(url.toString(), { method: "GET" });
+        const payload = (await response.json().catch(() => ({}))) as {
+          available?: boolean;
+          message?: string;
+          reason?: string | null;
+          conflicts?: Array<{
+            id?: string;
+            subject?: string;
+            teacher?: string;
+            start_time?: string;
+            duration_minutes?: number;
+            room?: { id?: string };
+          }>;
+        };
+        if (!response.ok) {
+          const message = "בדיקת זמינות מול המערכת החיצונית נכשלה.";
+          externalAvailabilityCacheRef.current.set(cacheKey, {
+            checkedAt: nowMs,
+            available: false,
+            message
+          });
+          return { ok: false, message };
+        }
+        if (payload.available === true) {
+          externalAvailabilityCacheRef.current.set(cacheKey, {
+            checkedAt: nowMs,
+            available: true,
+            message: ""
+          });
+          return { ok: true };
+        }
+        if (payload.reason === "conflict" && Array.isArray(payload.conflicts) && payload.conflicts.length) {
+          await Promise.all(
+            payload.conflicts.map(async (conflict, index) => {
+              const conflictStart = parseTimeToMinutes(typeof conflict.start_time === "string" ? conflict.start_time : "");
+              if (conflictStart === null) return;
+              const conflictDurationRaw = Number(conflict.duration_minutes);
+              const conflictDuration = Number.isFinite(conflictDurationRaw) && conflictDurationRaw > 0 ? Math.round(conflictDurationRaw) : 60;
+              const conflictRoomExternalId = typeof conflict.room?.id === "string" ? conflict.room.id.trim() : "";
+              const conflictRoomId =
+                (conflictRoomExternalId && apiSync.roomIdMap[conflictRoomExternalId]) ||
+                rooms.find((entry) => entry.externalId === conflictRoomExternalId)?.id ||
+                roomId;
+              const conflictExternalId = typeof conflict.id === "string" ? conflict.id.trim() : "";
+              const overrideId = `availability-${date}-${conflictExternalId || `${conflictRoomId}-${conflictStart}-${index}`}`
+                .replace(/[^\w-]+/g, "_")
+                .slice(0, 220);
+              await upsertOverride({
+                id: overrideId,
+                date,
+                action: "add",
+                lesson: {
+                  id: `availability-${conflictExternalId || `${conflictRoomId}-${conflictStart}`}`.replace(/[^\w-]+/g, "_"),
+                  title: (typeof conflict.subject === "string" && conflict.subject.trim()) || "שיעור מסונכרן",
+                  teacher: (typeof conflict.teacher === "string" && conflict.teacher.trim()) || "",
+                  day: getDayKeyFromDateKey(date),
+                  roomId: conflictRoomId,
+                  startMinutes: conflictStart,
+                  durationMinutes: conflictDuration
+                },
+                syncSource: "api",
+                externalId: conflictExternalId || undefined
+              });
+            })
+          );
+        }
+        const message = payload.message || "החדר אינו זמין לפי המערכת החיצונית.";
+        externalAvailabilityCacheRef.current.set(cacheKey, {
+          checkedAt: nowMs,
+          available: false,
+          message
+        });
+        const mergedMessage =
+          payload.reason === "conflict" && Array.isArray(payload.conflicts) && payload.conflicts.length
+            ? `${message} המערכת עודכנה עם ההתנגשויות ביומן.`
+            : message;
+        return { ok: false, message: mergedMessage };
+      } catch {
+        return { ok: false, message: "לא ניתן לאמת זמינות מול המערכת החיצונית כרגע." };
+      }
+    },
+    [apiSync, rooms, upsertOverride]
+  );
 
   useEffect(() => {
     if (view === "room" && prevViewRef.current !== "room") {
@@ -295,9 +429,11 @@ export default function HomeScreen({
     const map: Record<string, string> = {};
     semesters.forEach((semester) => {
       semester.holidays.forEach((holiday) => {
-        if (!holiday?.date || !holiday?.name) return;
+        if (!holiday?.date) return;
+        const holidayName = (holiday.displayName || "").trim() || (holiday.name || "").trim();
+        if (!holidayName) return;
         if (!map[holiday.date]) {
-          map[holiday.date] = holiday.name;
+          map[holiday.date] = holidayName;
         }
       });
     });
@@ -599,7 +735,8 @@ export default function HomeScreen({
     config,
     getLessonsForDate,
     addReservation,
-    upsertReservation
+    upsertReservation,
+    checkExternalAvailability
   });
 
   const {

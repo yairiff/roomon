@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { httpsCallable } from "firebase/functions";
 import { rimonScheduleConfig, weekDays as scheduleWeekDays } from "../../config";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
 import { useLessons } from "../../hooks/useLessons";
 import { useReservations } from "../../hooks/useReservations";
 import { useRooms } from "../../hooks/useRooms";
 import { useScheduleSettings } from "../../hooks/useScheduleSettings";
+import { useLessonOverrides } from "../../hooks/useLessonOverrides";
+import { functions } from "../../lib/firebase";
 import type { User } from "../../types/auth";
 import type { LessonRecord, RoomRecord, DirectoryUser } from "../../types/admin";
 import type { DayKey } from "../../types/schedule";
 import type { Reservation } from "../../types/reservations";
-import type { ReservationPolicy, ReservationScopedPolicy, SemesterEntity, SemesterHoliday } from "../../types/settings";
+import type {
+  ApiSyncEntityKey,
+  ApiSyncSettings,
+  ReservationPolicy,
+  ReservationScopedPolicy,
+  SemesterEntity,
+  SemesterHoliday
+} from "../../types/settings";
+import { DEFAULT_API_SYNC_SETTINGS } from "../../types/settings";
 import { getAcademicYearStartYear } from "../../lib/academics";
 import { formatMinutes } from "../../lib/scheduleBuilder";
 import { buildYearlySemesterId } from "../../lib/semesterScope";
@@ -17,7 +28,7 @@ import { parseTimeInput, toTimeInput } from "../../lib/timeInput";
 import type { AdminSection } from "./types";
 import type { BulkState } from "./bulk";
 import BulkSelectAll from "./components/BulkSelectAll";
-import { RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, CloseIcon, ImportExportIcon, SearchIcon, TuneIcon } from "../../components/Icons";
+import { RoomIcon, MenuIcon, UserIcon, HomeIcon, LogoutIcon, CalendarIcon, CloseIcon, ImportExportIcon, SearchIcon, TuneIcon, LessonIcon } from "../../components/Icons";
 import CsvToolContent from "./tools/CsvToolContent";
 import UsersSection from "./sections/UsersSection";
 import RoomsSection from "./sections/RoomsSection";
@@ -64,6 +75,7 @@ type SemesterLetterMode = "א" | "ב" | "other";
 
 type SemesterDraft = {
   id: string;
+  syncSource?: "manual" | "api";
   studyYearLabel: string;
   letterMode: SemesterLetterMode;
   letterOther: string;
@@ -71,6 +83,24 @@ type SemesterDraft = {
   endDate: string;
   studyDayKeys: DayKey[];
   holidays: Array<{ id: string; date: string; name: string }>;
+};
+
+type ApiSyncInvocationEntityResult = {
+  enabled?: boolean;
+  due?: boolean;
+  attempted?: boolean;
+  success?: boolean;
+  error?: string;
+  stats?: Record<string, unknown>;
+};
+
+type ApiSyncInvocationResult = {
+  ok?: boolean;
+  force?: boolean;
+  endpoint?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  entities?: Partial<Record<ApiSyncEntityKey, ApiSyncInvocationEntityResult>>;
 };
 
 const DAY_KEYS_DEFAULT: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
@@ -86,6 +116,40 @@ const createHolidayId = () =>
     : `holiday-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const API_SYNC_ENTITY_ORDER: ApiSyncEntityKey[] = ["rooms", "lessons", "semesters", "holidays"];
+const API_SYNC_ENTITY_LABEL: Record<ApiSyncEntityKey, string> = {
+  rooms: "חדרים",
+  lessons: "שיעורים",
+  semesters: "סמסטרים",
+  holidays: "חגים"
+};
+const API_SYNC_INTERVAL_OPTIONS = [
+  { value: 15, label: "15 דקות" },
+  { value: 30, label: "30 דקות" },
+  { value: 60, label: "שעה" },
+  { value: 360, label: "6 שעות" },
+  { value: 720, label: "12 שעות" },
+  { value: 1440, label: "24 שעות" },
+  { value: 10080, label: "שבוע" }
+];
+
+const formatSyncDateTime = (value?: number) => {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("he-IL", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
+
+const getStatNumber = (stats: Record<string, unknown> | undefined, key: string) => {
+  const value = stats?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+};
 
 const normalizeHolidayEntries = (entries: Array<{ date: string; name: string }>): SemesterHoliday[] => {
   const map = new Map<string, SemesterHoliday>();
@@ -104,6 +168,15 @@ const formatAcademicYearLabel = (studyYear: number) => {
   const nextYear = String((safeStart + 1) % 100).padStart(2, "0");
   return `${safeStart}/${nextYear}`;
 };
+
+const resolveSemesterName = (semester: SemesterEntity) =>
+  (semester.displayName || "").trim() || (semester.letter || "").trim() || "סמסטר";
+
+const resolveHolidayName = (holiday: SemesterHoliday) =>
+  (holiday.displayName || "").trim() || (holiday.name || "").trim() || "סגירת קמפוס";
+
+const semesterContainsDate = (semester: SemesterEntity, dateKey: string) =>
+  Boolean(dateKey) && dateKey >= semester.startDate && dateKey <= semester.endDate;
 
 const parseAcademicYearStart = (value: string): number | undefined => {
   const normalized = value.trim().replace(/\s+/g, "");
@@ -132,6 +205,7 @@ const normalizeUnlimitedInput = (value: string) => {
 
 const toSemesterDraft = (semester: SemesterEntity): SemesterDraft => ({
   id: semester.id,
+  syncSource: semester.syncSource === "api" ? "api" : "manual",
   studyYearLabel: formatAcademicYearLabel(semester.studyYear),
   letterMode: semester.letter === "א" || semester.letter === "ב" ? semester.letter : "other",
   letterOther: semester.letter === "א" || semester.letter === "ב" ? "" : semester.letter || "",
@@ -147,6 +221,7 @@ const toSemesterDraft = (semester: SemesterEntity): SemesterDraft => ({
 
 const createEmptySemesterDraft = (studyYear?: number): SemesterDraft => ({
   id: createSemesterId(),
+  syncSource: "manual",
   studyYearLabel: formatAcademicYearLabel(studyYear || new Date().getFullYear()),
   letterMode: "א",
   letterOther: "",
@@ -162,6 +237,7 @@ const toSemesterEntity = (draft: SemesterDraft): SemesterEntity => {
   const letter = draft.letterMode === "other" ? draft.letterOther.trim() : draft.letterMode;
   return {
     id: draft.id,
+    syncSource: draft.syncSource === "api" ? "api" : "manual",
     studyYear,
     letter: letter || "אחר",
     startDate: draft.startDate,
@@ -420,7 +496,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     users: "",
     schedule: "",
     rooms: "",
-    settings: ""
+    syncSettings: "",
+    semesterSettings: "",
+    policySettings: ""
   });
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<
@@ -449,10 +527,16 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const {
     semesters,
     reservationPolicies,
+    apiSync,
     settingsError,
     saveSemesters,
-    saveReservationPolicies
+    saveReservationPolicies,
+    saveApiSync
   } = useScheduleSettings();
+  const {
+    overrides: allOverrides,
+    overridesError
+  } = useLessonOverrides();
   const activeSemesterScope = useMemo(() => {
     if (!activeSemester) return null;
     const selected = semesters.find((semester) => semester.id === activeSemester);
@@ -508,6 +592,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const [editingPolicyId, setEditingPolicyId] = useState<string>("");
   const [policyEditorOpen, setPolicyEditorOpen] = useState(false);
   const [draggingPolicyId, setDraggingPolicyId] = useState<string>("");
+  const [apiSyncDraft, setApiSyncDraft] = useState<ApiSyncSettings>(DEFAULT_API_SYNC_SETTINGS);
+  const [apiSyncLastRunResult, setApiSyncLastRunResult] = useState<ApiSyncInvocationResult | null>(null);
   const [roomDraft, setRoomDraft] = useState<RoomRecord>({
     id: "",
     name: "",
@@ -568,6 +654,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   }, [activeSection]);
 
   const searchQuery = searchBySection[activeSection] || "";
+  const isSearchSection = activeSection === "users" || activeSection === "schedule" || activeSection === "rooms";
+  const isSettingsSection =
+    activeSection === "syncSettings" ||
+    activeSection === "semesterSettings" ||
+    activeSection === "policySettings";
   const setSearchQuery = (value: string) => {
     setSearchBySection((prev) => ({ ...prev, [activeSection]: value }));
   };
@@ -646,6 +737,10 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     setPolicyEditorOpen(false);
   }, [reservationPolicies]);
 
+  useEffect(() => {
+    setApiSyncDraft(apiSync);
+  }, [apiSync]);
+
   const persistSemesters = async (nextSemesters: SemesterEntity[]) => {
     try {
       await saveSemesters(nextSemesters);
@@ -664,6 +759,10 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleEditSemester = (semester: SemesterEntity) => {
+    if (isSyncedSemester(semester)) {
+      showToast("סמסטר מסונכרן: ניתן לשנות שם תצוגה וסדר בלבד.", "error");
+      return;
+    }
     setEditingSemesterId(semester.id);
     setSemesterEditorDraft(toSemesterDraft(semester));
     setSemesterHolidayEditingId("");
@@ -671,6 +770,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleDeleteSemester = async (semesterId: string) => {
+    const target = semestersDraft.find((semester) => semester.id === semesterId);
+    if (target && isSyncedSemester(target)) {
+      showToast("סמסטר מסונכרן לא ניתן למחיקה ידנית.", "error");
+      return;
+    }
     const nextSemesters = semestersDraft.filter((semester) => semester.id !== semesterId);
     setSemestersDraft(nextSemesters);
     if (activeSemester === semesterId) {
@@ -714,10 +818,35 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
       showToast("יש למלא תאריך תקין ושם עבור כל חג.", "error");
       return;
     }
+    if (editingSemesterId) {
+      const current = semestersDraft.find((semester) => semester.id === editingSemesterId);
+      if (current && isSyncedSemester(current)) {
+        showToast("סמסטר מסונכרן: ניתן לשנות שם תצוגה וסדר בלבד.", "error");
+        return;
+      }
+    }
     const nextSemesters = (() => {
       const index = semestersDraft.findIndex((semester) => semester.id === next.id);
       if (index === -1) return [...semestersDraft, next];
-      return semestersDraft.map((semester) => (semester.id === next.id ? next : semester));
+      return semestersDraft.map((semester) => {
+        if (semester.id !== next.id) return semester;
+        const holidayDisplayByDate = new Map<string, string>();
+        semester.holidays.forEach((holiday) => {
+          if (!holiday.date) return;
+          const displayName = (holiday.displayName || "").trim();
+          if (displayName) holidayDisplayByDate.set(holiday.date, displayName);
+        });
+        return {
+          ...next,
+          syncSource: semester.syncSource || next.syncSource || "manual",
+          displayName: semester.displayName,
+          sortOrder: semester.sortOrder,
+          holidays: next.holidays.map((holiday) => ({
+            ...holiday,
+            displayName: holidayDisplayByDate.get(holiday.date) || undefined
+          }))
+        };
+      });
     })();
     setSemestersDraft(nextSemesters);
     const ok = await persistSemesters(nextSemesters);
@@ -728,6 +857,67 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     setSemesterHolidayEditingId("");
     setSemesterEditorDraft(createEmptySemesterDraft(currentAcademicYear));
     showToast(editingSemesterId ? "הסמסטר עודכן." : "הסמסטר נוסף.");
+  };
+
+  const handleSemesterDisplayNameChange = (semesterId: string, displayName: string) => {
+    setSemestersDraft((previous) =>
+      previous.map((semester) =>
+        semester.id === semesterId
+          ? {
+              ...semester,
+              displayName
+            }
+          : semester
+      )
+    );
+  };
+
+  const handleHolidayDisplayNameChange = (semesterId: string, holidayDate: string, displayName: string) => {
+    setSemestersDraft((previous) =>
+      previous.map((semester) =>
+        semester.id === semesterId
+          ? {
+              ...semester,
+              holidays: semester.holidays.map((holiday) =>
+                holiday.date === holidayDate
+                  ? {
+                      ...holiday,
+                      displayName
+                    }
+                  : holiday
+              )
+            }
+          : semester
+      )
+    );
+  };
+
+  const moveSemester = (semesterId: string, direction: -1 | 1) => {
+    setSemestersDraft((previous) => {
+      const sorted = [...previous].sort((a, b) => {
+        const orderA = typeof a.sortOrder === "number" ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+        const orderB = typeof b.sortOrder === "number" ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.startDate.localeCompare(b.startDate) || a.id.localeCompare(b.id);
+      });
+      const index = sorted.findIndex((semester) => semester.id === semesterId);
+      if (index < 0) return previous;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= sorted.length) return previous;
+      const next = [...sorted];
+      const [moved] = next.splice(index, 1);
+      next.splice(nextIndex, 0, moved);
+      return next.map((semester, orderIndex) => ({
+        ...semester,
+        sortOrder: orderIndex + 1
+      }));
+    });
+  };
+
+  const handleSaveSemesterCustomizations = async () => {
+    const ok = await persistSemesters(semestersDraft);
+    if (!ok) return;
+    showToast("התאמות שמות וסדר לסמסטרים/חגים נשמרו.");
   };
 
   const persistScopedPolicies = async (nextPolicies: ReservationScopedPolicy[], withToast = false) => {
@@ -833,12 +1023,19 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleUpsertLesson = async (lesson: LessonRecord) => {
+    if (isSyncedLesson(lesson)) {
+      showToast("שיעור מסונכרן מנוהל דרך ה-API ואינו ניתן לעריכה ידנית.", "error");
+      return;
+    }
     if (!lesson.semester) {
       showToast("יש לבחור סמסטר לשיעור.", "error");
       return;
     }
     try {
-      await upsertLesson(lesson);
+      await upsertLesson({
+        ...lesson,
+        syncSource: "manual"
+      });
       showToast("השיעור נשמר.");
     } catch {
       showToast("שמירת שיעור נכשלה.", "error");
@@ -846,6 +1043,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleRemoveLesson = async (lessonId: string) => {
+    const target = scheduleLessons.find((lesson) => lesson.id === lessonId);
+    if (target && isSyncedLesson(target)) {
+      showToast("שיעור מסונכרן מנוהל דרך ה-API ואינו ניתן למחיקה ידנית.", "error");
+      return;
+    }
     try {
       await removeLesson(lessonId);
       showToast("השיעור נמחק.");
@@ -855,8 +1057,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleUpsertRoom = async (room: RoomRecord) => {
+    const existing = roomsRaw.find((entry) => entry.id === room.id);
     try {
-      await upsertRoom(room);
+      await upsertRoom({
+        ...room,
+        syncSource: existing?.syncSource || room.syncSource || "manual"
+      });
       showToast("החדר נשמר.");
     } catch {
       showToast("שמירת חדר נכשלה.", "error");
@@ -880,6 +1086,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   };
 
   const handleRemoveRoom = async (roomId: string) => {
+    const target = roomsRaw.find((room) => room.id === roomId);
+    if (target && isSyncedRoom(target)) {
+      showToast("חדר מסונכרן מנוהל דרך ה-API ואינו ניתן למחיקה.", "error");
+      return;
+    }
     try {
       await removeRoom(roomId);
       showToast("החדר נמחק.");
@@ -892,21 +1103,27 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 
   const menuItems: { key: AdminSection; label: string; icon: JSX.Element }[] = [
     { key: "users", label: "משתמשים", icon: <UserIcon /> },
-    { key: "schedule", label: "מערכת שעות", icon: <CalendarIcon /> },
+    { key: "schedule", label: "לוח שנה", icon: <CalendarIcon /> },
     { key: "rooms", label: "חדרים", icon: <RoomIcon /> },
-    { key: "settings", label: "הגדרות", icon: <TuneIcon /> }
+    { key: "semesterSettings", label: "סמסטרים", icon: <LessonIcon /> },
+    { key: "policySettings", label: "מדיניות שריונים", icon: <TuneIcon /> },
+    { key: "syncSettings", label: "סנכרון API", icon: <ImportExportIcon /> }
   ];
 
   const toolbarTitle =
     activeSection === "users"
       ? "משתמשים"
       : activeSection === "schedule"
-        ? "מערכת שעות"
+        ? "לוח שנה"
         : activeSection === "rooms"
           ? "חדרים"
-          : activeSection === "settings"
-            ? "הגדרות"
-            : "מערכת שעות";
+          : activeSection === "syncSettings"
+            ? "סנכרון API"
+            : activeSection === "semesterSettings"
+              ? "סמסטרים"
+              : activeSection === "policySettings"
+                ? "מדיניות שריונים"
+            : "לוח שנה";
 
   const roomNameById = useMemo(
     () =>
@@ -919,7 +1136,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const semesterNameById = useMemo(
     () =>
       semestersDraft.reduce<Record<string, string>>((acc, semester) => {
-        acc[semester.id] = `${formatAcademicYearLabel(semester.studyYear)} · ${semester.letter}`;
+        acc[semester.id] = `${formatAcademicYearLabel(semester.studyYear)} · ${resolveSemesterName(semester)}`;
         return acc;
       }, {}),
     [semestersDraft]
@@ -929,28 +1146,286 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     () =>
       semestersDraft.map((semester) => ({
         id: semester.id,
-        label: `${formatAcademicYearLabel(semester.studyYear)} · ${semester.letter}`,
+        label: `${formatAcademicYearLabel(semester.studyYear)} · ${resolveSemesterName(semester)}`,
         studyYear: semester.studyYear,
         letter: semester.letter
       })),
     [semestersDraft]
   );
 
+  const roomsSyncEnabled = apiSyncDraft.entities.rooms.enabled;
+  const lessonsSyncEnabled = apiSyncDraft.entities.lessons.enabled;
+  const semestersSyncEnabled = apiSyncDraft.entities.semesters.enabled;
+  const holidaysSyncEnabled = apiSyncDraft.entities.holidays.enabled;
+  const semestersSyncLocked = semestersSyncEnabled || holidaysSyncEnabled;
+
+  const isSyncedRoom = useCallback((room: RoomRecord) => room.syncSource === "api", []);
+  const isSyncedLesson = useCallback((lesson: LessonRecord) => lesson.syncSource === "api", []);
+  const isSyncedSemester = useCallback(
+    (semester: SemesterEntity) => semester.syncSource === "api" || semester.id.startsWith("api-semester-"),
+    []
+  );
+
+  const scheduleLessons = useMemo(() => {
+    const scopeSet = new Set(activeSemesterScope || []);
+    const manualLessons = lessons.map((lesson) => ({
+      ...lesson,
+      syncSource: lesson.syncSource === "api" ? "api" : "manual"
+    }));
+    if (!lessonsSyncEnabled) {
+      return manualLessons
+        .filter((lesson) => (scopeSet.size ? scopeSet.has(lesson.semester) : true))
+        .sort((a, b) => {
+          if (a.day !== b.day) return a.day.localeCompare(b.day);
+          if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+          return a.id.localeCompare(b.id);
+        });
+    }
+
+    const grouped = new Map<string, LessonRecord>();
+    allOverrides
+      .filter((override) => override.syncSource === "api" && override.action === "add" && Boolean(override.lesson))
+      .forEach((override) => {
+        const lesson = override.lesson as LessonRecord;
+        const semesterMatch = semestersDraft.find((semester) => semesterContainsDate(semester, override.date));
+        const semesterId =
+          semesterMatch?.id ||
+          (activeSemesterScope?.length ? activeSemesterScope[0] : activeSemester || lesson.semester || "");
+        const key =
+          (override.externalId || "").trim() ||
+          `${lesson.title}|${lesson.teacher}|${lesson.day}|${lesson.roomId}|${lesson.startMinutes}|${lesson.durationMinutes}`;
+        if (!key || grouped.has(key)) return;
+        grouped.set(key, {
+          ...lesson,
+          id: `api-series-${key}`,
+          semester: semesterId,
+          syncSource: "api",
+          externalId: (override.externalId || "").trim() || undefined
+        } as LessonRecord);
+      });
+    return [...manualLessons.filter((lesson) => lesson.syncSource !== "api"), ...Array.from(grouped.values())]
+      .filter((lesson) => (scopeSet.size ? scopeSet.has(lesson.semester) : true))
+      .sort((a, b) => {
+        if (a.day !== b.day) return a.day.localeCompare(b.day);
+        if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+        return a.id.localeCompare(b.id);
+      });
+  }, [activeSemester, activeSemesterScope, allOverrides, lessons, lessonsSyncEnabled, semestersDraft]);
+
+  const scheduleLessonsError = lessonsSyncEnabled ? overridesError || lessonsError || lessonsAllError : lessonsError || lessonsAllError;
+
+  const persistApiSyncSettings = async (next: ApiSyncSettings, options?: { silentSuccess?: boolean }) => {
+    try {
+      await saveApiSync(next);
+      if (!options?.silentSuccess) showToast("הגדרות הסנכרון נשמרו.");
+      return true;
+    } catch {
+      showToast("שמירת הגדרות הסנכרון נכשלה.", "error");
+      return false;
+    }
+  };
+
+  const patchApiSync = (updater: (prev: ApiSyncSettings) => ApiSyncSettings) => {
+    setApiSyncDraft((prev) => {
+      const next = updater(prev);
+      void persistApiSyncSettings(next, { silentSuccess: true });
+      return next;
+    });
+  };
+
+  const setApiSyncEntityEnabled = (entity: ApiSyncEntityKey, enabled: boolean) => {
+    patchApiSync((prev) => ({
+      ...prev,
+      entities: {
+        ...prev.entities,
+        [entity]: {
+          ...prev.entities[entity],
+          enabled
+        }
+      }
+    }));
+  };
+
+  const setApiSyncAllEnabled = (enabled: boolean) => {
+    patchApiSync((prev) => ({
+      ...prev,
+      entities: {
+        rooms: { ...prev.entities.rooms, enabled },
+        lessons: { ...prev.entities.lessons, enabled },
+        semesters: { ...prev.entities.semesters, enabled },
+        holidays: { ...prev.entities.holidays, enabled }
+      }
+    }));
+  };
+
+  const triggerApiSyncNow = async () => {
+    if (!functions) {
+      showToast("Cloud Functions לא מוגדרות בסביבת הלקוח.", "error");
+      return;
+    }
+    try {
+      // Prefer Gen1 callable because this project currently blocks unauthenticated Gen2 callable invocations.
+      const callV1 = httpsCallable(functions, "runScheduleApiSyncNowV1");
+      const response = await callV1({});
+      const result = (response.data || {}) as ApiSyncInvocationResult;
+      setApiSyncLastRunResult(result);
+      const roomsChanged = getStatNumber(result.entities?.rooms?.stats, "changed") ?? 0;
+      const lessonsChanged = getStatNumber(result.entities?.lessons?.stats, "changed") ?? 0;
+      showToast(`סנכרון הסתיים. חדרים: ${roomsChanged}, שיעורים: ${lessonsChanged}.`);
+    } catch {
+      try {
+        const callV2 = httpsCallable(functions, "runScheduleApiSyncNow");
+        const response = await callV2({});
+        const result = (response.data || {}) as ApiSyncInvocationResult;
+        setApiSyncLastRunResult(result);
+        const roomsChanged = getStatNumber(result.entities?.rooms?.stats, "changed") ?? 0;
+        const lessonsChanged = getStatNumber(result.entities?.lessons?.stats, "changed") ?? 0;
+        showToast(`סנכרון הסתיים. חדרים: ${roomsChanged}, שיעורים: ${lessonsChanged}.`);
+      } catch {
+        showToast("הפעלת סנכרון נכשלה. ודא/י שהפונקציה נפרסה והרשאות Invoker תקינות.", "error");
+      }
+    }
+  };
+
+  const showSyncSettings = activeSection === "syncSettings";
+  const showSemesterSettings = activeSection === "semesterSettings";
+  const showPolicySettings = activeSection === "policySettings";
+  const syncAllEnabled = API_SYNC_ENTITY_ORDER.every((entity) => apiSyncDraft.entities[entity].enabled);
+
   const settingsSectionContent = (
     <section className="admin-section">
       <div className="admin-section-body">
+        {showSyncSettings ? (
         <div className="admin-card">
-          <div className="admin-card-header">
-            <h3>סמסטרים</h3>
+          <p className="admin-meta">סנכרון מתבצע דרך job יחיד. הכפתור מפעיל סנכרון ידני מלא.</p>
+          <div className="admin-form-grid">
+            <label className="admin-policy-toggle">
+              <input
+                type="checkbox"
+                checked={syncAllEnabled}
+                onChange={(event) => setApiSyncAllEnabled(event.target.checked)}
+              />
+              סנכרון הכל
+            </label>
+            <label>
+              תדירות
+              <select
+                value={apiSyncDraft.intervalMinutes}
+                onChange={(event) =>
+                  patchApiSync((prev) => ({
+                    ...prev,
+                    intervalMinutes: Number(event.target.value) || 60
+                  }))
+                }
+              >
+                {API_SYNC_INTERVAL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <p className="admin-meta">
-            כל שיעור משויך לישות סמסטר. אפשר ליצור כמה סמסטרים לכל שנת לימוד (א / ב / אחר).
-          </p>
+          <div className="admin-table">
+            {API_SYNC_ENTITY_ORDER.map((entity) => {
+              const entry = apiSyncDraft.entities[entity];
+              return (
+                <div key={entity} className="admin-row">
+                  <div className="admin-row-main">
+                    <p className="admin-row-title">{API_SYNC_ENTITY_LABEL[entity]}</p>
+                    <p className="admin-row-meta">
+                      סנכרון אחרון: {formatSyncDateTime(entry.lastSuccessAt)} ·
+                      ניסיון אחרון: {formatSyncDateTime(entry.lastAttemptAt)}
+                    </p>
+                    {entry.lastError ? <p className="admin-error">{entry.lastError}</p> : null}
+                  </div>
+                  <div className="admin-row-actions">
+                    <label className="admin-policy-toggle admin-policy-row-switch">
+                      <input
+                        type="checkbox"
+                        checked={entry.enabled}
+                        onChange={(event) => setApiSyncEntityEnabled(entity, event.target.checked)}
+                      />
+                      פעיל
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="admin-actions">
+            <button className="secondary" type="button" onClick={() => void triggerApiSyncNow()}>
+              סנכרון עכשיו
+            </button>
+          </div>
+          <label>
+            כתובת API
+            <input
+              type="url"
+              value={apiSyncDraft.primaryEndpoint}
+              placeholder="https://rimon-school-plan.base44.app/functions/scheduleApi"
+              onChange={(event) =>
+                setApiSyncDraft((prev) => ({
+                  ...prev,
+                  primaryEndpoint: event.target.value
+                }))
+              }
+              onBlur={() => {
+                void persistApiSyncSettings(apiSyncDraft, { silentSuccess: true });
+              }}
+            />
+          </label>
+          {apiSyncLastRunResult ? (
+            <div className="admin-table">
+              <div className="admin-row">
+                <div className="admin-row-main">
+                  <p className="admin-row-title">
+                    תוצאת סנכרון אחרונה: {apiSyncLastRunResult.ok ? "הצלחה" : "שגיאה"}
+                  </p>
+                  <p className="admin-row-meta">
+                    התחלה: {formatSyncDateTime(apiSyncLastRunResult.startedAt)} · סיום:{" "}
+                    {formatSyncDateTime(apiSyncLastRunResult.finishedAt)}
+                  </p>
+                </div>
+              </div>
+              {API_SYNC_ENTITY_ORDER.map((entity) => {
+                const result = apiSyncLastRunResult.entities?.[entity];
+                if (!result) return null;
+                const changed = getStatNumber(result.stats, "changed");
+                return (
+                  <div key={`run-result-${entity}`} className="admin-row">
+                    <div className="admin-row-main">
+                      <p className="admin-row-title">
+                        {API_SYNC_ENTITY_LABEL[entity]} · {result.success ? "הצלחה" : result.attempted ? "נכשל" : "לא רץ"}
+                      </p>
+                      <p className="admin-row-meta">
+                        פעיל: {result.enabled ? "כן" : "לא"} · נדרש: {result.due ? "כן" : "לא"}
+                        {typeof changed === "number" ? ` · שינויים: ${changed}` : ""}
+                      </p>
+                      {result.error ? <p className="admin-error">{result.error}</p> : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+        ) : null}
+
+        {showSemesterSettings ? (
+        <div className="admin-card">
+          <p className="admin-meta">ניתן לנהל סמסטרים ידניים לצד סמסטרים מסונכרנים.</p>
           {settingsError ? <p className="admin-error">{settingsError}</p> : null}
+          {semestersSyncLocked ? <p className="admin-meta">לסמסטרים מסונכרנים: מזהים ותאריכים נעולים, אפשר לערוך שם תצוגה וסדר.</p> : null}
           <div className="admin-actions">
             <button className="secondary" type="button" onClick={handleNewSemester}>
               סמסטר חדש
             </button>
+            {semestersSyncLocked ? (
+              <button className="primary" type="button" onClick={() => void handleSaveSemesterCustomizations()}>
+                שמירת התאמות
+              </button>
+            ) : null}
           </div>
           <div className="admin-policy-list">
             {semestersDraft.length ? (
@@ -958,7 +1433,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 <div key={semester.id} className="admin-policy-item">
                   <div className="admin-policy-item-main">
                     <p className="admin-policy-item-title">
-                      {formatAcademicYearLabel(semester.studyYear)} · {semester.letter}
+                      {formatAcademicYearLabel(semester.studyYear)} · {resolveSemesterName(semester)}
+                      <span className="admin-policy-pill">{isSyncedSemester(semester) ? "מסונכרן" : "ידני"}</span>
                       {activeSemester === semester.id ? <span className="admin-policy-pill">פעיל</span> : null}
                     </p>
                     <p className="admin-policy-item-summary">
@@ -966,16 +1442,67 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                       {summarizeStudyDaysCompact(semester.studyDayKeys)} ·
                       חגים: {semester.holidays.length}
                     </p>
+                    {semestersSyncLocked ? (
+                      <div className="admin-form-row">
+                        <label>
+                          שם תצוגה (אופציונלי)
+                          <input
+                            type="text"
+                            value={semester.displayName || ""}
+                            placeholder={semester.letter || "Semester"}
+                            onChange={(event) => handleSemesterDisplayNameChange(semester.id, event.target.value)}
+                          />
+                        </label>
+                        <div className="admin-actions">
+                          <button className="secondary" type="button" onClick={() => moveSemester(semester.id, -1)}>
+                            למעלה
+                          </button>
+                          <button className="secondary" type="button" onClick={() => moveSemester(semester.id, 1)}>
+                            למטה
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {semestersSyncLocked && semester.holidays.length ? (
+                      <div className="admin-table">
+                        {semester.holidays.map((holiday) => (
+                          <div key={`${semester.id}-${holiday.date}`} className="admin-row">
+                            <div className="admin-row-main">
+                              <p className="admin-row-title">{holiday.date}</p>
+                              <p className="admin-row-meta">{resolveHolidayName(holiday)}</p>
+                            </div>
+                            <div className="admin-row-actions">
+                              <label>
+                                שם תצוגה
+                                <input
+                                  type="text"
+                                  value={holiday.displayName || ""}
+                                  placeholder={holiday.name || "סגירת קמפוס"}
+                                  onChange={(event) =>
+                                    handleHolidayDisplayNameChange(semester.id, holiday.date, event.target.value)
+                                  }
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="admin-row-actions">
-                    <button className="secondary" type="button" onClick={() => handleEditSemester(semester)}>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => handleEditSemester(semester)}
+                      disabled={isSyncedSemester(semester)}
+                    >
                       עריכה
                     </button>
                     <button
                       className="secondary danger"
                       type="button"
                       onClick={() => void handleDeleteSemester(semester.id)}
-                      disabled={semestersDraft.length <= 1}
+                      disabled={isSyncedSemester(semester) || semestersDraft.length <= 1}
                     >
                       מחיקה
                     </button>
@@ -987,8 +1514,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             )}
           </div>
         </div>
+        ) : null}
 
-        {semesterEditorOpen ? (
+        {showSemesterSettings && semesterEditorOpen ? (
           <div
             className="admin-tool-overlay admin-policy-overlay"
             role="dialog"
@@ -1015,6 +1543,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               </div>
 
               <div className="admin-form">
+                <fieldset className="admin-fieldset" disabled={semesterEditorDraft.syncSource === "api"}>
                 <div className="admin-form-row">
                   <label>
                     שנת לימוד (20XX/XX)
@@ -1245,15 +1774,14 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                     {editingSemesterId ? "עדכון סמסטר" : "הוספת סמסטר"}
                   </button>
                 </div>
+                </fieldset>
               </div>
             </div>
           </div>
         ) : null}
 
+        {showPolicySettings ? (
         <div className="admin-card">
-          <div className="admin-card-header">
-            <h3>מדיניות שריונים</h3>
-          </div>
           <p className="admin-meta">
             עדיפות גבוהה למעלה. ברירת המחדל נשארת תמיד בשורה התחתונה.
           </p>
@@ -1320,8 +1848,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             )}
           </div>
         </div>
+        ) : null}
 
-        {policyEditorOpen ? (
+        {showPolicySettings && policyEditorOpen ? (
           <div className="admin-tool-overlay admin-policy-overlay" role="dialog" aria-modal="true" onClick={() => setPolicyEditorOpen(false)}>
             <div className="admin-tool-overlay-card admin-policy-overlay-card" onClick={(event) => event.stopPropagation()}>
               <button
@@ -1936,7 +2465,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               </div>
 
               <div className="admin-toolbar-search">
-                {activeSection !== "settings" ? (
+                {isSearchSection ? (
                   isNarrow ? (
                     <button
                       type="button"
@@ -1966,7 +2495,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               </div>
             </div>
           </div>
-          {isNarrow && mobileSearchOpen && activeSection !== "settings" ? (
+          {isNarrow && mobileSearchOpen && isSearchSection ? (
             <div className="admin-top-toolbar-row admin-top-toolbar-search-row">
               <input
                 className="admin-toolbar-search-input mobile"
@@ -2034,8 +2563,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 	            activeSemester={activeSemester}
 	            setActiveSemester={setActiveSemester}
 	            semesterOptions={semesterOptions}
-	            lessons={lessons}
-	            lessonsError={lessonsError || lessonsAllError}
+	            lessons={scheduleLessons}
+	            lessonsError={scheduleLessonsError}
 	            reservations={reservationList}
             reservationsError={reservationsError}
             roomsRaw={roomsRaw}
@@ -2045,6 +2574,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             onRemoveLesson={handleRemoveLesson}
             onUpdateReservation={upsertReservation}
             onRemoveReservation={(reservation) => { void releaseReservation(reservation.date, reservation.id); }}
+            lessonsSyncEnabled={lessonsSyncEnabled}
+            isSyncedLesson={isSyncedLesson}
             onBulkStateChange={setBulkState}
           />
         ) : null}
@@ -2061,6 +2592,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
             onUpsert={handleUpsertRoom}
             onReorder={handleReorderRooms}
             onRemove={handleRemoveRoom}
+            syncEnabled={roomsSyncEnabled}
+            isSyncedRoom={isSyncedRoom}
             onReset={() =>
               setRoomDraft({
                 id: "",
@@ -2075,7 +2608,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
           />
         ) : null}
 
-        {activeSection === "settings" ? settingsSectionContent : null}
+        {isSettingsSection ? settingsSectionContent : null}
         </div>
       </div>
 

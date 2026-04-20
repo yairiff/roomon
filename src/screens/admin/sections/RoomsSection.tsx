@@ -20,6 +20,8 @@ type RoomsSectionProps = {
   onReorder: (orderedRooms: RoomRecord[]) => void;
   onRemove: (roomId: string) => void;
   onReset: () => void;
+  syncEnabled?: boolean;
+  isSyncedRoom?: (room: RoomRecord) => boolean;
   onBulkStateChange?: (state: BulkState | null) => void;
 };
 
@@ -38,6 +40,8 @@ export default function RoomsSection({
   onReorder,
   onRemove,
   onReset,
+  syncEnabled = false,
+  isSyncedRoom = (room) => room.syncSource === "api",
   onBulkStateChange
 }: RoomsSectionProps) {
   const [shortFilter, setShortFilter] = useState<RoomShortFilter>("all");
@@ -82,6 +86,10 @@ export default function RoomsSection({
   const selectedInView = useMemo(() => Array.from(selectedIds).filter((id) => filteredById.has(id)), [filteredById, selectedIds]);
 
   const selectedCount = selectedInView.length;
+  const selectionIncludesSynced = selectedInView.some((id) => {
+    const room = filteredById.get(id);
+    return room ? isSyncedRoom(room) : false;
+  });
 
   const shortCounts = useMemo(() => {
     const base = { all: roomsRaw.length, has: 0, missing: 0 };
@@ -134,7 +142,8 @@ export default function RoomsSection({
       id: newId,
       name: room.name ? `${room.name} (עותק)` : "חדר (עותק)",
       shortName: room.shortName ? `${room.shortName}*` : "",
-      sortOrder: (room.sortOrder ?? 0) + 1
+      sortOrder: (room.sortOrder ?? 0) + 1,
+      syncSource: "manual"
     };
     onUpsert(copy);
     setSelectedRoomId(newId);
@@ -188,6 +197,7 @@ export default function RoomsSection({
   };
 
   const bulkDelete = () => {
+    if (selectionIncludesSynced) return;
     if (!selectedCount) return;
     setConfirmDeleteIds(selectedInView);
   };
@@ -204,12 +214,31 @@ export default function RoomsSection({
       totalCount: total,
       actions: [
         { id: "new", label: "הוספה", icon: <AddIcon />, onClick: handleNew },
-        { id: "edit", label: "עריכה", icon: <EditIcon />, disabled: selectedCount !== 1, onClick: bulkEdit },
-        { id: "duplicate", label: "שכפול", icon: <DuplicateIcon />, disabled: selectedCount === 0, onClick: bulkDuplicate },
-        { id: "delete", label: "מחיקה", icon: <ReleaseIcon />, tone: "danger", disabled: selectedCount === 0, onClick: bulkDelete }
+        {
+          id: "edit",
+          label: "עריכה",
+          icon: <EditIcon />,
+          disabled: selectedCount !== 1,
+          onClick: bulkEdit
+        },
+        {
+          id: "duplicate",
+          label: "שכפול",
+          icon: <DuplicateIcon />,
+          disabled: selectedCount === 0,
+          onClick: bulkDuplicate
+        },
+        {
+          id: "delete",
+          label: "מחיקה",
+          icon: <ReleaseIcon />,
+          tone: "danger",
+          disabled: selectedCount === 0 || selectionIncludesSynced,
+          onClick: bulkDelete
+        }
       ]
     };
-  }, [bulkDelete, bulkDuplicate, bulkEdit, bulkToggleAll, filteredRooms.length, handleNew, selectedCount]);
+  }, [bulkDelete, bulkDuplicate, bulkEdit, bulkToggleAll, filteredRooms.length, handleNew, selectedCount, selectionIncludesSynced]);
 
   useEffect(() => {
     onBulkStateChange?.(bulkState);
@@ -218,7 +247,11 @@ export default function RoomsSection({
 
   const confirmDelete = () => {
     if (!confirmDeleteIds?.length) return;
-    confirmDeleteIds.forEach((id) => onRemove(id));
+    confirmDeleteIds.forEach((id) => {
+      const room = roomsRaw.find((entry) => entry.id === id);
+      if (room && isSyncedRoom(room)) return;
+      onRemove(id);
+    });
     setSelectedIds((prev) => {
       const next = new Set(prev);
       confirmDeleteIds.forEach((id) => next.delete(id));
@@ -235,10 +268,13 @@ export default function RoomsSection({
 
   const handleDelete = () => {
     if (!selectedRoomId) return;
+    const target = roomsRaw.find((room) => room.id === selectedRoomId);
+    if (target && isSyncedRoom(target)) return;
     setConfirmDeleteIds([selectedRoomId]);
   };
 
   const roomStatus = isEditing ? (selectedRoom?.name || "חדש") : "";
+  const selectedRoomIsSynced = selectedRoom ? isSyncedRoom(selectedRoom) : false;
 
   const closeEditor = () => {
     setSelectedRoomId(null);
@@ -265,7 +301,8 @@ export default function RoomsSection({
             <h3>פרטי חדר</h3>
             {roomStatus ? <span className="admin-meta">{roomStatus}</span> : null}
           </div>
-          <fieldset className="admin-fieldset">
+          {syncEnabled ? <p className="admin-meta">סנכרון חדרים פעיל. חדרים מסונכרנים נעולים למחיקת מזהה/מחיקה.</p> : null}
+          <fieldset className="admin-fieldset" disabled={!isEditing}>
             <div className="admin-form-grid">
               <label>
                 מזהה
@@ -273,7 +310,7 @@ export default function RoomsSection({
                   type="text"
                   value={roomDraft.id}
                   onChange={(event) => setRoomDraft((prev) => ({ ...prev, id: event.target.value }))}
-                  disabled={!isNewEntry}
+                  disabled={!isNewEntry || selectedRoomIsSynced}
                 />
               </label>
               <label>
@@ -295,15 +332,25 @@ export default function RoomsSection({
             </div>
           </fieldset>
           <div className="admin-actions">
-            <button className="primary" type="button" onClick={() => onUpsert(roomDraft)} disabled={!roomDraft.id || !roomDraft.name}>
+            <button
+              className="primary"
+              type="button"
+              onClick={() => onUpsert(roomDraft)}
+              disabled={!roomDraft.id}
+            >
               <ApproveIcon />
               {isNewEntry ? "הוספה" : "עדכון"}
             </button>
-            <button className="secondary" type="button" onClick={() => (selectedRoom ? duplicateRoom(selectedRoom) : null)} disabled={!selectedRoom}>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => (selectedRoom ? duplicateRoom(selectedRoom) : null)}
+              disabled={!selectedRoom}
+            >
               <DuplicateIcon />
               שכפול
             </button>
-            <button className="danger" type="button" onClick={handleDelete} disabled={!selectedRoomId}>
+            <button className="danger" type="button" onClick={handleDelete} disabled={!selectedRoomId || selectedRoomIsSynced}>
               <ReleaseIcon />
               מחיקה
             </button>
@@ -347,6 +394,7 @@ export default function RoomsSection({
           </span>
           {canDragRooms ? <span className="admin-meta">גרור/י שורות כדי לשנות סדר.</span> : null}
         </div>
+        {syncEnabled ? <span className="admin-meta">סנכרון חדרים פעיל. אפשר לערוך שם/קיצור/סדר ולהוסיף חדרים ידניים.</span> : null}
         {roomsError ? <span className="admin-error">{roomsError}</span> : null}
       </div>
       <div className="admin-section-body">
@@ -394,7 +442,10 @@ export default function RoomsSection({
                   />
                   {canDragRooms ? <span className="admin-row-grip" aria-hidden="true">⋮⋮</span> : null}
                   <div className="admin-row-main">
-                    <p className="admin-row-title">{room.name}</p>
+                    <p className="admin-row-title">
+                      {room.name}
+                      <span className="admin-policy-pill">{isSyncedRoom(room) ? "מסונכרן" : "ידני"}</span>
+                    </p>
                     <p className="admin-row-meta">
                       {room.shortName || "ללא קיצור"}
                     </p>
@@ -431,6 +482,7 @@ export default function RoomsSection({
                           e.stopPropagation();
                           setConfirmDeleteIds([room.id]);
                         }}
+                        disabled={isSyncedRoom(room)}
                         >
                           <ReleaseIcon />
                         </button>

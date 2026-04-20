@@ -27,11 +27,20 @@ export function useRooms() {
           const data = docSnap.data() as Partial<RoomRecord>;
           const id = docSnap.id;
           if (!id) return;
-          const name = data.name || fallbackRoomName(id);
+          const apiName = typeof data.apiName === "string" ? data.apiName.trim() : "";
+          const apiShortName = typeof data.apiShortName === "string" ? data.apiShortName.trim() : "";
+          const name = (typeof data.name === "string" ? data.name.trim() : "") || apiName || fallbackRoomName(id);
+          const shortName = (typeof data.shortName === "string" ? data.shortName.trim() : "") || apiShortName || name;
           next.push({
             id,
             name,
-            shortName: data.shortName || name,
+            shortName,
+            apiName: apiName || undefined,
+            apiShortName: apiShortName || undefined,
+            externalId: typeof data.externalId === "string" ? data.externalId : undefined,
+            externalSlug: typeof data.externalSlug === "string" ? data.externalSlug : undefined,
+            syncSource: data.syncSource === "api" ? "api" : data.syncSource === "manual" ? "manual" : undefined,
+            syncHash: typeof data.syncHash === "string" ? data.syncHash : undefined,
             isClosed: data.isClosed,
             sortOrder: data.sortOrder,
             note: data.note
@@ -69,7 +78,13 @@ export function useRooms() {
   }, [rooms]);
 
   const roomList: Room[] = useMemo(
-    () => rooms.map((room) => ({ id: room.id, name: room.name, shortName: room.shortName })),
+    () =>
+      rooms.map((room) => ({
+        id: room.id,
+        name: room.name,
+        shortName: room.shortName,
+        externalId: room.externalId
+      })),
     [rooms]
   );
 

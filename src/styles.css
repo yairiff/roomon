@@ -5105,6 +5105,14 @@ select,
   box-shadow: var(--shadow-sm);
 }
 
+.admin-row.disabled {
+  opacity: 0.62;
+}
+
+.admin-row.disabled.clickable {
+  cursor: not-allowed;
+}
+
 .admin-row.selected {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, var(--surface-solid));

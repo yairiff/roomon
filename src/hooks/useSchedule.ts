@@ -19,7 +19,7 @@ const isPrimarySemesterLetter = (letter: string) => {
 };
 
 export function useSchedule(dateKey: string) {
-  const { semesters, reservationPolicy, reservationPolicies } = useScheduleSettings();
+  const { semesters, reservationPolicy, reservationPolicies, apiSync } = useScheduleSettings();
   const activeSemester = useMemo(() => {
     const selectedDate = parseDateKey(dateKey);
     return semesters.find((semester) => {
@@ -45,7 +45,12 @@ export function useSchedule(dateKey: string) {
   const { lessons: lessonRecords } = useLessons(semesterScope);
   const { rooms: roomsFromDb, roomMeta } = useRooms();
 
-  const lessons = semesterScope ? lessonRecords : [];
+  const manualLessons = lessonRecords.filter((lesson) => lesson.syncSource !== "api");
+  const lessons = semesterScope
+    ? apiSync.entities.lessons.enabled
+      ? manualLessons
+      : lessonRecords
+    : [];
   const rooms = roomsFromDb.length
     ? roomsFromDb
     : buildRoomsFromLessons(lessons, { ...rimonScheduleConfig.roomLabelOverrides });
@@ -65,6 +70,7 @@ export function useSchedule(dateKey: string) {
     semester: semesterScope?.[0] || null,
     semesterRecord: activeSemester,
     semesters,
+    apiSync,
     roomMeta,
     reservationPolicy,
     reservationPolicies

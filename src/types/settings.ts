@@ -3,12 +3,18 @@ import type { DayKey } from "./schedule";
 export type SemesterHoliday = {
   date: string;
   name: string;
+  displayName?: string;
+  sortOrder?: number;
+  syncSource?: "manual" | "api";
 };
 
 export type SemesterEntity = {
   id: string;
   studyYear: number;
   letter: string;
+  displayName?: string;
+  sortOrder?: number;
+  syncSource?: "manual" | "api";
   startDate: string;
   endDate: string;
   studyDayKeys: DayKey[];
@@ -57,6 +63,22 @@ export type ReservationScopedPolicy = {
   rules: ReservationPolicyRules;
 };
 
+export type ApiSyncEntityKey = "rooms" | "lessons" | "semesters" | "holidays";
+
+export type ApiSyncEntityConfig = {
+  enabled: boolean;
+  lastSuccessAt?: number;
+  lastAttemptAt?: number;
+  lastError?: string;
+};
+
+export type ApiSyncSettings = {
+  primaryEndpoint: string;
+  intervalMinutes: number;
+  entities: Record<ApiSyncEntityKey, ApiSyncEntityConfig>;
+  roomIdMap: Record<string, string>;
+};
+
 export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
   blockReservations: false,
   maxHoursPerRoomPerDay: 3,
@@ -68,4 +90,16 @@ export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
   minLeadHours: 0,
   minLeadDayBeforeEnabled: false,
   minLeadDayBeforeMinutes: 18 * 60
+};
+
+export const DEFAULT_API_SYNC_SETTINGS: ApiSyncSettings = {
+  primaryEndpoint: "https://rimon-school-plan.base44.app/functions/scheduleApi",
+  intervalMinutes: 60,
+  entities: {
+    rooms: { enabled: false },
+    lessons: { enabled: false },
+    semesters: { enabled: false },
+    holidays: { enabled: false }
+  },
+  roomIdMap: {}
 };

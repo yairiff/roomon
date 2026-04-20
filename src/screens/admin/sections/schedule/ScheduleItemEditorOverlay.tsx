@@ -42,6 +42,7 @@ type ScheduleItemEditorOverlayProps = {
   onDuplicateLesson: (lesson: LessonRecord) => void;
   onDuplicateReservation: (reservation: Reservation) => void;
   onRequestDeleteKeys: (keys: ItemKey[]) => void;
+  lessonsSyncEnabled?: boolean;
 };
 
 const kindLabel = (reservation: Reservation) => {
@@ -90,7 +91,8 @@ export default function ScheduleItemEditorOverlay({
   onUpdateReservation,
   onDuplicateLesson,
   onDuplicateReservation,
-  onRequestDeleteKeys
+  onRequestDeleteKeys,
+  lessonsSyncEnabled = false
 }: ScheduleItemEditorOverlayProps) {
   const closeDraft = () => setDraft(null);
 
@@ -230,6 +232,10 @@ export default function ScheduleItemEditorOverlay({
       return;
     }
     if (draft.kind === "lesson") {
+      if (draft.value.syncSource === "api") {
+        setDraftError("שיעור מסונכרן מנוהל דרך ה-API ואינו ניתן לעריכה ידנית.");
+        return;
+      }
       if (!draft.value.title.trim()) {
         setDraftError("יש להזין שם שיעור.");
         return;
@@ -266,6 +272,7 @@ export default function ScheduleItemEditorOverlay({
     if (!draft) return;
     if (draft.kind === "choose") return;
     if (draft.kind === "lesson") {
+      if (draft.value.syncSource === "api") return;
       onDuplicateLesson(draft.value);
       return;
     }
@@ -275,6 +282,7 @@ export default function ScheduleItemEditorOverlay({
   const deleteDraft = () => {
     if (!draft) return;
     if (draft.kind === "choose") return;
+    if (draft.kind === "lesson" && draft.value.syncSource === "api") return;
     const key: ItemKey = draft.kind === "lesson" ? `lesson:${draft.value.id}` : `reservation:${draft.value.id}`;
     onRequestDeleteKeys([key]);
   };
@@ -428,6 +436,7 @@ export default function ScheduleItemEditorOverlay({
                         }
                         setDraft({ kind: "lesson", value: { ...draft.value, semester: next } });
                       }}
+                      disabled={draft.value.syncSource === "api"}
                     >
                       {lessonSemesterSelectOptions.length ? (
                         lessonSemesterSelectOptions.map((option) => (
@@ -459,6 +468,11 @@ export default function ScheduleItemEditorOverlay({
                   <br />
                   לשינוי חד-פעמי בתאריך מסוים: השתמש/י ב״הצג החרגות״.
                 </p>
+                {draft.value.syncSource === "api" ? (
+                  <p className="admin-meta">שיעור מסונכרן: ניתן לצפות ולהחריג, אבל לא לערוך את הסדרה.</p>
+                ) : lessonsSyncEnabled ? (
+                  <p className="admin-meta">סנכרון שיעורים פעיל. שיעורים ידניים נשמרים בנפרד.</p>
+                ) : null}
                 <div className="admin-form-grid">
                   <label>
                     שם שיעור
@@ -467,6 +481,7 @@ export default function ScheduleItemEditorOverlay({
                       value={draft.value.title}
                       placeholder="שם שיעור"
                       onChange={(event) => setDraft({ kind: "lesson", value: { ...draft.value, title: event.target.value } })}
+                      disabled={draft.value.syncSource === "api"}
                       required
                     />
                   </label>
@@ -479,6 +494,7 @@ export default function ScheduleItemEditorOverlay({
                       onChange={(event) =>
                         setDraft({ kind: "lesson", value: { ...draft.value, teacher: event.target.value } })
                       }
+                      disabled={draft.value.syncSource === "api"}
                     />
                   </label>
                   <label>
@@ -491,6 +507,7 @@ export default function ScheduleItemEditorOverlay({
                           value: { ...draft.value, day: event.target.value as LessonRecord["day"] }
                         })
                       }
+                      disabled={draft.value.syncSource === "api"}
                     >
                       {weekDayOptions.map((day) => (
                         <option key={day.key} value={day.key}>
@@ -504,6 +521,7 @@ export default function ScheduleItemEditorOverlay({
                     <select
                       value={draft.value.roomId}
                       onChange={(event) => setDraft({ kind: "lesson", value: { ...draft.value, roomId: event.target.value } })}
+                      disabled={draft.value.syncSource === "api"}
                     >
                       {roomsRaw.map((room) => (
                         <option key={room.id} value={room.id}>
@@ -522,6 +540,7 @@ export default function ScheduleItemEditorOverlay({
                         if (nextStart === null) return;
                         setDraft({ kind: "lesson", value: { ...draft.value, startMinutes: nextStart } });
                       }}
+                      disabled={draft.value.syncSource === "api"}
                     />
                   </label>
                   <label>
@@ -538,6 +557,7 @@ export default function ScheduleItemEditorOverlay({
                           value: { ...draft.value, durationMinutes: Math.max(1, Math.floor(next)) }
                         });
                       }}
+                      disabled={draft.value.syncSource === "api"}
                     />
                   </label>
                 </div>
@@ -661,14 +681,14 @@ export default function ScheduleItemEditorOverlay({
 
             {draft.kind !== "choose" ? (
               <div className="admin-actions">
-                <button className="primary" type="button" onClick={updateDraft}>
+                <button className="primary" type="button" onClick={updateDraft} disabled={draft.kind === "lesson" && draft.value.syncSource === "api"}>
                   שמירה
                 </button>
-                <button className="secondary" type="button" onClick={duplicateDraft}>
+                <button className="secondary" type="button" onClick={duplicateDraft} disabled={draft.kind === "lesson" && draft.value.syncSource === "api"}>
                   <DuplicateIcon />
                   שכפול
                 </button>
-                <button className="danger" type="button" onClick={deleteDraft}>
+                <button className="danger" type="button" onClick={deleteDraft} disabled={draft.kind === "lesson" && draft.value.syncSource === "api"}>
                   <ReleaseIcon />
                   מחיקה
                 </button>

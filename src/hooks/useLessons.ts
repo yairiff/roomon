@@ -53,7 +53,9 @@ export function useLessons(semesterId?: string | null | string[]) {
           if (semesterScope.length > 10 && !semesterScope.includes(String(data.semester || ""))) return;
           next.push({
             ...data,
-            id: data.id || docSnap.id
+            id: data.id || docSnap.id,
+            syncSource: data.syncSource === "api" ? "api" : data.syncSource === "manual" ? "manual" : undefined,
+            externalId: typeof data.externalId === "string" ? data.externalId : undefined
           });
         });
         next.sort((a, b) => {

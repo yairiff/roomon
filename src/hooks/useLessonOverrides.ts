@@ -21,6 +21,9 @@ type OverrideInput = {
   targetLessonId?: string;
   lesson?: Lesson;
   createdBy?: string;
+  syncSource?: "manual" | "api";
+  externalId?: string;
+  syncHash?: string;
 };
 
 export type LessonOverridesWindow = { startDate: string; endDate: string } | null;
@@ -60,7 +63,10 @@ export function useLessonOverrides(window: LessonOverridesWindow = null, enabled
             targetLessonId: data.targetLessonId,
             lesson: data.lesson,
             createdBy: data.createdBy,
-            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : data.createdAt
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : data.createdAt,
+            syncSource: data.syncSource === "api" ? "api" : data.syncSource === "manual" ? "manual" : undefined,
+            externalId: typeof data.externalId === "string" ? data.externalId : undefined,
+            syncHash: typeof data.syncHash === "string" ? data.syncHash : undefined
           });
         });
         next.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -97,6 +103,7 @@ export function useLessonOverrides(window: LessonOverridesWindow = null, enabled
     try {
       await addDoc(collection(db, "lessonOverrides"), {
         ...stripUndefined(input as unknown as Record<string, unknown>),
+        syncSource: input.syncSource || "manual",
         createdAt: serverTimestamp()
       });
       return true;
@@ -110,6 +117,7 @@ export function useLessonOverrides(window: LessonOverridesWindow = null, enabled
     if (!db) return;
     await setDoc(doc(db, "lessonOverrides", override.id), {
       ...stripUndefined(override as unknown as Record<string, unknown>),
+      syncSource: override.syncSource || "manual",
       createdAt: serverTimestamp()
     });
   };

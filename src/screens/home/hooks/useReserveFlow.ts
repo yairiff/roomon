@@ -48,6 +48,12 @@ type UseReserveFlowArgs = {
   getLessonsForDate: (dateKey: string, dayKey: DayKey) => Lesson[];
   addReservation: (reservation: Reservation) => Promise<boolean>;
   upsertReservation: (reservation: Reservation) => Promise<boolean>;
+  checkExternalAvailability?: (input: {
+    date: string;
+    roomId: string;
+    startMinutes: number;
+    durationMinutes: number;
+  }) => Promise<{ ok: boolean; message?: string }>;
 };
 
 const toPolicyLimitMinutes = (hours: number) => {
@@ -87,7 +93,8 @@ export function useReserveFlow({
   config,
   getLessonsForDate,
   addReservation,
-  upsertReservation
+  upsertReservation,
+  checkExternalAvailability
 }: UseReserveFlowArgs) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
@@ -448,7 +455,7 @@ export function useReserveFlow({
   );
 
   const handleConfirmReserve = useCallback(
-    (draft: ReserveRequest, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
+    async (draft: ReserveRequest, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
       if (!currentUser?.allowed) return;
       const { date, day, roomId } = draft;
       const normalizedDescription = (privateDescription || "").trim();
@@ -508,6 +515,14 @@ export function useReserveFlow({
         return;
       }
 
+      if (checkExternalAvailability) {
+        const external = await checkExternalAvailability({ date, roomId, startMinutes, durationMinutes });
+        if (!external.ok) {
+          showToast(external.message || "החדר אינו זמין במערכת החיצונית.");
+          return;
+        }
+      }
+
       const id =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
@@ -517,25 +532,23 @@ export function useReserveFlow({
           ? (currentUser.picture || "").trim()
           : undefined;
 
-      void (async () => {
-        const ok = await addReservation({
-          id,
-          date,
-          time: startMinutes,
-          durationMinutes,
-          roomId,
-          reservedBy: currentUser.name,
-          reservedEmail: currentUser.email,
-          reservedPhone: currentUser.phone || undefined,
-          reservedPicture: nextReservedPicture,
-          privateDescription: normalizedDescription
-        });
-        if (!ok) {
-          showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
-          return;
-        }
-        setPendingConfirm(null);
-      })();
+      const ok = await addReservation({
+        id,
+        date,
+        time: startMinutes,
+        durationMinutes,
+        roomId,
+        reservedBy: currentUser.name,
+        reservedEmail: currentUser.email,
+        reservedPhone: currentUser.phone || undefined,
+        reservedPicture: nextReservedPicture,
+        privateDescription: normalizedDescription
+      });
+      if (!ok) {
+        showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
+        return;
+      }
+      setPendingConfirm(null);
     },
     [
       addReservation,
@@ -546,6 +559,7 @@ export function useReserveFlow({
       getForwardLimitViolationMessage,
       getLessonsForDate,
       getLimitViolationMessage,
+      checkExternalAvailability,
       reservationMap,
       roomMeta,
       setAuthError,
@@ -714,6 +728,14 @@ export function useReserveFlow({
         return;
       }
 
+      if (checkExternalAvailability) {
+        const external = await checkExternalAvailability({ date, roomId, startMinutes, durationMinutes });
+        if (!external.ok) {
+          showToast(external.message || "החדר אינו זמין במערכת החיצונית.");
+          return;
+        }
+      }
+
       const ok = await upsertReservation({
         ...currentEntry,
         time: startMinutes,
@@ -745,6 +767,7 @@ export function useReserveFlow({
       getLimitViolationMessage,
       reservationMap,
       roomMeta,
+      checkExternalAvailability,
       showToast,
       upsertReservation
     ]
