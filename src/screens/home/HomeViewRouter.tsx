@@ -59,6 +59,7 @@ export type HomeViewRouterProps = {
   onSpecialDetails: (reservationId: string, dateKey: string) => void;
   onExamDetails: (reservationId: string, dateKey: string) => void;
   onClosedDetails: (reservationId: string, dateKey: string) => void;
+  pendingReservationIds?: string[];
   onAdminSlotClick: (request: ReserveRequest) => void;
   onAdminLessonClick: (lessonId: string, dateKey: string) => void;
   onAdminReservationClick: (reservationId: string, dateKey: string) => void;
@@ -103,6 +104,7 @@ export default function HomeViewRouter({
   onSpecialDetails,
   onExamDetails,
   onClosedDetails,
+  pendingReservationIds,
   onAdminSlotClick,
   onAdminLessonClick,
   onAdminReservationClick,
@@ -175,6 +177,7 @@ export default function HomeViewRouter({
         onAddSlot={onMyScheduleAddSlot}
         onNavigatePrev={onNavigatePrev}
         onNavigateNext={onNavigateNext}
+        pendingReservationIds={pendingReservationIds}
       />
     );
   }
@@ -200,6 +203,7 @@ export default function HomeViewRouter({
       onSpecialDetails={onSpecialDetails}
       onExamDetails={onExamDetails}
       onClosedDetails={onClosedDetails}
+      pendingReservationIds={pendingReservationIds}
       onAdminSlotClick={onAdminSlotClick}
       onAdminLessonClick={onAdminLessonClick}
       onAdminReservationClick={onAdminReservationClick}

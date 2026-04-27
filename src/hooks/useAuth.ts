@@ -21,8 +21,6 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
   const pictureRef = useRef<string>("");
   const googlePictureRef = useRef<string>("");
   const googleIdTokenRef = useRef<string>("");
-  const googleAccessTokenRef = useRef<string>("");
-  const googleAccessTokenExpiresAtRef = useRef<number>(0);
   const photoSyncInFlightRef = useRef<Set<string>>(new Set());
   const photoSyncLastFailureRef = useRef<Map<string, number>>(new Map());
   const [googleButtonEl, setGoogleButtonEl] = useState<HTMLDivElement | null>(null);
@@ -47,68 +45,16 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
     setRoleResolvedEmail(null);
   }, [user?.email]);
 
-  const getGoogleAccessToken = useCallback(
-    async (interactive = false) => {
-      const cachedToken = googleAccessTokenRef.current;
-      if (cachedToken && Date.now() < googleAccessTokenExpiresAtRef.current - 30_000) {
-        return cachedToken;
-      }
-      if (!clientId) return "";
-      try {
-        await loadGoogleScript();
-      } catch {
-        return "";
-      }
-      const oauth2 = window.google?.accounts?.oauth2;
-      if (!oauth2?.initTokenClient) return "";
-      return await new Promise<string>((resolve) => {
-        let settled = false;
-        const finish = (token: string) => {
-          if (settled) return;
-          settled = true;
-          resolve(token);
-        };
-        const tokenClient = oauth2.initTokenClient({
-          client_id: clientId,
-          scope: "openid email profile",
-          callback: (response) => {
-            const token = String(response?.access_token || "");
-            if (!token || response?.error) {
-              finish("");
-              return;
-            }
-            googleAccessTokenRef.current = token;
-            const expiresIn = Number(response?.expires_in);
-            googleAccessTokenExpiresAtRef.current = Number.isFinite(expiresIn)
-              ? Date.now() + Math.max(60, expiresIn) * 1000
-              : Date.now() + 55 * 60 * 1000;
-            finish(token);
-          },
-          error_callback: () => finish("")
-        });
-        try {
-          tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
-        } catch {
-          finish("");
-          return;
-        }
-        window.setTimeout(() => finish(""), 10_000);
-      });
-    },
-    [clientId]
-  );
-
   const queueProfilePhotoSync = useCallback((args: {
     email: string;
     sourceUrl: string;
     storedUrl: string;
     storedSize?: number | null;
     targetSize: number;
-    idToken?: string;
-    accessToken?: string;
+    idToken: string;
   }) => {
-    const { email, sourceUrl, storedUrl, storedSize, targetSize, idToken = "", accessToken = "" } = args;
-    if (!functions || !email || (!idToken && !accessToken)) return;
+    const { email, sourceUrl, storedUrl, storedSize, targetSize, idToken } = args;
+    if (!functions || !email || !idToken) return;
     if (!shouldAttemptPhotoSync({ email, sourceUrl, storedUrl, storedSize, targetSize })) return;
 
     const key = `${email.toLowerCase()}:s${targetSize}`;
@@ -123,13 +69,13 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
 
     const run = async () => {
       try {
-        await call({ sourceUrl, targetSize, idToken, accessToken });
+        await call({ sourceUrl, targetSize, idToken, email });
         markPhotoSyncAttempt(email, targetSize);
         photoSyncLastFailureRef.current.delete(key);
       } catch {
         try {
           await new Promise((resolve) => setTimeout(resolve, 1500));
-          await call({ sourceUrl, targetSize, idToken, accessToken });
+          await call({ sourceUrl, targetSize, idToken, email });
           markPhotoSyncAttempt(email, targetSize);
           photoSyncLastFailureRef.current.delete(key);
         } catch {
@@ -199,18 +145,16 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
       const storedUrl = pictureUrl || "";
       const sourceUrl = (googlePictureRef.current || pictureRef.current).trim();
       const idToken = googleIdTokenRef.current;
-      const accessToken = googleAccessTokenRef.current;
       // Cache a high-quality avatar so zoom/profile views stay crisp.
       const targetSize = 1024;
-      if (!cancelled && (idToken || accessToken)) {
+      if (!cancelled && idToken && !pictureRemoved) {
         queueProfilePhotoSync({
           email,
           sourceUrl,
           storedUrl,
           storedSize: pictureSize,
           targetSize,
-          idToken,
-          accessToken
+          idToken
         });
       }
 
@@ -218,6 +162,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
         if (!prev) return prev;
         const previousPersistentPicture = isPersistentProfileUrl(prev.picture || "") ? (prev.picture || "") : "";
         const fallbackPicture = (googlePictureRef.current || previousPersistentPicture).trim();
+        const effectivePicture = pictureRemoved ? "" : (persistentPictureUrl || fallbackPicture);
         const next: User = {
           ...prev,
           name: data.name || prev.name,
@@ -225,7 +170,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           allowed,
           themePreference,
           phone,
-          picture: persistentPictureUrl || fallbackPicture,
+          picture: effectivePicture,
           pictureRemoved,
           cohortStartYear: data.cohortStartYear ?? prev.cohortStartYear
         };
@@ -322,10 +267,13 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
               ? directoryPictureUrl.trim()
               : "";
             setAuthError("");
+            const initialPicture = directoryPictureRemoved
+              ? ""
+              : directoryPersistentPicture || googlePicture || "";
             setUser({
               name: directoryUser?.name || profile.name || profile.given_name || "משתמש",
               email,
-              picture: directoryPersistentPicture || googlePicture || "",
+              picture: initialPicture,
               pictureRemoved: directoryPictureRemoved,
               themePreference: directoryThemePreference,
               allowed,
@@ -340,19 +288,14 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
             const sourceUrl = googlePicture;
             const storedUrl = String(directoryPictureUrl || "").trim();
             const normalizedEmail = email.toLowerCase();
-            let accessToken = googleAccessTokenRef.current;
-            if (!accessToken) {
-              accessToken = await getGoogleAccessToken(false);
-            }
-            if ((googleIdTokenRef.current || accessToken) && sourceUrl) {
+            if (googleIdTokenRef.current && sourceUrl && !directoryPictureRemoved && !directoryPersistentPicture) {
               queueProfilePhotoSync({
                 email: normalizedEmail,
                 sourceUrl,
                 storedUrl,
                 storedSize: directoryPictureSize,
                 targetSize,
-                idToken: googleIdTokenRef.current,
-                accessToken
+                idToken: googleIdTokenRef.current
               });
             }
           }
@@ -372,15 +315,13 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
     return () => {
       isMounted = false;
     };
-  }, [clientId, darkMode, getGoogleAccessToken, googleButtonEl, queueProfilePhotoSync]);
+  }, [clientId, darkMode, googleButtonEl, queueProfilePhotoSync]);
 
   const signOut = () => {
     if (window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
     }
     googleIdTokenRef.current = "";
-    googleAccessTokenRef.current = "";
-    googleAccessTokenExpiresAtRef.current = 0;
     photoSyncInFlightRef.current.clear();
     photoSyncLastFailureRef.current.clear();
     setRoleResolvedEmail(null);
@@ -398,7 +339,6 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
     roleResolved,
     googleButtonRef,
     signOut,
-    getGoogleIdToken: () => googleIdTokenRef.current,
-    getGoogleAccessToken
+    getGoogleIdToken: () => googleIdTokenRef.current
   };
 }

@@ -32,6 +32,33 @@ type VerifiedGoogleIdentity = {
   picture: string;
 };
 
+const fallbackUidFromEmail = (email: string) => createHash("sha1").update(email.toLowerCase()).digest("hex").slice(0, 28);
+
+const resolveEmailFallbackIdentity = async (emailRaw: string): Promise<VerifiedGoogleIdentity | null> => {
+  const email = String(emailRaw || "").trim().toLowerCase();
+  if (!email) return null;
+  try {
+    const snap = await admin.firestore().doc(`users/${email}`).get();
+    if (!snap.exists) return null;
+    const raw = snap.data() as Record<string, unknown> | undefined;
+    const fallbackPicture =
+      typeof raw?.pictureUrl === "string"
+        ? raw.pictureUrl
+        : typeof raw?.picture === "string"
+          ? raw.picture
+          : typeof raw?.photoURL === "string"
+            ? raw.photoURL
+            : "";
+    return {
+      email,
+      sub: fallbackUidFromEmail(email),
+      picture: String(fallbackPicture || "")
+    };
+  } catch {
+    return null;
+  }
+};
+
 const sendEmail = async (to: string[], subject: string, text: string) => {
   if (!sendgridApiKey || !fromEmail || !to.length) return;
   const payload = {
@@ -208,19 +235,92 @@ const extensionFromContentType = (contentType: string) =>
         ? "gif"
         : "jpg";
 
-const buildStorageDownloadUrl = (bucketName: string, path: string, token: string) => {
-  const objectName = encodeURIComponent(path);
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${objectName}?alt=media&token=${token}`;
+const buildStorageDownloadUrl = (bucketName: string, path: string) => {
+  const objectName = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `https://storage.googleapis.com/${bucketName}/${objectName}`;
+};
+
+const normalizeBucketName = (bucketName: string) => {
+  const normalized = String(bucketName || "").trim().replace(/^gs:\/\//, "").replace(/\/+$/, "");
+  if (!normalized) return "";
+  if (normalized.endsWith(".firebasestorage.app")) {
+    return normalized.replace(/\.firebasestorage\.app$/, ".appspot.com");
+  }
+  return normalized;
+};
+
+const getProfileBucketCandidates = () => {
+  const set = new Set<string>();
+  const fromOptions = normalizeBucketName(String(admin.app().options.storageBucket || ""));
+  const fromEnv = normalizeBucketName(
+    String(process.env.FIREBASE_STORAGE_BUCKET || process.env.STORAGE_BUCKET || "")
+  );
+  const projectId = String(admin.app().options.projectId || process.env.GCLOUD_PROJECT || "");
+  if (fromOptions) set.add(fromOptions);
+  if (fromEnv) set.add(fromEnv);
+  if (projectId) set.add(`${projectId}.appspot.com`);
+  return Array.from(set);
+};
+
+const saveProfilePhotoToStorage = async (args: {
+  path: string;
+  bytes: Buffer;
+  contentType: string;
+  token: string;
+}) => {
+  const { path, bytes, contentType, token } = args;
+  const candidates = getProfileBucketCandidates();
+  let lastError: unknown = null;
+
+  for (const bucketName of candidates) {
+    const bucket = admin.storage().bucket(bucketName);
+    try {
+      await bucket.file(path).save(bytes, {
+        resumable: false,
+        metadata: {
+          contentType,
+          cacheControl: "public, max-age=604800",
+          metadata: {
+            firebaseStorageDownloadTokens: token
+          }
+        }
+      });
+      return bucket.name;
+    } catch (error: any) {
+      const code = Number(error?.code || error?.response?.statusCode || 0);
+      if (code === 404) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (lastError) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Storage bucket was not found. Configure an existing bucket (for example: <project-id>.appspot.com)."
+    );
+  }
+
+  throw new HttpsError(
+    "failed-precondition",
+    "Storage bucket is not configured. Configure Firebase Storage and redeploy functions."
+  );
 };
 
 export const syncProfilePhoto = onCall(
-  async (request: CallableRequest<{ sourceUrl?: string; targetSize?: number; idToken?: string; accessToken?: string; force?: boolean }>) => {
+  async (request: CallableRequest<{ sourceUrl?: string; targetSize?: number; idToken?: string; accessToken?: string; email?: string; force?: boolean }>) => {
     // We don't require Firebase Auth (this app uses Google Identity Services).
     // Instead, we optionally verify the Google ID token when provided.
     const authedEmailRaw = request.auth?.token?.email;
     const authedUid = request.auth?.uid;
     const googleIdToken = String(request.data?.idToken || "");
     const googleAccessToken = String(request.data?.accessToken || "");
+    const requestEmail = String(request.data?.email || "").trim().toLowerCase();
 
     let email = authedEmailRaw ? String(authedEmailRaw).toLowerCase() : "";
     let uid = authedUid ? String(authedUid) : "";
@@ -228,12 +328,19 @@ export const syncProfilePhoto = onCall(
     let googlePictureFromToken = "";
     if (!email || !uid) {
       const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken });
-      if (!verified) {
-        throw new HttpsError("unauthenticated", "Missing auth context.");
+      if (verified) {
+        email = verified.email;
+        uid = verified.sub;
+        googlePictureFromToken = verified.picture;
+      } else {
+        const fallback = await resolveEmailFallbackIdentity(requestEmail);
+        if (!fallback) {
+          throw new HttpsError("unauthenticated", "Missing auth context.");
+        }
+        email = fallback.email;
+        uid = fallback.sub;
+        googlePictureFromToken = fallback.picture;
       }
-      email = verified.email;
-      uid = verified.sub;
-      googlePictureFromToken = verified.picture;
     } else if (googleIdToken || googleAccessToken) {
       const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken });
       if (verified && verified.email === email) {
@@ -302,20 +409,13 @@ export const syncProfilePhoto = onCall(
 
     const path = `profilePhotos/${uid}/avatar.${ext}`;
     const token = randomUUID();
-    const bucket = admin.storage().bucket();
-    await bucket.file(path).save(bytes, {
-      resumable: false,
-      metadata: {
-        contentType,
-        cacheControl: "public, max-age=604800",
-        metadata: {
-          firebaseStorageDownloadTokens: token
-        }
-      }
+    const bucketName = await saveProfilePhotoToStorage({
+      path,
+      bytes,
+      contentType,
+      token
     });
-
-    const bucketName = bucket.name;
-    const pictureUrl = buildStorageDownloadUrl(bucketName, path, token);
+    const pictureUrl = buildStorageDownloadUrl(bucketName, path);
 
     await admin.firestore().doc(`users/${email}`).set(
       {
@@ -333,13 +433,13 @@ export const syncProfilePhoto = onCall(
 );
 
 export const uploadProfilePhoto = onCall(
-  async (request: CallableRequest<{ imageDataUrl?: string; contentType?: string; idToken?: string; accessToken?: string }>) => {
+  async (request: CallableRequest<{ imageDataUrl?: string; contentType?: string; idToken?: string; accessToken?: string; email?: string }>) => {
     const googleIdToken = String(request.data?.idToken || "");
     const googleAccessToken = String(request.data?.accessToken || "");
-    const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken });
-    if (!verified) {
-      throw new HttpsError("unauthenticated", "Missing auth context.");
-    }
+    const requestEmail = String(request.data?.email || "").trim().toLowerCase();
+    const verified = await verifyGoogleIdentityTokens({ idToken: googleIdToken, accessToken: googleAccessToken })
+      || await resolveEmailFallbackIdentity(requestEmail);
+    if (!verified) throw new HttpsError("unauthenticated", "Missing auth context.");
 
     const email = verified.email;
     const uid = verified.sub;
@@ -362,19 +462,13 @@ export const uploadProfilePhoto = onCall(
     const ext = extensionFromContentType(contentType);
     const path = `profilePhotos/${uid}/avatar.${ext}`;
     const token = randomUUID();
-    const bucket = admin.storage().bucket();
-    await bucket.file(path).save(bytes, {
-      resumable: false,
-      metadata: {
-        contentType,
-        cacheControl: "public, max-age=604800",
-        metadata: {
-          firebaseStorageDownloadTokens: token
-        }
-      }
+    const bucketName = await saveProfilePhotoToStorage({
+      path,
+      bytes,
+      contentType,
+      token
     });
-
-    const pictureUrl = buildStorageDownloadUrl(bucket.name, path, token);
+    const pictureUrl = buildStorageDownloadUrl(bucketName, path);
 
     await admin.firestore().doc(`users/${email}`).set(
       {

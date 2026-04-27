@@ -13,7 +13,6 @@ export type AuthMenuProps = {
   onSignOut: () => void;
   onLoginClick: () => void;
   getGoogleIdToken?: () => string;
-  getGoogleAccessToken?: (interactive?: boolean) => Promise<string>;
   onProfileUpdated?: (updates: Partial<User>) => void;
   onOpenMySchedule?: () => void;
   adminMode?: boolean;
@@ -32,7 +31,6 @@ export default function AuthMenu({
   onSignOut,
   onLoginClick,
   getGoogleIdToken,
-  getGoogleAccessToken,
   onProfileUpdated,
   onOpenMySchedule,
   adminMode = false,
@@ -185,14 +183,6 @@ export default function AuthMenu({
           reader.onerror = () => reject(new Error("read_failed"));
           reader.readAsDataURL(file);
         });
-      const resolveGoogleTokens = async (interactive = false) => {
-        const idToken = (getGoogleIdToken?.() || "").trim();
-        const accessToken = getGoogleAccessToken ? (await getGoogleAccessToken(interactive || !idToken)) : "";
-        return {
-          idToken,
-          accessToken: String(accessToken || "").trim()
-        };
-      };
 
       let nextPicture = (user.picture || "").trim();
       let nextPictureRemoved = profilePictureRemoved;
@@ -202,19 +192,14 @@ export default function AuthMenu({
           setProfileSaving(false);
           return;
         }
-        const { idToken, accessToken } = await resolveGoogleTokens(true);
-        if (!idToken && !accessToken) {
-          setProfileError("פג תוקף ההתחברות. התחבר/י מחדש ונסה/י שוב.");
-          setProfileSaving(false);
-          return;
-        }
+        const idToken = (getGoogleIdToken?.() || "").trim();
         const uploadPhoto = httpsCallable(functions, "uploadProfilePhoto");
         const imageDataUrl = await toDataUrl(profileFile);
         const response = await uploadPhoto({
           imageDataUrl,
           contentType: profileFile.type || "image/jpeg",
           idToken: idToken || undefined,
-          accessToken: accessToken || undefined
+          email: user.email.toLowerCase()
         });
         const result = response.data as { pictureUrl?: string };
         nextPicture = String(result.pictureUrl || "").trim();
@@ -224,28 +209,6 @@ export default function AuthMenu({
         nextPictureRemoved = false;
       } else if (profilePictureRemoved) {
         nextPicture = "";
-        if (functions) {
-          const { idToken, accessToken } = await resolveGoogleTokens(false);
-          if (idToken || accessToken) {
-            try {
-              const syncGooglePhoto = httpsCallable(functions, "syncProfilePhoto");
-              const response = await syncGooglePhoto({
-                idToken: idToken || undefined,
-                accessToken: accessToken || undefined,
-                targetSize: 1024,
-                force: true
-              });
-              const result = response.data as { pictureUrl?: string };
-              const restoredPicture = String(result.pictureUrl || "").trim();
-              if (restoredPicture) {
-                nextPicture = restoredPicture;
-                nextPictureRemoved = false;
-              }
-            } catch {
-              // If Google fallback sync fails we still keep the explicit removal.
-            }
-          }
-        }
       } else {
         nextPictureRemoved = false;
       }

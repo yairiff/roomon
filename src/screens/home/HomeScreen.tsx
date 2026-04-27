@@ -195,7 +195,9 @@ export default function HomeScreen({
     roomOptions: { id: string; name: string }[];
   } | null>(null);
   const [dayTransition, setDayTransition] = useState<"" | "prev" | "next">("");
-  const [toast, setToast] = useState<{ message: string; tone?: "info" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone?: "info" | "error" | "success" } | null>(null);
+  const [optimisticReservationsById, setOptimisticReservationsById] = useState<Record<string, Reservation>>({});
+  const [pendingReservationIdsMap, setPendingReservationIdsMap] = useState<Record<string, true>>({});
   const prevViewRef = useRef<ViewMode>("live");
   const lastMainViewRef = useRef<ViewMode>("live");
   const dateInputRef = useRef<HTMLInputElement | null>(null);
@@ -239,9 +241,72 @@ export default function HomeScreen({
     []
   );
 
-  const showToast = useCallback((message: string, tone: "info" | "error" = "info") => {
+  const showToast = useCallback((message: string, tone: "info" | "error" | "success" = "info") => {
     setToast({ message, tone });
   }, []);
+
+  const addOptimisticReservation = useCallback((reservation: Reservation) => {
+    setOptimisticReservationsById((prev) => ({ ...prev, [reservation.id]: reservation }));
+    setPendingReservationIdsMap((prev) => ({ ...prev, [reservation.id]: true }));
+  }, []);
+
+  const clearOptimisticReservationPending = useCallback((reservationId: string) => {
+    setPendingReservationIdsMap((prev) => {
+      if (!prev[reservationId]) return prev;
+      const next = { ...prev };
+      delete next[reservationId];
+      return next;
+    });
+  }, []);
+
+  const removeOptimisticReservation = useCallback((reservationId: string) => {
+    setOptimisticReservationsById((prev) => {
+      if (!prev[reservationId]) return prev;
+      const next = { ...prev };
+      delete next[reservationId];
+      return next;
+    });
+    setPendingReservationIdsMap((prev) => {
+      if (!prev[reservationId]) return prev;
+      const next = { ...prev };
+      delete next[reservationId];
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const optimisticIds = Object.keys(optimisticReservationsById);
+    const pendingIds = Object.keys(pendingReservationIdsMap);
+    if (!optimisticIds.length && !pendingIds.length) return;
+
+    const persistedIds = new Set<string>();
+    Object.values(reservationMap).forEach((entries) => {
+      entries.forEach((entry) => persistedIds.add(entry.id));
+    });
+    if (!persistedIds.size) return;
+
+    setOptimisticReservationsById((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.keys(prev).forEach((id) => {
+        if (!persistedIds.has(id)) return;
+        delete next[id];
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+
+    setPendingReservationIdsMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.keys(prev).forEach((id) => {
+        if (!persistedIds.has(id)) return;
+        delete next[id];
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [optimisticReservationsById, pendingReservationIdsMap, reservationMap]);
 
   const triggerDayTransition = useCallback((direction: "prev" | "next") => {
     setDayTransition("");
@@ -357,7 +422,12 @@ export default function HomeScreen({
         url.searchParams.set("date", date);
         url.searchParams.set("start_time", startTime);
         url.searchParams.set("duration_minutes", String(durationMinutes));
-        const response = await fetch(url.toString(), { method: "GET" });
+        const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+        const timeoutId = controller ? window.setTimeout(() => controller.abort(), 3500) : null;
+        const response = await fetch(url.toString(), { method: "GET", ...(controller ? { signal: controller.signal } : {}) });
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
         const payload = (await response.json().catch(() => ({}))) as {
           available?: boolean;
           message?: string;
@@ -371,23 +441,7 @@ export default function HomeScreen({
             room?: { id?: string };
           }>;
         };
-        if (!response.ok) {
-          const message = "בדיקת זמינות מול המערכת החיצונית נכשלה.";
-          externalAvailabilityCacheRef.current.set(cacheKey, {
-            checkedAt: nowMs,
-            available: false,
-            message
-          });
-          return { ok: false, message };
-        }
-        if (payload.available === true) {
-          externalAvailabilityCacheRef.current.set(cacheKey, {
-            checkedAt: nowMs,
-            available: true,
-            message: ""
-          });
-          return { ok: true };
-        }
+
         if (payload.reason === "conflict" && Array.isArray(payload.conflicts) && payload.conflicts.length) {
           await Promise.all(
             payload.conflicts.map(async (conflict, index) => {
@@ -422,24 +476,42 @@ export default function HomeScreen({
               });
             })
           );
+          const message = payload.message || "החדר אינו זמין לפי המערכת החיצונית.";
+          externalAvailabilityCacheRef.current.set(cacheKey, {
+            checkedAt: nowMs,
+            available: false,
+            message
+          });
+          const count = payload.conflicts.length;
+          const conflictsLabel = count === 1 ? "נמצאה התנגשות אחת" : `נמצאו ${count} התנגשויות`;
+          return { ok: false, message: `${conflictsLabel} בזמן שביקשת. היומן עודכן אוטומטית עם ההתנגשויות.` };
         }
+
+        // Third-party availability service is temporarily unavailable.
+        // Do not block or notify the user for infrastructure failures.
+        if (!response.ok) {
+          return { ok: true };
+        }
+
+        if (payload.available === true) {
+          externalAvailabilityCacheRef.current.set(cacheKey, {
+            checkedAt: nowMs,
+            available: true,
+            message: ""
+          });
+          return { ok: true };
+        }
+
         const message = payload.message || "החדר אינו זמין לפי המערכת החיצונית.";
         externalAvailabilityCacheRef.current.set(cacheKey, {
           checkedAt: nowMs,
           available: false,
           message
         });
-        const mergedMessage = (() => {
-          if (!(payload.reason === "conflict" && Array.isArray(payload.conflicts) && payload.conflicts.length)) {
-            return message;
-          }
-          const count = payload.conflicts.length;
-          const conflictsLabel = count === 1 ? "נמצאה התנגשות אחת" : `נמצאו ${count} התנגשויות`;
-          return `${conflictsLabel} בזמן שביקשת. היומן עודכן אוטומטית עם ההתנגשויות.`;
-        })();
-        return { ok: false, message: mergedMessage };
+        return { ok: false, message };
       } catch {
-        return { ok: false, message: "לא ניתן לאמת זמינות מול המערכת החיצונית כרגע." };
+        // Network/timeout/downstream outage should not block user reservations.
+        return { ok: true };
       }
     },
     [apiSync, rooms, upsertOverride]
@@ -606,49 +678,61 @@ export default function HomeScreen({
   }, [roomMode, weekDates, selectedDayKey, selectedDate]);
 
   const displayReservationMap = useMemo(() => {
-    if (effectiveAdminMode) return reservationMap;
+    const optimisticReservations = Object.values(optimisticReservationsById);
+    if (effectiveAdminMode && !optimisticReservations.length) return reservationMap;
+
     const holidayDates = Object.keys(holidayNameByDate);
-    if (!holidayDates.length || !rooms.length) return reservationMap;
+    if (!holidayDates.length && !optimisticReservations.length) return reservationMap;
 
-    const visibleDates = new Set<string>([
-      ...Object.keys(reservationMap),
-      ...weekDates.map((day) => day.dateKey),
-      ...roomDates.map((day) => day.dateKey),
-      ...buildDateKeysBetween(finderWindow.startDate, finderWindow.endDate),
-      ...buildDateKeysBetween(todayDateKey, overridesAgendaEnd),
-      selectedDate,
-      todayDateKey
-    ]);
-
-    let touched = false;
     const next: ReservationMap = {};
     Object.entries(reservationMap).forEach(([key, value]) => {
       next[key] = [...value];
     });
 
-    visibleDates.forEach((dateKey) => {
-      const holidayName = holidayNameByDate[dateKey];
-      if (!holidayName) return;
-      const existing = next[dateKey] ? [...next[dateKey]] : [];
-      rooms.forEach((room) => {
-        const id = `holiday:${dateKey}:${room.id}`;
-        if (existing.some((entry) => entry.id === id)) return;
-        touched = true;
-        existing.push({
-          id,
-          date: dateKey,
-          roomId: room.id,
-          time: activeHours.startMinutes,
-          durationMinutes: activeHours.endMinutes - activeHours.startMinutes,
-          reservedBy: holidayName,
-          reservedEmail: "",
-          kind: "closed"
-        });
-      });
-      next[dateKey] = existing.sort((a, b) => a.time - b.time);
+    optimisticReservations.forEach((entry) => {
+      const existing = next[entry.date] ? [...next[entry.date]] : [];
+      if (existing.some((item) => item.id === entry.id)) return;
+      existing.push(entry);
+      next[entry.date] = existing.sort((a, b) => a.time - b.time);
     });
 
-    return touched ? next : reservationMap;
+    if (effectiveAdminMode) {
+      return next;
+    }
+
+    if (holidayDates.length && rooms.length) {
+      const visibleDates = new Set<string>([
+        ...Object.keys(next),
+        ...weekDates.map((day) => day.dateKey),
+        ...roomDates.map((day) => day.dateKey),
+        ...buildDateKeysBetween(finderWindow.startDate, finderWindow.endDate),
+        ...buildDateKeysBetween(todayDateKey, overridesAgendaEnd),
+        selectedDate,
+        todayDateKey
+      ]);
+      visibleDates.forEach((dateKey) => {
+        const holidayName = holidayNameByDate[dateKey];
+        if (!holidayName) return;
+        const existing = next[dateKey] ? [...next[dateKey]] : [];
+        rooms.forEach((room) => {
+          const id = `holiday:${dateKey}:${room.id}`;
+          if (existing.some((entry) => entry.id === id)) return;
+          existing.push({
+            id,
+            date: dateKey,
+            roomId: room.id,
+            time: activeHours.startMinutes,
+            durationMinutes: activeHours.endMinutes - activeHours.startMinutes,
+            reservedBy: holidayName,
+            reservedEmail: "",
+            kind: "closed"
+          });
+        });
+        next[dateKey] = existing.sort((a, b) => a.time - b.time);
+      });
+    }
+
+    return next;
   }, [
     activeHours.endMinutes,
     activeHours.startMinutes,
@@ -657,6 +741,7 @@ export default function HomeScreen({
     finderWindow.startDate,
     holidayNameByDate,
     overridesAgendaEnd,
+    optimisticReservationsById,
     reservationMap,
     roomDates,
     rooms,
@@ -810,8 +895,16 @@ export default function HomeScreen({
     getLessonsForDate,
     addReservation,
     upsertReservation,
+    onOptimisticCreate: addOptimisticReservation,
+    onOptimisticPendingClear: clearOptimisticReservationPending,
+    onOptimisticRemove: removeOptimisticReservation,
     checkExternalAvailability
   });
+
+  const pendingReservationIds = useMemo(
+    () => Object.keys(pendingReservationIdsMap),
+    [pendingReservationIdsMap]
+  );
 
   const {
     adminDraft,
@@ -1001,9 +1094,16 @@ export default function HomeScreen({
 
     const dayLabel = weekDays.find((day) => day.key === selectedDayKey)?.label || "";
     const shortDate = formatShortDate(selectedDate);
+    const tomorrowDateKey = formatDateKey(addDays(parseDateKey(todayDateKey), 1));
+    const relativeDayLabel =
+      selectedDate === todayDateKey
+        ? "היום"
+        : selectedDate === tomorrowDateKey
+          ? "מחר"
+          : dayLabel;
     const navText = view === "room" && roomMode === "week" && !allRooms
       ? `שבוע ${getWeekNumber(selectedDate)}`
-      : `${dayLabel} · ${shortDate}`;
+      : `${relativeDayLabel} · ${shortDate}`;
 
     const context: TopBarContext = {
       title: titles[view]
@@ -1392,6 +1492,7 @@ export default function HomeScreen({
       onSpecialDetails={handleSpecialDetails}
       onExamDetails={handleExamDetails}
       onClosedDetails={handleClosedDetails}
+      pendingReservationIds={pendingReservationIds}
       onAdminSlotClick={handleAdminSlotClick}
       onAdminLessonClick={handleAdminLessonClick}
       onAdminReservationClick={handleAdminReservationClick}
@@ -1580,7 +1681,7 @@ export default function HomeScreen({
       </div>
       {toast ? (
         <div
-          className={`home-toast${toast.tone === "error" ? " error" : ""}`}
+          className={`home-toast${toast.tone === "error" ? " error" : toast.tone === "success" ? " success" : ""}`}
           style={{ bottom: hasNav ? "calc(18px + env(safe-area-inset-bottom) + 74px)" : "calc(18px + env(safe-area-inset-bottom))" }}
           role="status"
           aria-live="polite"

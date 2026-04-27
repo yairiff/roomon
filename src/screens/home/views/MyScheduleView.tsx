@@ -35,6 +35,7 @@ type MyScheduleViewProps = {
   endHour: number;
   onNavigatePrev?: () => void;
   onNavigateNext?: () => void;
+  pendingReservationIds?: string[];
 };
 
 const MY_ROOM_ID = "__my_schedule__";
@@ -89,7 +90,8 @@ export default function MyScheduleView({
   startHour,
   endHour,
   onNavigatePrev,
-  onNavigateNext
+  onNavigateNext,
+  pendingReservationIds
 }: MyScheduleViewProps) {
   const email = (currentUser?.email || "").trim().toLowerCase();
 
@@ -550,7 +552,8 @@ export default function MyScheduleView({
       onSelectedDateChange(dateKey);
     },
     nowMinutes,
-    todayDateKey
+    todayDateKey,
+    pendingReservationIds
   };
 
   return (

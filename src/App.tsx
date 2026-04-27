@@ -43,8 +43,7 @@ export default function App() {
     roleResolved,
     googleButtonRef,
     signOut,
-    getGoogleIdToken,
-    getGoogleAccessToken
+    getGoogleIdToken
   } = useAuth({ clientId: CLIENT_ID, darkMode });
   const [reservationsWindow, setReservationsWindow] = useState<ReservationsWindow>(() => {
     const todayKey = formatDateKey(new Date());
@@ -228,7 +227,6 @@ export default function App() {
         onSignOut={handleSignOut}
         onLoginClick={handleLoginClick}
         getGoogleIdToken={getGoogleIdToken}
-        getGoogleAccessToken={getGoogleAccessToken}
         onProfileUpdated={(updates) =>
           setUser((prev) => (prev ? { ...prev, ...updates } : prev))
         }

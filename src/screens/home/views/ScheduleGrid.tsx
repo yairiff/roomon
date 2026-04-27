@@ -1,7 +1,7 @@
 import type { DayKey, Lesson, Room, TimeSlot } from "../../../types/schedule";
 import type { ReservationMap, ReserveRequest } from "../../../types/reservations";
 import type { User } from "../../../types/auth";
-import type { WeekDate } from "../../../lib/date";
+import { addDays, formatDateKey, parseDateKey, type WeekDate } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { AddIcon, ReleaseIcon } from "../../../components/Icons";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
@@ -32,6 +32,7 @@ export type ScheduleGridProps = {
   onSpecialDetails?: (reservationId: string, dateKey: string) => void;
   onExamDetails?: (reservationId: string, dateKey: string) => void;
   onClosedDetails?: (reservationId: string, dateKey: string) => void;
+  pendingReservationIds?: string[];
   onAdminSlotClick?: (request: ReserveRequest) => void;
   onAdminLessonClick?: (lessonId: string, dateKey: string) => void;
   onAdminReservationClick?: (reservationId: string, dateKey: string) => void;
@@ -60,6 +61,7 @@ type LessonBlock = {
   meta: string;
   startMinutes: number;
   durationMinutes: number;
+  pending?: boolean;
 };
 
 type ReservationBlock = {
@@ -72,6 +74,7 @@ type ReservationBlock = {
   reservationId: string;
   reservedEmail: string;
   kind?: "special" | "exam" | "closed";
+  pending?: boolean;
 };
 
 type Block = LessonBlock | ReservationBlock;
@@ -147,6 +150,7 @@ export default function ScheduleGrid({
   onSpecialDetails,
   onExamDetails,
   onClosedDetails,
+  pendingReservationIds = [],
   onAdminSlotClick,
   onAdminLessonClick,
   onAdminReservationClick,
@@ -196,6 +200,14 @@ export default function ScheduleGrid({
   const gridStyle = useMemo(
     () => ({ ["--row-height" as string]: `${rowHeight}px` }),
     [rowHeight]
+  );
+  const tomorrowDateKey = useMemo(
+    () => (todayDateKey ? formatDateKey(addDays(parseDateKey(todayDateKey), 1)) : ""),
+    [todayDateKey]
+  );
+  const pendingReservationIdSet = useMemo(
+    () => new Set(pendingReservationIds),
+    [pendingReservationIds]
   );
 
   useLayoutEffect(() => {
@@ -368,7 +380,7 @@ export default function ScheduleGrid({
       }));
   };
 
-  const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlock[] =>
+const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlock[] =>
     (reservationMap[dateKey] || [])
       .filter((entry) => entry.roomId === roomId)
       .map((entry) => ({
@@ -394,7 +406,8 @@ export default function ScheduleGrid({
         durationMinutes: entry.durationMinutes,
         reservationId: entry.id,
         reservedEmail: entry.reservedEmail || "",
-        kind: entry.kind
+        kind: entry.kind,
+        pending: !entry.kind && pendingReservationIdSet.has(entry.id)
       }));
 
   const renderColumn = ({ dayKey, dateKey, roomId }: { dayKey: DayKey; dateKey: string; roomId: string }) => {
@@ -546,7 +559,7 @@ export default function ScheduleGrid({
           return (
             <div
               key={block.id}
-              className={`schedule-block ${block.type}${compact ? " compact" : ""}`}
+              className={`schedule-block ${block.type}${block.pending ? " pending" : ""}${compact ? " compact" : ""}`}
               style={{
                 top,
                 height,
@@ -606,10 +619,11 @@ export default function ScheduleGrid({
                       {block.title}
                       {showInlineMeta ? <span className="cell-meta-inline"> · {primaryMeta}</span> : null}
                     </p>
+                    {block.pending ? <span className="block-pending-spinner" aria-hidden="true" /> : null}
                   </div>
                   {!showInlineMeta && hasMeta ? <p className="cell-meta">{primaryMeta}</p> : null}
                   {hasRoomLine ? <p className="cell-room">{roomLine}</p> : null}
-                  {interactive && block.type === "reserved" && currentUser?.allowed && block.reservedEmail === currentUser.email ? (
+                  {interactive && block.type === "reserved" && !block.pending && currentUser?.allowed && block.reservedEmail === currentUser.email ? (
                     <button
                       className="cell-action icon-button corner"
                       onClick={(event) => {
@@ -727,7 +741,13 @@ export default function ScheduleGrid({
                   type="button"
                   onClick={() => onDateSelect?.(day.dateKey)}
                 >
-                  <div>{day.label}</div>
+                  <div>
+                    {day.dateKey === todayDateKey
+                      ? "היום"
+                      : day.dateKey === tomorrowDateKey
+                        ? "מחר"
+                        : day.label}
+                  </div>
                   <div className="grid-date">{day.shortDate}</div>
                 </button>
               ))}
