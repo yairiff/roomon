@@ -101,7 +101,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           return;
         }
         setRoleResolvedEmail(email);
-        setUser((prev) => prev ? { ...prev, role: "pending", allowed: false } : prev);
+        setUser((prev) => prev ? { ...prev, role: "pending", allowed: false, betaUser: false } : prev);
         return;
       }
       setRoleResolvedEmail(email);
@@ -139,6 +139,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
         raw.themePreference === "dark" || raw.themePreference === "light"
           ? raw.themePreference
           : undefined;
+      const betaUser = raw.betaUser === true;
 
       // If we only have a Google hotlink, copy a cached version into Storage (once in a while).
       // This dramatically reduces 429s from Google profile image rate limits.
@@ -168,6 +169,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           name: data.name || prev.name,
           role,
           allowed,
+          betaUser,
           themePreference,
           phone,
           picture: effectivePicture,
@@ -178,6 +180,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           next.name === prev.name &&
           next.role === prev.role &&
           next.allowed === prev.allowed &&
+          next.betaUser === prev.betaUser &&
           next.themePreference === prev.themePreference &&
           next.phone === prev.phone &&
           next.picture === prev.picture &&
@@ -278,6 +281,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
               themePreference: directoryThemePreference,
               allowed,
               role: role || "pending",
+              betaUser: directoryUser?.betaUser === true,
               phone: directoryPhone || directoryUser?.phone,
               cohortStartYear: directoryUser?.cohortStartYear
             });

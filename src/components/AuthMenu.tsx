@@ -4,7 +4,7 @@ import { httpsCallable } from "firebase/functions";
 import type { User } from "../types/auth";
 import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
-import { AdminIcon, ShortcutIcon, CalendarIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon } from "./Icons";
+import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
 
 export type AuthMenuProps = {
   user: User | null;
@@ -14,7 +14,6 @@ export type AuthMenuProps = {
   onLoginClick: () => void;
   getGoogleIdToken?: () => string;
   onProfileUpdated?: (updates: Partial<User>) => void;
-  onOpenMySchedule?: () => void;
   adminMode?: boolean;
   onToggleAdminMode?: () => void;
   darkMode?: boolean;
@@ -32,7 +31,6 @@ export default function AuthMenu({
   onLoginClick,
   getGoogleIdToken,
   onProfileUpdated,
-  onOpenMySchedule,
   adminMode = false,
   onToggleAdminMode,
   darkMode = false,
@@ -326,17 +324,6 @@ export default function AuthMenu({
                 </button>
               </div>
             ) : null}
-            <button
-              className="secondary auth-reservations-button"
-              type="button"
-              onClick={() => {
-                onOpenMySchedule?.();
-                onClose();
-              }}
-            >
-              <CalendarIcon />
-              <span>המערכת שלי</span>
-            </button>
             <button className="secondary auth-reservations-button" type="button" onClick={openProfileEditor}>
               <UserIcon />
               <span>עריכת פרופיל</span>
@@ -385,11 +372,15 @@ export default function AuthMenu({
                 ) : null}
               </>
             ) : null}
-            <button className="primary" onClick={onSignOut} type="button">התנתק</button>
+            <button className="secondary auth-signout-button" onClick={onSignOut} type="button">
+              <LogoutIcon />
+              <span>התנתק</span>
+            </button>
           </>
         ) : (
           <>
             <p>התחבר כדי לשריין חדרים</p>
+            <button className="primary" onClick={onLoginClick} type="button">התחברות</button>
             <div className="auth-admin-row">
               <button
                 className="secondary auth-admin-button"
@@ -407,7 +398,6 @@ export default function AuthMenu({
                 </span>
               </button>
             </div>
-            <button className="primary" onClick={onLoginClick} type="button">התחברות</button>
             {!isStandalone ? (
               <>
                 <button className="secondary auth-install-button" type="button" onClick={handleInstall}>

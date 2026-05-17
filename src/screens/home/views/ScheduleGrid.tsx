@@ -3,9 +3,10 @@ import type { ReservationMap, ReserveRequest } from "../../../types/reservations
 import type { User } from "../../../types/auth";
 import { addDays, formatDateKey, parseDateKey, type WeekDate } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import { AddIcon, ReleaseIcon } from "../../../components/Icons";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
-import type { RoomMeta } from "../../../types/admin";
+import { AddIcon, ApproveIcon, CloseIcon, ReleaseIcon } from "../../../components/Icons";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import type { DirectoryUser, RoomMeta } from "../../../types/admin";
+import type { AvailabilityDateOffs, CollaborationGroup, RehearsalParticipant, UserAvailability } from "../../../types/collaboration";
 
 type ScheduleView = "daily" | "room";
 
@@ -19,6 +20,8 @@ export type ScheduleGridProps = {
   selectedRoom: string;
   lessons: Lesson[];
   roomMeta?: Record<string, RoomMeta>;
+  directoryUsers?: DirectoryUser[];
+  groups?: CollaborationGroup[];
   getLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
   reservationMap: ReservationMap;
   currentUser: User | null;
@@ -50,6 +53,20 @@ export type ScheduleGridProps = {
   todayDateKey?: string;
   onNavigatePrev?: () => void;
   onNavigateNext?: () => void;
+  zoomResetToken?: number;
+  availability?: UserAvailability;
+  availabilityDateOffs?: AvailabilityDateOffs;
+  availabilityEditMode?: boolean;
+  onAvailabilityDayUpdate?: (
+    dayKey: DayKey,
+    updates: Partial<{ enabled: boolean; startMinutes: number; endMinutes: number }>
+  ) => void;
+  onAvailabilityDateOffToggle?: (dateKey: string, off: boolean) => void;
+  onLinkedRehearsalRespond?: (
+    groupId: string,
+    rehearsalId: string,
+    status: RehearsalParticipant["status"]
+  ) => void;
 };
 
 const BASE_ROW_HEIGHT = 28;
@@ -73,6 +90,9 @@ type ReservationBlock = {
   durationMinutes: number;
   reservationId: string;
   reservedEmail: string;
+  reservedPicture?: string;
+  linkedGroupId?: string;
+  linkedRehearsalId?: string;
   kind?: "special" | "exam" | "closed";
   pending?: boolean;
 };
@@ -127,6 +147,47 @@ const groupOverlaps = (blocks: PositionedBlock[]) => {
   return groups;
 };
 
+const buildAvatarInitials = (value: string) => {
+  const cleaned = value
+    .split("\n")[0]
+    .split("·")[0]
+    .trim();
+  if (!cleaned) return "?";
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return parts[0].slice(0, 2).toUpperCase();
+};
+
+const rehearsalLinkKey = (groupId: string, rehearsalId: string) => `${groupId}::${rehearsalId}`;
+
+function ReservationAvatar({
+  pictureUrl,
+  fallbackLabel,
+  compact = false,
+  className = ""
+}: {
+  pictureUrl: string;
+  fallbackLabel: string;
+  compact?: boolean;
+  className?: string;
+}) {
+  const [imageError, setImageError] = useState(false);
+  const showImage = Boolean(pictureUrl) && !imageError;
+
+  return (
+    <span
+      className={`schedule-reservation-avatar${compact ? " compact" : ""}${className ? ` ${className}` : ""}`}
+      aria-hidden="true"
+    >
+      {showImage ? (
+        <img src={pictureUrl} alt="" loading="lazy" onError={() => setImageError(true)} />
+      ) : (
+        <span>{buildAvatarInitials(fallbackLabel)}</span>
+      )}
+    </span>
+  );
+}
+
 export default function ScheduleGrid({
   view,
   rooms,
@@ -137,6 +198,8 @@ export default function ScheduleGrid({
   selectedRoom,
   lessons,
   roomMeta,
+  directoryUsers = [],
+  groups = [],
   getLessonsForDate,
   reservationMap,
   currentUser,
@@ -167,7 +230,14 @@ export default function ScheduleGrid({
   nowMinutes,
   todayDateKey,
   onNavigatePrev,
-  onNavigateNext
+  onNavigateNext,
+  zoomResetToken,
+  availability,
+  availabilityDateOffs = {},
+  availabilityEditMode = false,
+  onAvailabilityDayUpdate,
+  onAvailabilityDateOffToggle,
+  onLinkedRehearsalRespond
 }: ScheduleGridProps) {
   const baseStartMinutes = startHour * 60;
   const baseEndMinutes = endHour * 60;
@@ -178,7 +248,7 @@ export default function ScheduleGrid({
     try {
       const raw = localStorage.getItem("rimon_schedule_row_scale_v1");
       const parsed = raw ? Number(raw) : 1;
-      return Number.isFinite(parsed) ? Math.max(0.6, Math.min(1.6, parsed)) : 1;
+      return Number.isFinite(parsed) ? Math.max(1, Math.min(1.6, parsed)) : 1;
     } catch {
       return 1;
     }
@@ -193,10 +263,20 @@ export default function ScheduleGrid({
     }
   }, [rowScale]);
 
+  useEffect(() => {
+    if (!availabilityEditMode || rowScale === 1) return;
+    setRowScale(1);
+  }, [availabilityEditMode, rowScale]);
+
+  useEffect(() => {
+    if (!zoomResetToken) return;
+    setRowScale(1);
+  }, [zoomResetToken]);
+
   const columnHeight = totalHours * rowHeight;
   const slotHeightFor = (slot: TimeSlot) => ((slot.endMinutes - slot.startMinutes) / 60) * rowHeight;
   const colGap = compact ? 2 : 4;
-  const slotActionsEnabled = showSlotActions ?? interactive;
+  const slotActionsEnabled = (showSlotActions ?? interactive) && !availabilityEditMode;
   const gridStyle = useMemo(
     () => ({ ["--row-height" as string]: `${rowHeight}px` }),
     [rowHeight]
@@ -209,6 +289,135 @@ export default function ScheduleGrid({
     () => new Set(pendingReservationIds),
     [pendingReservationIds]
   );
+  const availabilityTrackRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const directoryUsersByEmail = useMemo(() => {
+    const map = new Map<string, { name: string; pictureUrl: string }>();
+    directoryUsers.forEach((user) => {
+      const email = (user.email || "").trim().toLowerCase();
+      if (!email) return;
+      map.set(email, {
+        name: (user.name || "").trim(),
+        pictureUrl: (user.pictureUrl || "").trim()
+      });
+    });
+    return map;
+  }, [directoryUsers]);
+  const rehearsalDataByLink = useMemo(() => {
+    const map = new Map<
+      string,
+      { approvedParticipantEmails: string[]; participantStatusByEmail: Map<string, RehearsalParticipant["status"]> }
+    >();
+    groups.forEach((group) => {
+      const groupId = (group.id || "").trim();
+      if (!groupId) return;
+      (group.rehearsals || []).forEach((rehearsal) => {
+        const rehearsalId = (rehearsal.id || "").trim();
+        if (!rehearsalId) return;
+        const participantStatusByEmail = new Map<string, RehearsalParticipant["status"]>();
+        const approvedParticipantEmails: string[] = [];
+        rehearsal.participants.forEach((participant) => {
+          const email = (participant.email || "").trim().toLowerCase();
+          if (!email) return;
+          const status: RehearsalParticipant["status"] =
+            participant.status === "approved" || participant.status === "declined"
+              ? participant.status
+              : "pending";
+          participantStatusByEmail.set(email, status);
+          if (status === "approved") approvedParticipantEmails.push(email);
+        });
+        map.set(rehearsalLinkKey(groupId, rehearsalId), {
+          approvedParticipantEmails: Array.from(new Set(approvedParticipantEmails)),
+          participantStatusByEmail
+        });
+      });
+    });
+    return map;
+  }, [groups]);
+  const [availabilityDrag, setAvailabilityDrag] = useState<{
+    trackKey: string;
+    dayKey: DayKey;
+    handle: "start" | "end";
+  } | null>(null);
+  const [availabilityPreviewByDay, setAvailabilityPreviewByDay] = useState<
+    Partial<Record<DayKey, { startMinutes: number; endMinutes: number }>>
+  >({});
+  const availabilityPreviewRef = useRef<Partial<Record<DayKey, { startMinutes: number; endMinutes: number }>>>({});
+
+  useEffect(() => {
+    availabilityPreviewRef.current = availabilityPreviewByDay;
+  }, [availabilityPreviewByDay]);
+
+  useEffect(() => {
+    if (!availabilityDrag || !availability || !onAvailabilityDayUpdate) return;
+    const commitDayDraft = (dayKey: DayKey) => {
+      const current = availability[dayKey];
+      const draft = availabilityPreviewRef.current[dayKey];
+      if (!current || !draft) return;
+      if (draft.startMinutes !== current.startMinutes) {
+        onAvailabilityDayUpdate(dayKey, { startMinutes: draft.startMinutes });
+      }
+      if (draft.endMinutes !== current.endMinutes) {
+        onAvailabilityDayUpdate(dayKey, { endMinutes: draft.endMinutes });
+      }
+    };
+    const move = (event: PointerEvent) => {
+      const track = availabilityTrackRefs.current[availabilityDrag.trackKey];
+      if (!track) return;
+      const rect = track.getBoundingClientRect();
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      const minutesRaw = baseStartMinutes + (y / Math.max(1, rect.height)) * (baseEndMinutes - baseStartMinutes);
+      const snapped = Math.max(0, Math.min(24 * 60, Math.round(minutesRaw / 30) * 30));
+      const current = availability[availabilityDrag.dayKey];
+      if (!current) return;
+      setAvailabilityPreviewByDay((prev) => {
+        const draft = prev[availabilityDrag.dayKey];
+        const draftStart = draft?.startMinutes ?? current.startMinutes;
+        const draftEnd = draft?.endMinutes ?? current.endMinutes;
+        if (availabilityDrag.handle === "start") {
+          const nextStart = Math.max(baseStartMinutes, Math.min(snapped, draftEnd - 30));
+          if (nextStart === draftStart) return prev;
+          return {
+            ...prev,
+            [availabilityDrag.dayKey]: { startMinutes: nextStart, endMinutes: draftEnd }
+          };
+        }
+        const nextEnd = Math.min(baseEndMinutes, Math.max(snapped, draftStart + 30));
+        if (nextEnd === draftEnd) return prev;
+        return {
+          ...prev,
+          [availabilityDrag.dayKey]: { startMinutes: draftStart, endMinutes: nextEnd }
+        };
+      });
+      commitDayDraft(availabilityDrag.dayKey);
+    };
+    const finalize = () => {
+      const dayKey = availabilityDrag.dayKey;
+      commitDayDraft(dayKey);
+      setAvailabilityPreviewByDay((prev) => {
+        if (!prev[dayKey]) return prev;
+        const next = { ...prev };
+        delete next[dayKey];
+        return next;
+      });
+      setAvailabilityDrag(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finalize, { once: true });
+    window.addEventListener("pointercancel", finalize, { once: true });
+    window.addEventListener("blur", finalize, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finalize);
+      window.removeEventListener("pointercancel", finalize);
+      window.removeEventListener("blur", finalize);
+    };
+  }, [
+    availability,
+    availabilityDrag,
+    baseEndMinutes,
+    baseStartMinutes,
+    onAvailabilityDayUpdate
+  ]);
 
   useLayoutEffect(() => {
     if (!scrollRef.current) return;
@@ -224,7 +433,7 @@ export default function ScheduleGrid({
         viewportH < 640 ? Math.max(14, baseMin - 6) : viewportH < 720 ? Math.max(16, baseMin - 4) : baseMin;
       const fit = available / totalHours;
       const base = Math.max(minRowHeight, fit);
-      const scaled = Math.max(12, Math.min(84, base * rowScaleRef.current));
+      const scaled = Math.max(base, Math.min(84, base * rowScaleRef.current));
       setRowHeight(scaled);
     };
 
@@ -254,13 +463,14 @@ export default function ScheduleGrid({
       viewportH < 640 ? Math.max(14, baseMin - 6) : viewportH < 720 ? Math.max(16, baseMin - 4) : baseMin;
     const fit = available / totalHours;
     const base = Math.max(minRowHeight, fit);
-    const scaled = Math.max(12, Math.min(84, base * rowScale));
+    const scaled = Math.max(base, Math.min(84, base * rowScale));
     setRowHeight(scaled);
   }, [compact, rowScale, totalHours]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (availabilityEditMode) return;
     if (!onNavigatePrev && !onNavigateNext) return;
 
     const state = {
@@ -309,7 +519,7 @@ export default function ScheduleGrid({
         const d0 = state.startDist || 0;
         const d1 = dist(event.touches[0], event.touches[1]);
         if (d0 > 0 && d1 > 0) {
-          const next = Math.max(0.6, Math.min(1.6, state.startScale * (d1 / d0)));
+          const next = Math.max(1, Math.min(1.6, state.startScale * (d1 / d0)));
           setRowScale(next);
           // Prevent browser pinch-zoom; keep the gesture scoped to the grid only.
           event.preventDefault();
@@ -352,7 +562,7 @@ export default function ScheduleGrid({
       el.removeEventListener("touchend", onEnd);
       el.removeEventListener("touchcancel", onEnd);
     };
-  }, [onNavigateNext, onNavigatePrev]);
+  }, [availabilityEditMode, onNavigateNext, onNavigatePrev]);
 
   const compactGridTemplate = useMemo(
     () =>
@@ -406,8 +616,11 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
         durationMinutes: entry.durationMinutes,
         reservationId: entry.id,
         reservedEmail: entry.reservedEmail || "",
+        reservedPicture: entry.reservedPicture || "",
+        linkedGroupId: entry.linkedGroupId,
+        linkedRehearsalId: entry.linkedRehearsalId,
         kind: entry.kind,
-        pending: !entry.kind && pendingReservationIdSet.has(entry.id)
+        pending: Boolean(entry.pending) || (!entry.kind && pendingReservationIdSet.has(entry.id))
       }));
 
   const renderColumn = ({ dayKey, dateKey, roomId }: { dayKey: DayKey; dateKey: string; roomId: string }) => {
@@ -440,10 +653,100 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
         nowMinutes <= baseEndMinutes
     );
     const nowTop = showNowLine ? ((nowMinutes! - baseStartMinutes) / 60) * rowHeight : 0;
+    const nowLabel = showNowLine ? formatMinutes(nowMinutes!) : "";
+    const showSingleNowBubble = view === "daily" && rooms.length > 1;
+    const showNowBubble = !showSingleNowBubble || roomId === rooms[0]?.id;
+    const flipNowBubble = showNowLine && nowTop > columnHeight - 24;
+    const dayAvailability = availability?.[dayKey];
+    const dayPreview = availabilityPreviewByDay[dayKey];
+    const hasDateException = Boolean(availabilityDateOffs[dateKey]);
+    const trackKey = `${roomId}:${dateKey}`;
+    const effectiveStart = dayPreview?.startMinutes ?? dayAvailability?.startMinutes ?? baseStartMinutes;
+    const effectiveEnd = dayPreview?.endMinutes ?? dayAvailability?.endMinutes ?? baseEndMinutes;
+    const rangeStart = dayAvailability
+      ? Math.max(baseStartMinutes, Math.min(effectiveStart, baseEndMinutes - 30))
+      : baseStartMinutes;
+    const rangeEnd = dayAvailability
+      ? Math.min(baseEndMinutes, Math.max(effectiveEnd, rangeStart + 30))
+      : baseEndMinutes;
+    const rangeTop = ((rangeStart - baseStartMinutes) / 60) * rowHeight;
+    const rangeHeight = ((rangeEnd - rangeStart) / 60) * rowHeight;
+    const weekdayEnabled = Boolean(dayAvailability?.enabled);
+    const showAvailabilityWindow = dayAvailability ? (weekdayEnabled ? !hasDateException : hasDateException) : false;
+    const showAvailabilityLines = showAvailabilityWindow && availabilityEditMode;
+    const startLabel = `מ-${formatMinutes(rangeStart)}`;
+    const endLabel = `עד ${formatMinutes(rangeEnd)}`;
+    const beginAvailabilityDrag = (handle: "start" | "end") => (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!availabilityEditMode || !dayAvailability) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setAvailabilityPreviewByDay((prev) => (
+        prev[dayKey]
+          ? prev
+          : {
+              ...prev,
+              [dayKey]: {
+                startMinutes: dayAvailability.startMinutes,
+                endMinutes: dayAvailability.endMinutes
+              }
+            }
+      ));
+      setAvailabilityDrag({ trackKey, dayKey, handle });
+    };
 
     return (
       <div className="schedule-column" style={{ height: columnHeight }}>
-        {showNowLine ? <div className="now-line" style={{ top: nowTop }} aria-hidden="true" /> : null}
+        {dayAvailability ? (
+          <>
+            <div className={`availability-overlay availability-bg${availabilityEditMode ? " editable" : ""}`}>
+              {showAvailabilityWindow ? (
+                <div
+                  className="availability-window"
+                  style={{
+                    top: rangeTop,
+                    height: Math.max(2, rangeHeight)
+                  }}
+                />
+              ) : null}
+            </div>
+            <div
+              ref={(node) => {
+                availabilityTrackRefs.current[trackKey] = node;
+              }}
+              className={`availability-overlay availability-lines${availabilityEditMode ? " editable" : ""}`}
+            >
+              {showAvailabilityLines ? (
+                <>
+                  <button
+                    type="button"
+                    className="availability-line top"
+                    style={{ top: rangeTop }}
+                    tabIndex={availabilityEditMode ? 0 : -1}
+                    onPointerDown={beginAvailabilityDrag("start")}
+                    aria-label={`שעת התחלה ${formatMinutes(rangeStart)}`}
+                  >
+                    <span className="availability-line-pill">{startLabel}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="availability-line bottom"
+                    style={{ top: rangeTop + rangeHeight }}
+                    tabIndex={availabilityEditMode ? 0 : -1}
+                    onPointerDown={beginAvailabilityDrag("end")}
+                    aria-label={`שעת סיום ${formatMinutes(rangeEnd)}`}
+                  >
+                    <span className="availability-line-pill">{endLabel}</span>
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+        {showNowLine ? (
+          <div className={`now-line${flipNowBubble ? " flip-bubble" : ""}`} style={{ top: nowTop }} aria-hidden="true">
+            {showNowBubble ? <span className="now-line-pill">{nowLabel}</span> : null}
+          </div>
+        ) : null}
         {slotActionsEnabled
           ? Array.from({ length: totalHours }, (_, index) => baseStartMinutes + index * 60).flatMap((hourStart) => {
               const hourEnd = hourStart + 60;
@@ -463,11 +766,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                     type="button"
                     aria-label="שמירה"
                     onClick={(event) => {
-                      // Prevent the room-column click handler from firing; in "all rooms" we switch
-                      // to the room view only when we actually open an overlay.
                       event.stopPropagation();
                       if (adminMode) {
-                        if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
                         onAdminSlotClick?.({ date: dateKey, day: dayKey, time: slotStart, roomId });
                         return;
                       }
@@ -502,7 +802,6 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                     onClick={(event) => {
                       event.stopPropagation();
                       if (adminMode) {
-                        if (view === "daily" && onRoomSelect) onRoomSelect(roomId, dateKey);
                         onAdminSlotClick?.({ date: dateKey, day: dayKey, time: hourStart, roomId });
                         return;
                       }
@@ -551,15 +850,127 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
           const roomLine = metaLines.length > 1 ? metaLines[metaLines.length - 1] : "";
           const hasRoomLine = Boolean(roomLine) && roomLine !== primaryMeta;
           const hasMeta = Boolean(primaryMeta);
+          const showPendingSpinner =
+            block.type !== "lesson" &&
+            block.pending &&
+            pendingReservationIdSet.has(block.reservationId);
+          const currentUserEmail = (currentUser?.email || "").trim().toLowerCase();
+          const reservationAvatar =
+            block.type === "reserved"
+              ? (() => {
+                  const normalizedEmail = (block.reservedEmail || "").trim().toLowerCase();
+                  const directoryUser = normalizedEmail ? directoryUsersByEmail.get(normalizedEmail) : undefined;
+                  const ownPicture =
+                    normalizedEmail && currentUserEmail && normalizedEmail === currentUserEmail
+                      ? (currentUser?.picture || "").trim()
+                      : "";
+                  const pictureUrl =
+                    (block.reservedPicture || "").trim() ||
+                    (directoryUser?.pictureUrl || "").trim() ||
+                    ownPicture;
+                  const fallbackLabel =
+                    (directoryUser?.name || "").trim() ||
+                    primaryMeta ||
+                    (normalizedEmail ? normalizedEmail.split("@")[0] : "") ||
+                    "שמור";
+                  if (!pictureUrl && !fallbackLabel) return null;
+                  return { pictureUrl, fallbackLabel };
+                })()
+              : null;
+          const rehearsalData =
+            block.type !== "lesson" && block.linkedGroupId && block.linkedRehearsalId
+              ? rehearsalDataByLink.get(
+                  rehearsalLinkKey(block.linkedGroupId, block.linkedRehearsalId)
+                ) || null
+              : null;
+          const rehearsalAvatars =
+            rehearsalData
+              ? (() => {
+                  const participantEmails = rehearsalData.approvedParticipantEmails;
+                  const seen = new Set<string>();
+                  return participantEmails
+                    .map((entry) => entry.trim().toLowerCase())
+                    .filter(Boolean)
+                    .filter((email) => {
+                      if (seen.has(email)) return false;
+                      seen.add(email);
+                      return true;
+                    })
+                    .map((email) => {
+                      const directoryUser = directoryUsersByEmail.get(email);
+                      const ownPicture =
+                        currentUserEmail && email === currentUserEmail
+                          ? (currentUser?.picture || "").trim()
+                          : "";
+                      const pictureUrl = (directoryUser?.pictureUrl || "").trim() || ownPicture;
+                      const fallbackLabel =
+                        (directoryUser?.name || "").trim() ||
+                        (email ? email.split("@")[0] : "") ||
+                        "משתתף";
+                      return {
+                        email,
+                        pictureUrl,
+                        fallbackLabel
+                      };
+                    });
+                })()
+              : [];
+          const currentUserRehearsalStatus =
+            currentUserEmail && rehearsalData
+              ? rehearsalData.participantStatusByEmail.get(currentUserEmail)
+              : undefined;
+          const showPendingRehearsalActions = Boolean(
+            !adminMode &&
+              block.type !== "lesson" &&
+              block.linkedGroupId &&
+              block.linkedRehearsalId &&
+              currentUserRehearsalStatus === "pending" &&
+              onLinkedRehearsalRespond
+          );
+          const hasRehearsalStack = rehearsalAvatars.length > 0;
           // If there's not enough vertical space for a dedicated meta line, render it inline to avoid clipping.
           // (Font sizes are fixed, so a fixed px threshold is more stable than a duration heuristic.)
           const canShowSecondLine = height >= 48;
           const showInlineMeta = showDetails && hasMeta && !canShowSecondLine;
           const showCompactMeta = showCompactDetails && hasMeta;
+          const showCompactPending = showPendingSpinner && height >= 20;
+          const minAvatarHeight = compact
+            ? showCompactMeta || showPendingRehearsalActions
+              ? 34
+              : 24
+            : showInlineMeta || showPendingRehearsalActions
+              ? 42
+              : 56;
+          const canShowBottomAvatar = height >= minAvatarHeight;
+          const showBottomAvatar = canShowBottomAvatar && (hasRehearsalStack || Boolean(reservationAvatar));
+          const rehearsalAvatarPreviewLimit = compact ? 3 : 4;
+          const rehearsalAvatarVisibleTarget =
+            rehearsalAvatars.length === rehearsalAvatarPreviewLimit + 1
+              ? rehearsalAvatarPreviewLimit + 1
+              : rehearsalAvatarPreviewLimit;
+          const baseHiddenCount = Math.max(0, rehearsalAvatars.length - rehearsalAvatarVisibleTarget);
+          const rehearsalAvatarsWithoutSelf =
+            currentUserEmail && baseHiddenCount >= 2
+              ? rehearsalAvatars.filter((avatar) => avatar.email !== currentUserEmail)
+              : rehearsalAvatars;
+          const rehearsalStackSource =
+            currentUserEmail &&
+            baseHiddenCount >= 2 &&
+            rehearsalAvatarsWithoutSelf.length >= rehearsalAvatarVisibleTarget
+              ? rehearsalAvatarsWithoutSelf
+              : rehearsalAvatars;
+          const displayedRehearsalAvatars = rehearsalStackSource.slice(
+            0,
+            Math.min(rehearsalAvatarVisibleTarget, rehearsalStackSource.length)
+          );
+          const rehearsalAvatarHiddenCount = Math.max(
+            0,
+            rehearsalAvatars.length - displayedRehearsalAvatars.length
+          );
           return (
             <div
               key={block.id}
-              className={`schedule-block ${block.type}${block.pending ? " pending" : ""}${compact ? " compact" : ""}`}
+              className={`schedule-block ${block.type}${block.pending ? " pending" : ""}${compact ? " compact" : ""}${showBottomAvatar ? " has-bottom-avatar" : ""}`}
               style={{
                 top,
                 height,
@@ -567,11 +978,6 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                 width: `calc(${widthPercent}% - ${gap}px)`
               }}
               onClick={(event) => {
-                // In "all rooms" view we open overlays *and* switch to the room view in the background.
-                if (view === "daily" && onRoomSelect) {
-                  event.stopPropagation();
-                  onRoomSelect(roomId, dateKey);
-                }
                 if (adminMode) {
                   if (block.type === "lesson") {
                     onAdminLessonClick?.(block.id, dateKey);
@@ -619,10 +1025,42 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                       {block.title}
                       {showInlineMeta ? <span className="cell-meta-inline"> · {primaryMeta}</span> : null}
                     </p>
-                    {block.pending ? <span className="block-pending-spinner" aria-hidden="true" /> : null}
+                    {showPendingSpinner ? (
+                      <div className="block-header-end">
+                        <span className="block-pending-spinner" aria-hidden="true" />
+                      </div>
+                    ) : null}
                   </div>
                   {!showInlineMeta && hasMeta ? <p className="cell-meta">{primaryMeta}</p> : null}
                   {hasRoomLine ? <p className="cell-room">{roomLine}</p> : null}
+                  {showPendingRehearsalActions ? (
+                    <div className="block-rehearsal-actions">
+                      <button
+                        type="button"
+                        className="cell-action icon-button rehearsal decline"
+                        aria-label="דחייה"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "declined");
+                        }}
+                      >
+                        <CloseIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="cell-action icon-button rehearsal approve"
+                        aria-label="אישור"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "approved");
+                        }}
+                      >
+                        <ApproveIcon />
+                      </button>
+                    </div>
+                  ) : null}
                   {interactive && block.type === "reserved" && !block.pending && currentUser?.allowed && block.reservedEmail === currentUser.email ? (
                     <button
                       className="cell-action icon-button corner"
@@ -640,8 +1078,77 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
               ) : null}
               {showCompactDetails ? (
                 <div className="compact-lines">
-                  <div className="compact-main">{block.title}</div>
-                  {showCompactMeta ? <div className="compact-sub">{block.meta}</div> : null}
+                  <div className="compact-main-row">
+                    <div className="compact-main">{block.title}</div>
+                    {showCompactPending ? (
+                      <div className="compact-main-end">
+                        {showCompactPending ? <span className="block-pending-spinner" aria-hidden="true" /> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  {showCompactMeta ? <div className="compact-sub compact-sub-primary">{primaryMeta}</div> : null}
+                  {showCompactMeta && hasRoomLine ? <div className="compact-sub compact-sub-room">{roomLine}</div> : null}
+                  {showPendingRehearsalActions ? (
+                    <div className="block-rehearsal-actions compact">
+                      <button
+                        type="button"
+                        className="cell-action icon-button rehearsal decline"
+                        aria-label="דחייה"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "declined");
+                        }}
+                      >
+                        <CloseIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="cell-action icon-button rehearsal approve"
+                        aria-label="אישור"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "approved");
+                        }}
+                      >
+                        <ApproveIcon />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {showBottomAvatar ? (
+                <div className={`schedule-block-avatar-anchor${compact ? " compact" : ""}`} aria-hidden="true">
+                  {hasRehearsalStack ? (
+                    <div className={`schedule-avatar-stack${compact ? " compact" : ""}`}>
+                      {displayedRehearsalAvatars.map((avatar, index) => (
+                        <span
+                          key={`stack-${block.id}-${avatar.email}`}
+                          className="schedule-avatar-stack-item"
+                          style={{ zIndex: index + 1 }}
+                        >
+                          <ReservationAvatar
+                            pictureUrl={avatar.pictureUrl}
+                            fallbackLabel={avatar.fallbackLabel}
+                            compact={compact}
+                            className="stacked"
+                          />
+                        </span>
+                      ))}
+                      {rehearsalAvatarHiddenCount >= 2 ? (
+                        <span className="schedule-avatar-stack-more">
+                          +{rehearsalAvatarHiddenCount}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : reservationAvatar ? (
+                    <ReservationAvatar
+                      pictureUrl={reservationAvatar.pictureUrl}
+                      fallbackLabel={reservationAvatar.fallbackLabel}
+                      compact={compact}
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -669,7 +1176,7 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
 
   if (view === "daily") {
     return (
-      <section className={`schedule${compact ? " compact" : ""}`}>
+      <section className={`schedule${compact ? " compact" : ""}${availabilityEditMode ? " availability-edit" : ""}`}>
         <div className={`schedule-shell${showHeaders ? " has-headers" : ""}`}>
           {showHeaders ? (
             <>
@@ -681,20 +1188,33 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                 }}
               >
                 {rooms.map((room) => (
-                  <button
+                  <div
                     key={room.id}
-                    className={`grid-header${onRoomSelect ? " clickable" : ""}`}
-                    type="button"
-                    onClick={() => onRoomSelect?.(room.id, selectedDate)}
+                    className={`grid-header room-header${onRoomSelect ? " clickable" : ""}`}
                   >
-                    <span>{room.shortName || room.name}</span>
-                  </button>
+                    {onRoomSelect ? (
+                      <button
+                        type="button"
+                        className="grid-header-main-button"
+                        onClick={() => onRoomSelect(room.id, selectedDate)}
+                        aria-label={`מעבר לחדר ${room.name}`}
+                      >
+                        <span>{room.shortName || room.name}</span>
+                      </button>
+                    ) : (
+                      <span>{room.shortName || room.name}</span>
+                    )}
+                  </div>
                 ))}
               </div>
               <div className="time-header" aria-hidden="true" />
             </>
           ) : null}
-          <div className="scroll-area schedule-scroll" ref={scrollRef} style={gridStyle}>
+          <div
+            className={`scroll-area schedule-scroll${availabilityEditMode ? " edit-mode" : ""}`}
+            ref={scrollRef}
+            style={gridStyle}
+          >
             <div className="schedule-scroll-inner">
               <div
                 className="columns-body"
@@ -707,7 +1227,6 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                   <div
                     key={room.id}
                     className="room-column"
-                    onClick={() => onRoomSelect?.(room.id, selectedDate)}
                   >
                     {renderColumn({ dayKey: selectedDayKey, dateKey: selectedDate, roomId: room.id })}
                   </div>
@@ -723,7 +1242,7 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
   }
 
   return (
-    <section className={`schedule${compact ? " compact" : ""}`}>
+    <section className={`schedule${compact ? " compact" : ""}${availabilityEditMode ? " availability-edit" : ""}`}>
       <div className={`schedule-shell${showHeaders ? " has-headers" : ""}`}>
         {showHeaders ? (
           <>
@@ -734,28 +1253,73 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                   compactGridTemplate ?? `repeat(${weekDates.length}, minmax(var(--schedule-col-min), 1fr))`
               }}
             >
-              {weekDates.map((day) => (
-                <button
-                  key={day.key}
-                  className={`grid-header${onDateSelect ? " clickable" : ""}`}
-                  type="button"
-                  onClick={() => onDateSelect?.(day.dateKey)}
-                >
-                  <div>
-                    {day.dateKey === todayDateKey
-                      ? "היום"
-                      : day.dateKey === tomorrowDateKey
-                        ? "מחר"
-                        : day.label}
+              {weekDates.map((day) => {
+                const weekdayEnabled = Boolean(availability?.[day.key]?.enabled);
+                const dayLabel = availabilityEditMode
+                  ? day.label
+                  : day.dateKey === todayDateKey
+                    ? "היום"
+                    : day.dateKey === tomorrowDateKey
+                      ? "מחר"
+                      : day.label;
+                return (
+                  <div
+                    key={day.key}
+                    className={`grid-header weekday-header${onDateSelect && !availabilityEditMode ? " clickable" : ""}${availabilityEditMode ? " availability-editable" : ""}`}
+                  >
+                    {onDateSelect && !availabilityEditMode ? (
+                      <button
+                        type="button"
+                        className="grid-header-main-button"
+                        onClick={() => onDateSelect(day.dateKey)}
+                      >
+                        <div className="grid-header-main">
+                          <div>{dayLabel}</div>
+                          {!availabilityEditMode ? <div className="grid-date">{day.shortDate}</div> : null}
+                        </div>
+                      </button>
+                    ) : (
+                      <div className="grid-header-main">
+                        <div>{dayLabel}</div>
+                        {!availabilityEditMode ? <div className="grid-date">{day.shortDate}</div> : null}
+                      </div>
+                    )}
+                    {availabilityEditMode && onAvailabilityDateOffToggle && onAvailabilityDayUpdate ? (
+                      <div
+                        className="availability-header-controls"
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className={`availability-header-button ${weekdayEnabled ? "active" : ""}`}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onAvailabilityDayUpdate(day.key, { enabled: !weekdayEnabled });
+                          }}
+                          aria-pressed={weekdayEnabled}
+                          aria-label="זמינות"
+                        >
+                          <span className={`availability-header-check ${weekdayEnabled ? "active" : ""}`} aria-hidden="true">
+                            ✓
+                          </span>
+                          <span className="availability-header-label">בקמפוס</span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="grid-date">{day.shortDate}</div>
-                </button>
-              ))}
+                );
+              })}
             </div>
             <div className="time-header" aria-hidden="true" />
           </>
         ) : null}
-        <div className="scroll-area schedule-scroll" ref={scrollRef} style={gridStyle}>
+        <div
+          className={`scroll-area schedule-scroll${availabilityEditMode ? " edit-mode" : ""}`}
+          ref={scrollRef}
+          style={gridStyle}
+        >
           <div className="schedule-scroll-inner">
             <div
               className="columns-body"

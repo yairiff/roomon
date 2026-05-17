@@ -1,5 +1,5 @@
 import { useMemo, type Dispatch, type RefObject, type SetStateAction } from "react";
-import { CalendarIcon, ChevronLeftIcon, ChevronRightIcon, RoomIcon } from "../../../components/Icons";
+import { ChevronLeftIcon, ChevronRightIcon, RoomIcon } from "../../../components/Icons";
 import type { Room } from "../../../types/schedule";
 
 type ScheduleTopBarSubtitleProps = {
@@ -12,6 +12,7 @@ type ScheduleTopBarSubtitleProps = {
   onPrev: () => void;
   onNext: () => void;
   onOpenDatePicker: () => void;
+  onToggleAllRooms: () => void;
   dateInputRef: RefObject<HTMLInputElement>;
   setAllRooms: Dispatch<SetStateAction<boolean>>;
   setRoomMode: Dispatch<SetStateAction<"day" | "week">>;
@@ -29,12 +30,14 @@ export default function ScheduleTopBarSubtitle({
   onPrev,
   onNext,
   onOpenDatePicker,
+  onToggleAllRooms,
   dateInputRef,
   setAllRooms,
   setRoomMode,
   setSelectedRoom,
   setSelectedDate
 }: ScheduleTopBarSubtitleProps) {
+  const ALL_ROOMS_VALUE = "__all_rooms__";
   const roomOptions = useMemo(
     () => rooms.map((room) => ({ id: room.id, label: room.name || room.shortName || room.id })),
     [rooms]
@@ -49,20 +52,21 @@ export default function ScheduleTopBarSubtitle({
     setSelectedRoom(roomIdList[next]);
   };
 
-  const roomControl = allRooms ? (
-    <button type="button" className="top-bar-room-all" onClick={() => setAllRooms(false)} aria-label="בחירת חדר">
-      כל החדרים
-    </button>
-  ) : (
+  const roomControl = (
     <label className="top-bar-select inline no-caret">
       <span className="sr-only">חדר</span>
       <select
-        value={selectedRoom}
+        value={allRooms ? ALL_ROOMS_VALUE : selectedRoom}
         onChange={(event) => {
+          if (event.target.value === ALL_ROOMS_VALUE) {
+            setAllRooms(true);
+            return;
+          }
           setAllRooms(false);
           setSelectedRoom(event.target.value);
         }}
       >
+        <option value={ALL_ROOMS_VALUE}>כל החדרים</option>
         {roomOptions.map((room) => (
           <option key={room.id} value={room.id}>
             {room.label}
@@ -78,19 +82,32 @@ export default function ScheduleTopBarSubtitle({
         <div className="top-bar-field schedule-date">
           <div className="top-bar-field-hints">
             <span className="top-bar-field-hint">תאריך</span>
-            <button
-              type="button"
-              className="top-bar-mode-mini"
-              onClick={() => {
-                setAllRooms(false);
-                setRoomMode((prev) => (prev === "day" ? "week" : "day"));
-              }}
-              aria-pressed={roomMode === "week"}
-              aria-label="החלפת תצוגה"
-            >
-              <CalendarIcon />
-              <span>תצוגה שבועית</span>
-            </button>
+            <div className="top-bar-mode-group" role="tablist" aria-label="תצוגת מערכת">
+              <button
+                type="button"
+                className="top-bar-mode-mini"
+                aria-pressed={roomMode === "day"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setAllRooms(false);
+                  setRoomMode("day");
+                }}
+              >
+                יומי
+              </button>
+              <button
+                type="button"
+                className="top-bar-mode-mini"
+                aria-pressed={roomMode === "week"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setAllRooms(false);
+                  setRoomMode("week");
+                }}
+              >
+                שבועי
+              </button>
+            </div>
           </div>
           <div className="top-bar-date-pill schedule">
             <button type="button" className="icon-button inline" onClick={onPrev} aria-label="הקודם">
@@ -118,13 +135,7 @@ export default function ScheduleTopBarSubtitle({
             <button
               type="button"
               className="top-bar-mode-mini"
-              onClick={() => {
-                setAllRooms((prev) => {
-                  const next = !prev;
-                  if (next) setRoomMode("day");
-                  return next;
-                });
-              }}
+              onClick={onToggleAllRooms}
               aria-pressed={allRooms}
               aria-label="תצוגת כל החדרים"
             >
@@ -132,7 +143,7 @@ export default function ScheduleTopBarSubtitle({
               <span>כל החדרים</span>
             </button>
           </div>
-          <div className="top-bar-room-pill">
+          <div className="top-bar-date-pill schedule top-bar-room-pill">
             <button type="button" className="icon-button inline" onClick={() => shiftRoom(-1)} aria-label="חדר קודם">
               <ChevronRightIcon />
             </button>
@@ -146,4 +157,3 @@ export default function ScheduleTopBarSubtitle({
     </div>
   );
 }
-

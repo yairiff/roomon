@@ -1,10 +1,15 @@
 import type { Reservation, ReservationMap } from "../types/reservations";
 import type { User } from "../types/auth";
 import type { MySchedulePin } from "../types/mySchedule";
+import { defaultUserAvailability } from "./collaboration";
+import type { AvailabilityDateOffs, UserAvailability } from "../types/collaboration";
 
 const RESERVATION_KEY = "rimon_reservations_by_date_v1";
 const USER_KEY = "rimon_user_v1";
 const MY_SCHEDULE_PINS_KEY = "rimon_my_schedule_pins_v1";
+const AVAILABILITY_KEY = "rimon_availability_v1";
+const AVAILABILITY_DATE_OFFS_KEY = "rimon_availability_date_offs_v1";
+const ACTIVE_GROUP_KEY = "rimon_active_group_v1";
 
 export function loadReservationMap(): ReservationMap {
   try {
@@ -64,4 +69,58 @@ export function loadMySchedulePins(email: string): MySchedulePin[] {
 export function saveMySchedulePins(email: string, pins: MySchedulePin[]) {
   const key = `${MY_SCHEDULE_PINS_KEY}:${email.toLowerCase()}`;
   localStorage.setItem(key, JSON.stringify(pins));
+}
+
+export function loadUserAvailability(email: string): UserAvailability {
+  try {
+    const key = `${AVAILABILITY_KEY}:${email.toLowerCase()}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return defaultUserAvailability();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return defaultUserAvailability();
+    return parsed as UserAvailability;
+  } catch {
+    return defaultUserAvailability();
+  }
+}
+
+export function saveUserAvailability(email: string, availability: UserAvailability) {
+  const key = `${AVAILABILITY_KEY}:${email.toLowerCase()}`;
+  localStorage.setItem(key, JSON.stringify(availability));
+}
+
+export function loadUserAvailabilityDateOffs(email: string): AvailabilityDateOffs {
+  try {
+    const key = `${AVAILABILITY_DATE_OFFS_KEY}:${email.toLowerCase()}`;
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: AvailabilityDateOffs = {};
+    Object.entries(parsed as Record<string, unknown>).forEach(([dateKey, value]) => {
+      if (!dateKey) return;
+      if (value) out[dateKey] = true;
+    });
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveUserAvailabilityDateOffs(email: string, dateOffs: AvailabilityDateOffs) {
+  const key = `${AVAILABILITY_DATE_OFFS_KEY}:${email.toLowerCase()}`;
+  localStorage.setItem(key, JSON.stringify(dateOffs));
+}
+
+export function loadActiveGroupId(email: string): string {
+  try {
+    const key = `${ACTIVE_GROUP_KEY}:${email.toLowerCase()}`;
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveActiveGroupId(email: string, groupId: string) {
+  const key = `${ACTIVE_GROUP_KEY}:${email.toLowerCase()}`;
+  localStorage.setItem(key, groupId || "");
 }

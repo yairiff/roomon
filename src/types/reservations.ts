@@ -11,6 +11,9 @@ export type Reservation = {
   reservedPhone?: string;
   reservedPicture?: string;
   privateDescription?: string;
+  linkedGroupId?: string;
+  linkedRehearsalId?: string;
+  pending?: boolean;
   kind?: "special" | "exam" | "closed";
 };
 

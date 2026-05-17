@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { httpsCallable } from "firebase/functions";
+import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { rimonScheduleConfig } from "../../config";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
 import { useLessons } from "../../hooks/useLessons";
@@ -7,7 +8,7 @@ import { useReservations } from "../../hooks/useReservations";
 import { useRooms } from "../../hooks/useRooms";
 import { useScheduleSettings } from "../../hooks/useScheduleSettings";
 import { useLessonOverrides } from "../../hooks/useLessonOverrides";
-import { functions } from "../../lib/firebase";
+import { functions, storage } from "../../lib/firebase";
 import type { User } from "../../types/auth";
 import type { LessonRecord, RoomRecord, DirectoryUser } from "../../types/admin";
 import type { DayKey } from "../../types/schedule";
@@ -639,6 +640,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     email: "",
     name: "",
     role: "student",
+    betaUser: false,
     phone: "",
     cohortStartYear: getAcademicYearStartYear()
   });
@@ -660,6 +662,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     id: "",
     name: "",
     shortName: "",
+    imageUrl: "",
+    rehearsalSuitable: false,
+    recordingSuitable: false,
     openMinutes: rimonScheduleConfig.startHour * 60,
     closeMinutes: rimonScheduleConfig.endHour * 60,
     sortOrder: 0
@@ -1073,16 +1078,85 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     }
   };
 
-  const handleUpsertRoom = async (room: RoomRecord) => {
+  const handleUpsertRoom = async (
+    room: RoomRecord,
+    imageFile?: File | null
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
     const existing = roomsRaw.find((entry) => entry.id === room.id);
+    const previousImageUrl = (existing?.imageUrl || "").trim();
+    const normalizedImageUrl = (room.imageUrl || "").trim();
+    const normalizeExt = (value: string) => {
+      const lower = value.toLowerCase();
+      if (lower.includes("png")) return "png";
+      if (lower.includes("webp")) return "webp";
+      if (lower.includes("gif")) return "gif";
+      return "jpg";
+    };
+    const removeStorageObjectByUrl = async (url: string) => {
+      if (!storage || !url) return;
+      try {
+        await deleteObject(ref(storage, url));
+      } catch {
+        // best effort cleanup
+      }
+    };
+    let finalImageUrl = normalizedImageUrl;
+    let uploadedPath = "";
     try {
+      if (imageFile && storage) {
+        const ext = normalizeExt(imageFile.type || imageFile.name || "");
+        uploadedPath = `room-banners/${encodeURIComponent(room.id)}.${ext}`;
+        const objectRef = ref(storage, uploadedPath);
+        await uploadBytes(objectRef, imageFile, {
+          contentType: imageFile.type || "image/jpeg",
+          cacheControl: "public,max-age=3600"
+        });
+        finalImageUrl = await getDownloadURL(objectRef);
+      }
       await upsertRoom({
         ...room,
+        imageUrl: finalImageUrl || undefined,
         syncSource: existing?.syncSource || room.syncSource || "manual"
       });
+      if (previousImageUrl && !finalImageUrl) {
+        await removeStorageObjectByUrl(previousImageUrl);
+      } else if (
+        previousImageUrl &&
+        finalImageUrl &&
+        previousImageUrl !== finalImageUrl &&
+        (!uploadedPath || !previousImageUrl.includes(`/o/${encodeURIComponent(uploadedPath)}`))
+      ) {
+        await removeStorageObjectByUrl(previousImageUrl);
+      }
       showToast("החדר נשמר.");
-    } catch {
-      showToast("שמירת חדר נכשלה.", "error");
+      return { ok: true };
+    } catch (error) {
+      console.error("room_save_failed", error);
+      const message =
+        typeof error === "object" && error && "message" in error
+          ? String((error as { message?: unknown }).message || "")
+          : "";
+      const lowered = message.toLowerCase();
+      if (
+        lowered.includes("cors") ||
+        lowered.includes("preflight") ||
+        lowered.includes("err_failed") ||
+        lowered.includes("network request failed") ||
+        lowered.includes("failed to fetch")
+      ) {
+        const corsError =
+          "העלאת תמונה נחסמה בדומיין הנוכחי (CORS). יש לאשר את סביבת הפיתוח ב-Storage CORS או להעלות מפרודקשן.";
+        showToast(corsError, "error");
+        return { ok: false, error: corsError };
+      }
+      if (lowered.includes("permission") || lowered.includes("unauthorized")) {
+        const permissionError = "שמירת חדר נכשלה: חסרות הרשאות כתיבה.";
+        showToast(permissionError, "error");
+        return { ok: false, error: permissionError };
+      }
+      const genericError = "שמירת חדר נכשלה.";
+      showToast(genericError, "error");
+      return { ok: false, error: genericError };
     }
   };
 
@@ -2581,6 +2655,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 email: "",
                 name: "",
                 role: "student",
+                betaUser: false,
                 phone: "",
                 cohortStartYear: currentAcademicYear
               })
@@ -2633,6 +2708,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 id: "",
                 name: "",
                 shortName: "",
+                imageUrl: "",
+                rehearsalSuitable: false,
+                recordingSuitable: false,
                 openMinutes: rimonScheduleConfig.startHour * 60,
                 closeMinutes: rimonScheduleConfig.endHour * 60,
                 sortOrder: 0

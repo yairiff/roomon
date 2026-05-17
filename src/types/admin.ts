@@ -7,6 +7,7 @@ export type DirectoryUser = {
   email: string;
   name: string;
   role: UserRole;
+  betaUser?: boolean;
   themePreference?: "light" | "dark";
   phone?: string;
   pictureUrl?: string;
@@ -27,6 +28,9 @@ export type RoomRecord = {
   id: string;
   name: string;
   shortName: string;
+  imageUrl?: string;
+  rehearsalSuitable?: boolean;
+  recordingSuitable?: boolean;
   apiName?: string;
   apiShortName?: string;
   externalId?: string;

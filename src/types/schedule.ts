@@ -26,6 +26,9 @@ export type Room = {
   name: string;
   shortName: string;
   externalId?: string;
+  imageUrl?: string;
+  rehearsalSuitable?: boolean;
+  recordingSuitable?: boolean;
 };
 
 export type ScheduleConfig = {

@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import type { ReserveRequest } from "../../../types/reservations";
+import type { DirectoryUser } from "../../../types/admin";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import { AddIcon, ChevronLeftIcon, GroupsIcon } from "../../../components/Icons";
+import GroupCreateOverlay from "../components/GroupCreateOverlay";
+
+const initialsFromLabel = (label: string) => {
+  const parts = label.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  return (parts[0] || "?").slice(0, 2).toUpperCase();
+};
 
 export type ReserveConfirmOverlayProps = {
   open: boolean;
@@ -21,9 +30,27 @@ export type ReserveConfirmOverlayProps = {
   limitHoursPerDayTotal: number;
   limitHoursPerWeekTotal: number;
   limitMaxDaysForward: number;
+  groupOptions?: Array<{
+    id: string;
+    name: string;
+    memberCount?: number;
+    members?: Array<{ email: string; name: string; pictureUrl?: string }>;
+  }>;
+  directoryUsers?: DirectoryUser[];
+  currentEmail?: string;
+  onCreateGroup?: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
+  linkedGroupName?: string;
+  initialLinkToGroup?: boolean;
+  initialGroupId?: string;
   mode?: "create" | "edit";
   onRelease?: () => void;
-  onConfirm: (startMinutes: number, durationMinutes: number, privateDescription?: string) => void;
+  onConfirm: (
+    startMinutes: number,
+    durationMinutes: number,
+    privateDescription?: string,
+    linkedGroupId?: string,
+    rehearsalName?: string
+  ) => void;
   onClose: () => void;
 };
 
@@ -44,6 +71,13 @@ export default function ReserveConfirmOverlay({
   limitHoursPerDayTotal,
   limitHoursPerWeekTotal,
   limitMaxDaysForward,
+  groupOptions = [],
+  directoryUsers = [],
+  currentEmail,
+  onCreateGroup,
+  linkedGroupName,
+  initialLinkToGroup = false,
+  initialGroupId = "",
   mode = "create",
   onRelease,
   onConfirm,
@@ -54,15 +88,75 @@ export default function ReserveConfirmOverlay({
   const [endMinutes, setEndMinutes] = useState(initialStart + initialDuration);
   const [privateDescription, setPrivateDescription] = useState(initialPrivateDescription);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [linkToGroup, setLinkToGroup] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false);
+  const [groupPickerSearch, setGroupPickerSearch] = useState("");
+  const [createGroupOverlayOpen, setCreateGroupOverlayOpen] = useState(false);
+  const [createGroupPendingName, setCreateGroupPendingName] = useState("");
+  const [rehearsalName, setRehearsalName] = useState("");
 
   useEffect(() => {
-    if (open) {
-      setStartMinutes(initialStart);
-      setEndMinutes(initialStart + initialDuration);
-      setPrivateDescription(initialPrivateDescription);
-      setInfoOpen(false);
+    if (!open) return;
+    setStartMinutes(initialStart);
+    setEndMinutes(initialStart + initialDuration);
+    setPrivateDescription(initialPrivateDescription);
+    setInfoOpen(false);
+    setLinkToGroup(Boolean(initialLinkToGroup));
+    setSelectedGroupId(initialGroupId || groupOptions[0]?.id || "");
+    setGroupPickerOpen(false);
+    setGroupPickerSearch("");
+    setCreateGroupOverlayOpen(false);
+    setCreateGroupPendingName("");
+    setRehearsalName("");
+  }, [groupOptions, initialDuration, initialGroupId, initialLinkToGroup, initialPrivateDescription, initialStart, open]);
+
+  useEffect(() => {
+    if (!groupOptions.length) {
+      if (selectedGroupId) setSelectedGroupId("");
+      if (linkToGroup) setLinkToGroup(false);
+      return;
     }
-  }, [open, initialDuration, initialPrivateDescription, initialStart]);
+    if (!groupOptions.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(groupOptions[0].id);
+    }
+  }, [groupOptions, linkToGroup, selectedGroupId]);
+
+  const selectedGroup = useMemo(
+    () => groupOptions.find((group) => group.id === selectedGroupId) || null,
+    [groupOptions, selectedGroupId]
+  );
+  const filteredGroups = useMemo(() => {
+    const q = groupPickerSearch.trim().toLowerCase();
+    if (!q) return groupOptions;
+    return groupOptions.filter((group) => group.name.toLowerCase().includes(q));
+  }, [groupOptions, groupPickerSearch]);
+  const selectedGroupMembersPreview = useMemo(() => {
+    if (!selectedGroup?.members?.length) return [];
+    return selectedGroup.members
+      .map((member) => ({
+        email: (member.email || "").trim().toLowerCase(),
+        name: (member.name || "").trim() || member.email,
+        pictureUrl: (member.pictureUrl || "").trim()
+      }))
+      .filter((member) => Boolean(member.email));
+  }, [selectedGroup?.members]);
+
+  useEffect(() => {
+    if (!createGroupPendingName) return;
+    const normalized = createGroupPendingName.trim().toLowerCase();
+    if (!normalized) {
+      setCreateGroupPendingName("");
+      return;
+    }
+    const matched = [...groupOptions]
+      .filter((group) => group.name.trim().toLowerCase() === normalized)
+      .sort((a, b) => a.name.localeCompare(b.name, "he"));
+    if (!matched.length) return;
+    setSelectedGroupId(matched[0].id);
+    setLinkToGroup(true);
+    setCreateGroupPendingName("");
+  }, [createGroupPendingName, groupOptions]);
 
   const startOptions = useMemo(() => {
     const STEP = 30;
@@ -104,16 +198,29 @@ export default function ReserveConfirmOverlay({
   if (!open || !request) return null;
 
   const durationMinutes = Math.max(0, endMinutes - startMinutes);
+  const linkSelectionInvalid = !linkedGroupName && linkToGroup && !selectedGroupId;
+  const linkedToRehearsal = Boolean(linkedGroupName || linkToGroup);
+  const privateDescriptionForSubmit = linkedToRehearsal ? undefined : privateDescription.trim();
+  const membersCountLabel = selectedGroup
+    ? `${selectedGroup.memberCount || 0} משתתפים`
+    : "בחר הרכב";
+
+  const openCreateGroupOverlay = () => {
+    setGroupPickerOpen(false);
+    setCreateGroupOverlayOpen(true);
+    setCreateGroupPendingName("");
+  };
 
   return (
-    <div className="reserve-overlay" onClick={onClose}>
-      <div
-        className="reserve-menu"
-        onClick={(event) => {
-          event.stopPropagation();
-          setInfoOpen(false);
-        }}
-      >
+    <>
+      <div className="reserve-overlay" onClick={onClose}>
+        <div
+          className="reserve-menu"
+          onClick={(event) => {
+            event.stopPropagation();
+            setInfoOpen(false);
+          }}
+        >
         <p className="reserve-title">{title}</p>
         <p className="reserve-room">{room}</p>
         <p className="reserve-date">{dateLine}</p>
@@ -185,55 +292,230 @@ export default function ReserveConfirmOverlay({
         </div>
 
         <p className="reserve-duration">משך: {formatDurationLabelHe(durationMinutes)}</p>
-        <div className="reserve-field reserve-note-field">
-          <label htmlFor="reserve-private-description" className="reserve-field-hint reserve-note-label">
-            תיאור אישי (רק בשבילך)
-          </label>
-          <textarea
-            id="reserve-private-description"
-            className="reserve-note-input"
-            rows={3}
-            maxLength={180}
-            placeholder="למשל: חזרה לשירימון"
-            value={privateDescription}
-            onChange={(event) => setPrivateDescription(event.target.value)}
-          />
-        </div>
+        {!linkedToRehearsal ? (
+          <div className="reserve-field reserve-note-field">
+            <label htmlFor="reserve-private-description" className="reserve-field-hint reserve-note-label">
+              תיאור אישי (רק בשבילך)
+            </label>
+            <textarea
+              id="reserve-private-description"
+              className="reserve-note-input"
+              rows={3}
+              maxLength={180}
+              placeholder="למשל: חזרה לשירימון"
+              value={privateDescription}
+              onChange={(event) => setPrivateDescription(event.target.value)}
+            />
+          </div>
+        ) : null}
 
-        <div className="reserve-actions">
-          {mode === "edit" ? (
-            <>
-              {onRelease ? (
-                <button className="secondary" type="button" onClick={onRelease}>
-                  שחרור
-                </button>
+          {linkedGroupName ? (
+            <p className="reserve-detail reserve-link-locked">מקושר לחזרה בהרכב: {linkedGroupName}</p>
+          ) : groupOptions.length ? (
+            <div className="reserve-link-panel" dir="rtl">
+              <label className="reserve-link-checkbox">
+                <input
+                  type="checkbox"
+                  checked={linkToGroup}
+                  onChange={(event) => setLinkToGroup(event.target.checked)}
+                />
+                <span>לקשר להרכב וליצור חזרה</span>
+              </label>
+              {linkToGroup ? (
+                <>
+                  <button
+                    type="button"
+                    className="secondary reserve-group-selector"
+                    onClick={() => setGroupPickerOpen(true)}
+                  >
+                    <span className="groups-chat-avatar groups-chat-avatar-group reserve-group-selector-icon" aria-hidden="true">
+                      <GroupsIcon />
+                    </span>
+                    <span className="reserve-group-selector-text">
+                      <strong>{selectedGroup?.name || "בחירת הרכב"}</strong>
+                      <span>{membersCountLabel}</span>
+                    </span>
+                    {selectedGroupMembersPreview.length ? (
+                      <span className="groups-members-stack reserve-group-selector-stack" aria-hidden="true">
+                        {selectedGroupMembersPreview.slice(0, 4).map((member, index) => (
+                          <span
+                            key={`reserve-selected-group-${member.email}`}
+                            className="groups-members-stack-item"
+                            style={{ zIndex: index + 1 }}
+                            title={member.name}
+                          >
+                            {member.pictureUrl ? (
+                              <img src={member.pictureUrl} alt="" loading="lazy" />
+                            ) : (
+                              <span>{initialsFromLabel(member.name)}</span>
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="reserve-group-selector-stack-spacer" aria-hidden="true" />
+                    )}
+                    <ChevronLeftIcon />
+                  </button>
+                  <div className="reserve-field reserve-note-field reserve-rehearsal-name-field">
+                    <label htmlFor="reserve-rehearsal-name" className="reserve-field-hint reserve-note-label">
+                      שם חזרה (אופציונלי)
+                    </label>
+                    <input
+                      id="reserve-rehearsal-name"
+                      type="text"
+                      maxLength={80}
+                      placeholder="לדוגמה: חזרה לשבוע הבא"
+                      value={rehearsalName}
+                      onChange={(event) => setRehearsalName(event.target.value)}
+                    />
+                  </div>
+                </>
               ) : null}
-              <button
-                className="primary"
-                type="button"
-                disabled={durationMinutes < MIN_DURATION}
-                onClick={() => onConfirm(startMinutes, durationMinutes, privateDescription.trim())}
-              >
-                עדכון
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="secondary" type="button" onClick={onClose}>
-                ביטול
-              </button>
-              <button
-                className="primary"
-                type="button"
-                disabled={durationMinutes < MIN_DURATION}
-                onClick={() => onConfirm(startMinutes, durationMinutes, privateDescription.trim())}
-              >
-                אישור
-              </button>
-            </>
-          )}
+            </div>
+          ) : null}
+
+          <div className="reserve-actions">
+            {mode === "edit" ? (
+              <>
+                {onRelease ? (
+                  <button className="secondary" type="button" onClick={onRelease}>
+                    שחרור
+                  </button>
+                ) : null}
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={durationMinutes < MIN_DURATION || linkSelectionInvalid}
+                  onClick={() =>
+                    onConfirm(
+                      startMinutes,
+                      durationMinutes,
+                      privateDescriptionForSubmit,
+                      !linkedGroupName && linkToGroup ? selectedGroupId : undefined,
+                      !linkedGroupName && linkToGroup ? rehearsalName.trim() : undefined
+                    )
+                  }
+                >
+                  עדכון
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="secondary" type="button" onClick={onClose}>
+                  ביטול
+                </button>
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={durationMinutes < MIN_DURATION || linkSelectionInvalid}
+                  onClick={() =>
+                    onConfirm(
+                      startMinutes,
+                      durationMinutes,
+                      privateDescriptionForSubmit,
+                      !linkedGroupName && linkToGroup ? selectedGroupId : undefined,
+                      !linkedGroupName && linkToGroup ? rehearsalName.trim() : undefined
+                    )
+                  }
+                >
+                  אישור
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+      {groupPickerOpen ? (
+        <div className="groups-overlay-backdrop reserve-group-picker-layer" role="presentation" onClick={() => setGroupPickerOpen(false)}>
+          <div className="groups-overlay finder-group-picker-overlay" role="dialog" onClick={(event) => event.stopPropagation()}>
+            <p className="groups-overlay-title">בחירת הרכב</p>
+            <label className="finder-group-search-field">
+              <input
+                type="search"
+                value={groupPickerSearch}
+                placeholder="חיפוש הרכב"
+                onChange={(event) => setGroupPickerSearch(event.target.value)}
+              />
+            </label>
+            <ul className="groups-chat-list finder-group-picker-list">
+              <li key="reserve-group-create">
+                <button
+                  type="button"
+                  className="groups-chat-item finder-group-picker-item finder-group-picker-item-create"
+                  onClick={openCreateGroupOverlay}
+                >
+                  <span className="groups-chat-avatar groups-chat-avatar-group finder-group-create-avatar" aria-hidden="true">
+                    <AddIcon />
+                  </span>
+                  <div className="groups-chat-text">
+                    <p className="groups-chat-title">הרכב חדש</p>
+                    <p className="groups-chat-subtitle finder-group-create-subtitle-placeholder">placeholder</p>
+                  </div>
+                </button>
+              </li>
+              {filteredGroups.map((group) => (
+                <li key={`reserve-group-${group.id}`}>
+                  <button
+                    type="button"
+                    className={`groups-chat-item finder-group-picker-item finder-group-picker-item-group ${group.id === selectedGroupId ? "active" : ""}`}
+                    onClick={() => {
+                      setSelectedGroupId(group.id);
+                      setLinkToGroup(true);
+                      setGroupPickerOpen(false);
+                    }}
+                  >
+                    <span className="groups-chat-avatar groups-chat-avatar-group reserve-group-selector-icon" aria-hidden="true">
+                      <GroupsIcon />
+                    </span>
+                    <div className="groups-chat-text">
+                      <p className="groups-chat-title">{group.name}</p>
+                      <p className="groups-chat-subtitle">{`${group.memberCount || 0} משתתפים`}</p>
+                    </div>
+                    <span className="groups-members-stack reserve-group-selector-stack" aria-hidden="true">
+                      {(group.members || []).slice(0, 4).map((member, index) => (
+                        <span
+                          key={`reserve-group-member-${group.id}-${member.email}`}
+                          className="groups-members-stack-item"
+                          style={{ zIndex: index + 1 }}
+                        >
+                          {(member.pictureUrl || "").trim() ? (
+                            <img src={String(member.pictureUrl)} alt="" loading="lazy" />
+                          ) : (
+                            <span>{initialsFromLabel(member.name || member.email)}</span>
+                          )}
+                        </span>
+                      ))}
+                    </span>
+                    <ChevronLeftIcon />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="groups-overlay-actions">
+              <button type="button" className="chip ghost" onClick={() => setGroupPickerOpen(false)}>
+                סגור
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <GroupCreateOverlay
+        open={createGroupOverlayOpen}
+        users={directoryUsers}
+        currentEmail={currentEmail}
+        onClose={() => setCreateGroupOverlayOpen(false)}
+        onCreateGroup={onCreateGroup}
+        onCreated={(groupId, name) => {
+          setCreateGroupOverlayOpen(false);
+          if (groupId) {
+            setSelectedGroupId(groupId);
+            setLinkToGroup(true);
+            return;
+          }
+          setCreateGroupPendingName(name);
+        }}
+      />
+    </>
   );
 }

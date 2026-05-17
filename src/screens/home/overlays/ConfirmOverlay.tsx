@@ -7,6 +7,7 @@ export type ConfirmOverlayProps = {
   confirmLabel?: string;
   cancelLabel?: string;
   onConfirm: () => void;
+  onCancel?: () => void;
   onClose: () => void;
 };
 
@@ -19,6 +20,7 @@ export default function ConfirmOverlay({
   confirmLabel = "אישור",
   cancelLabel = "ביטול",
   onConfirm,
+  onCancel,
   onClose
 }: ConfirmOverlayProps) {
   if (!open) return null;
@@ -37,7 +39,7 @@ export default function ConfirmOverlay({
           </div>
         ) : null}
         <div className="reserve-actions">
-          <button className="secondary" type="button" onClick={onClose}>
+          <button className="secondary" type="button" onClick={onCancel ?? onClose}>
             {cancelLabel}
           </button>
           <button className="primary" type="button" onClick={onConfirm}>

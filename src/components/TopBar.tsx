@@ -6,6 +6,7 @@ import logoUrl from "../logo.png";
 export type TopBarProps = {
   user: User | null;
   onAuthClick: () => void;
+  onIconClick?: () => void;
   title: ReactNode;
   subtitle?: ReactNode;
   subtitleOptions?: { value: string; label: string }[];
@@ -19,6 +20,8 @@ export type TopBarProps = {
 export default function TopBar({
   user,
   onAuthClick,
+  onIconClick,
+  title,
   subtitle,
   subtitleOptions,
   onSubtitleChange
@@ -27,6 +30,9 @@ export default function TopBar({
   const subtitleNode =
     typeof subtitle === "string" ? <p className="top-bar-subtitle">{subtitle}</p> : subtitle;
   const showSubtitle = Boolean(subtitleNode);
+  const compactTitle =
+    typeof title === "string" || typeof title === "number" ? String(title).trim() : "";
+  const liveMode = compactTitle.length === 0;
   const [avatarError, setAvatarError] = useState(false);
 
   useEffect(() => {
@@ -42,23 +48,45 @@ export default function TopBar({
     return parts[0].slice(0, 2).toUpperCase();
   })();
   return (
-    <header className="top-bar">
+    <header className={`top-bar ${liveMode ? "live-mode" : "page-mode"}`}>
       <div className="top-bar-head">
-        <img className="top-bar-logo" src={logoUrl} alt="רימון" />
-        <button className="avatar-button" onClick={onAuthClick} aria-label="User">
-          {showAvatarImage ? (
-            <img
-              src={user?.picture}
-              alt={user?.name || "User"}
-              loading="lazy"
-              onError={() => setAvatarError(true)}
-            />
-          ) : user ? (
-            <span>{fallbackInitials}</span>
+        <div className="top-bar-head-side top-bar-head-side-start">
+          <button className="avatar-button" onClick={onAuthClick} aria-label="User">
+            {showAvatarImage ? (
+              <img
+                src={user?.picture}
+                alt={user?.name || "User"}
+                loading="lazy"
+                onError={() => setAvatarError(true)}
+              />
+            ) : user ? (
+              <span>{fallbackInitials}</span>
+            ) : (
+              <UserIcon />
+            )}
+          </button>
+        </div>
+        <div className="top-bar-head-main" aria-label="כותרת">
+          {liveMode ? (
+            <img className="top-bar-logo" src={logoUrl} alt="רימון" />
           ) : (
-            <UserIcon />
+            <h1 className="top-bar-title-text">{compactTitle}</h1>
           )}
-        </button>
+        </div>
+        <div className="top-bar-head-side top-bar-head-side-end" aria-hidden={liveMode}>
+          {!liveMode ? (
+            <button
+              type="button"
+              className="top-bar-app-icon-button"
+              onClick={onIconClick}
+              aria-label="מעבר ללייב"
+            >
+              <img className="top-bar-app-icon top-bar-app-icon-square" src="/logo-square.png" alt="" aria-hidden="true" />
+            </button>
+          ) : (
+            <span className="top-bar-head-icon-placeholder" />
+          )}
+        </div>
       </div>
       {hasSubtitleOptions ? (
         <label className="top-bar-select">

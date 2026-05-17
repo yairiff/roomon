@@ -44,11 +44,31 @@ export function useDirectoryUsers(enabled = true) {
                     : typeof raw.tel === "string"
                       ? raw.tel
                       : "";
+          const pictureUrl =
+            typeof raw.pictureUrl === "string"
+              ? raw.pictureUrl
+              : typeof raw.picture === "string"
+                ? raw.picture
+                : typeof raw.photoURL === "string"
+                  ? raw.photoURL
+                  : typeof raw.photoUrl === "string"
+                    ? raw.photoUrl
+                    : "";
+          const pictureRemoved = raw.pictureRemoved === true;
+          const themePreference =
+            raw.themePreference === "dark" || raw.themePreference === "light"
+              ? raw.themePreference
+              : undefined;
+          const betaUser = raw.betaUser === true;
           next.push({
             email,
             name: data.name || "",
             role: data.role || "pending",
+            betaUser,
             phone: phone || (data.phone || ""),
+            pictureUrl: pictureUrl || "",
+            pictureRemoved,
+            themePreference,
             cohortStartYear,
             notes: data.notes || ""
           });
@@ -82,6 +102,7 @@ export function useDirectoryUsers(enabled = true) {
       {
         ...user,
         email,
+        betaUser: user.betaUser === true,
         phone: user.phone || "",
         cohortStartYear: user.cohortStartYear ?? null
       },

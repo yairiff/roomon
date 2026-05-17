@@ -54,15 +54,21 @@ export default function App() {
   });
   const { reservationMap, addReservation, upsertReservation, releaseReservation } = useReservations(reservationsWindow);
   const [authOpen, setAuthOpen] = useState(false);
-  const [topBar, setTopBar] = useState<TopBarContext>({ title: "עכשיו" });
+  const [topBar, setTopBar] = useState<TopBarContext>({ title: "" });
   const [loginPromptOpen, setLoginPromptOpen] = useState(true);
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
   const [view, setView] = useState<ViewMode>("live");
+  const [groupsPendingCount, setGroupsPendingCount] = useState(0);
+  const [navReselect, setNavReselect] = useState<{ view: ViewMode; token: number }>({
+    view: "live",
+    token: 0
+  });
   const isAdminRoute = window.location.pathname.startsWith("/admin");
   const [needsSignup, setNeedsSignup] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
+  const collaborationEnabled = user?.betaUser === true;
 
   const reservationsCount = useMemo(() => {
     // Kept for potential future UI.
@@ -141,6 +147,14 @@ export default function App() {
     setAuthOpen((open) => !open);
   };
 
+  const handleBottomNavChange = (nextView: ViewMode) => {
+    setView(nextView);
+  };
+
+  const handleBottomNavReselect = (nextView: ViewMode) => {
+    setNavReselect((prev) => ({ view: nextView, token: prev.token + 1 }));
+  };
+
   const handleLoginClick = () => {
     setAuthOpen(false);
     setLoginPromptOpen(true);
@@ -211,6 +225,7 @@ export default function App() {
       <TopBar
         user={user}
         onAuthClick={handleAuthClick}
+        onIconClick={() => setView("live")}
         title={topBar.title}
         subtitle={topBar.subtitle}
         subtitleOptions={topBar.subtitleOptions}
@@ -230,7 +245,6 @@ export default function App() {
         onProfileUpdated={(updates) =>
           setUser((prev) => (prev ? { ...prev, ...updates } : prev))
         }
-        onOpenMySchedule={() => setRequestedView("mySchedule")}
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}
         darkMode={darkMode}
@@ -253,10 +267,23 @@ export default function App() {
           onViewChange={setView}
           requestedView={requestedView}
           onRequestedViewHandled={() => setRequestedView(null)}
+          navReselectView={navReselect.view}
+          navReselectToken={navReselect.token}
           adminMode={adminMode}
+          collaborationEnabled={collaborationEnabled}
+          onGroupsPendingCountChange={setGroupsPendingCount}
         />
       </main>
-      {user ? <BottomNav view={view} onChange={setView} locked={!user.allowed} /> : null}
+      {user ? (
+        <BottomNav
+          view={view}
+          onChange={handleBottomNavChange}
+          onReselect={handleBottomNavReselect}
+          locked={!user.allowed}
+          showCollaborationTabs={collaborationEnabled}
+          groupsBadgeCount={groupsPendingCount}
+        />
+      ) : null}
       <LoginOverlay
         open={!user && loginPromptOpen}
         onClose={() => setLoginPromptOpen(false)}

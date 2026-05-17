@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { User } from "../../../types/auth";
 import type { RoomMeta } from "../../../types/admin";
 import type { DayKey, Lesson } from "../../../types/schedule";
@@ -44,6 +44,7 @@ type UseReserveFlowArgs = {
   roomMeta?: Record<string, RoomMeta>;
   reservationPolicy: ReservationPolicy;
   reservationPolicies: ReservationScopedPolicy[];
+  allowedPolicyDayKeys?: DayKey[];
   config: { startHour: number; endHour: number };
   getLessonsForDate: (dateKey: string, dayKey: DayKey) => Lesson[];
   addReservation: (reservation: Reservation) => Promise<boolean>;
@@ -93,6 +94,7 @@ export function useReserveFlow({
   roomMeta,
   reservationPolicy,
   reservationPolicies,
+  allowedPolicyDayKeys = [],
   config,
   getLessonsForDate,
   addReservation,
@@ -103,6 +105,20 @@ export function useReserveFlow({
   checkExternalAvailability
 }: UseReserveFlowArgs) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  const policyDayKeySet = useMemo(() => {
+    const valid = allowedPolicyDayKeys.filter(
+      (dayKey): dayKey is DayKey =>
+        dayKey === "sun" ||
+        dayKey === "mon" ||
+        dayKey === "tue" ||
+        dayKey === "wed" ||
+        dayKey === "thu" ||
+        dayKey === "fri" ||
+        dayKey === "sat"
+    );
+    const fallback: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+    return new Set<DayKey>(valid.length ? valid : fallback);
+  }, [allowedPolicyDayKeys]);
 
   const getPolicyContext = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
@@ -246,6 +262,26 @@ export function useReserveFlow({
     [getPolicyContext]
   );
 
+  const getPolicyDayViolationMessage = useCallback(
+    (dateKey: string, dayKey?: DayKey) => {
+      const resolvedDayKey = dayKey || getDayKeyFromDateKey(dateKey);
+      if (policyDayKeySet.has(resolvedDayKey)) return null;
+      return "לא ניתן לשריין ביום הזה לפי מדיניות המערכת.";
+    },
+    [policyDayKeySet]
+  );
+
+  const getBlockReservationMessage = useCallback(
+    (dateKey: string, roomId: string, startMinutes: number) => {
+      const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
+      if (!effectivePolicy.blockReservations) return null;
+      return appliedPolicyName
+        ? `שריון חסום לפי מדיניות "${appliedPolicyName}".`
+        : "השריון חסום לפי מדיניות המערכת.";
+    },
+    [getPolicyContext]
+  );
+
   const getRemainingMinutes = useCallback(
     (dateKey: string, roomId: string, startMinutes: number, excludeReservationId?: string) => {
       const { effectivePolicy } = getPolicyContext(dateKey, roomId, startMinutes);
@@ -307,7 +343,7 @@ export function useReserveFlow({
       const startDate = parseDateKey(dateKey);
       startDate.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
       const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
-      if (effectivePolicy.minLeadMode === "day_before_time") {
+      if (effectivePolicy.minLeadMode === "day_before_time" || effectivePolicy.minLeadDayBeforeEnabled) {
         const deadline = addDays(parseDateKey(dateKey), -1);
         const minutes = Math.max(0, Math.min(23 * 60 + 59, effectivePolicy.minLeadDayBeforeMinutes));
         deadline.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
@@ -337,6 +373,8 @@ export function useReserveFlow({
       if (requestStart >= maxEnd) return null;
 
       const alignedStart = Math.ceil(requestStart / STEP) * STEP;
+      const { effectivePolicy } = getPolicyContext(request.date, request.roomId, alignedStart);
+      if (effectivePolicy.blockReservations) return null;
       const overlaps = intervals.some((interval) => interval.start < alignedStart + 0.1 && interval.end > alignedStart);
       if (overlaps || alignedStart >= maxEnd) return null;
 
@@ -370,7 +408,7 @@ export function useReserveFlow({
         effectivePolicy: remaining.effectivePolicy
       };
     },
-    [buildIntervals, config.endHour, config.startHour, getRemainingMinutes, roomMeta]
+    [buildIntervals, config.endHour, config.startHour, getPolicyContext, getRemainingMinutes, roomMeta]
   );
 
   const openRoomDay = useCallback(
@@ -385,9 +423,21 @@ export function useReserveFlow({
   );
 
   const handleReserve = useCallback(
-    (request: ReserveRequest) => {
+    (request: ReserveRequest, options?: { keepCurrentView?: boolean }) => {
       if (!currentUser?.allowed) {
         setAuthError("יש להתחבר עם חשבון סטודנט מאושר.");
+        return;
+      }
+
+      const policyDayMessage = getPolicyDayViolationMessage(request.date, request.day);
+      if (policyDayMessage) {
+        showToast(policyDayMessage);
+        return;
+      }
+
+      const blockedMessage = getBlockReservationMessage(request.date, request.roomId, request.time);
+      if (blockedMessage) {
+        showToast(blockedMessage);
         return;
       }
 
@@ -400,12 +450,6 @@ export function useReserveFlow({
       const cutoffMessage = getCutoffViolationMessage(request.date, request.roomId, request.time);
       if (cutoffMessage) {
         showToast(cutoffMessage);
-        return;
-      }
-
-      const limitMessage = getLimitViolationMessage(request.date, request.roomId, request.time, MIN_DURATION);
-      if (limitMessage) {
-        showToast(limitMessage);
         return;
       }
 
@@ -438,21 +482,17 @@ export function useReserveFlow({
         limitMaxDaysForward: effectivePolicy.maxDaysForward
       });
 
-      if (view === "finder") {
-        openRoomDay(request.roomId, request.date);
-        return;
-      }
-      if (view === "room" && allRooms) {
+      if (view === "finder" && !options?.keepCurrentView) {
         openRoomDay(request.roomId, request.date);
       }
     },
     [
-      allRooms,
       currentUser?.allowed,
+      getBlockReservationMessage,
       getAvailability,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
-      getLimitViolationMessage,
+      getPolicyDayViolationMessage,
       openRoomDay,
       setAuthError,
       showToast,
@@ -462,36 +502,48 @@ export function useReserveFlow({
 
   const handleConfirmReserve = useCallback(
     async (draft: ReserveRequest, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
-      if (!currentUser?.allowed) return;
+      if (!currentUser?.allowed) return null;
       const { date, day, roomId } = draft;
       const normalizedDescription = (privateDescription || "").trim();
 
       if (startMinutes % STEP !== 0 || durationMinutes % STEP !== 0) {
         showToast("יש לבחור שעות במרווחים של חצי שעה.");
-        return;
+        return null;
       }
       if (durationMinutes < MIN_DURATION) {
         showToast("משך מינימלי הוא חצי שעה.");
-        return;
+        return null;
+      }
+
+      const policyDayMessage = getPolicyDayViolationMessage(date, day);
+      if (policyDayMessage) {
+        showToast(policyDayMessage);
+        return null;
+      }
+
+      const blockedMessage = getBlockReservationMessage(date, roomId, startMinutes);
+      if (blockedMessage) {
+        showToast(blockedMessage);
+        return null;
       }
 
       const forwardMessage = getForwardLimitViolationMessage(date, roomId, startMinutes);
       if (forwardMessage) {
         showToast(forwardMessage);
-        return;
+        return null;
       }
 
       const cutoffMessage = getCutoffViolationMessage(date, roomId, startMinutes);
       if (cutoffMessage) {
         showToast(cutoffMessage);
-        return;
+        return null;
       }
 
       const roomOpen = config.startHour * 60;
       const roomClose = config.endHour * 60;
       if (startMinutes < roomOpen || startMinutes + durationMinutes > roomClose) {
         setAuthError("השעה מחוץ לשעות הפעילות של החדר.");
-        return;
+        return null;
       }
 
       const dayLessons = getLessonsForDate(date, day);
@@ -502,7 +554,7 @@ export function useReserveFlow({
       });
       if (overlapsLesson) {
         showToast("קיים שיעור חופף.");
-        return;
+        return null;
       }
 
       const overlapsReservation = (reservationMap[date] || []).some((entry) => {
@@ -512,13 +564,13 @@ export function useReserveFlow({
       });
       if (overlapsReservation) {
         showToast("קיים שריון חופף.");
-        return;
+        return null;
       }
 
       const limitMessage = getLimitViolationMessage(date, roomId, startMinutes, durationMinutes);
       if (limitMessage) {
         showToast(limitMessage);
-        return;
+        return null;
       }
 
       const id =
@@ -550,7 +602,7 @@ export function useReserveFlow({
         if (!external.ok) {
           onOptimisticRemove?.(id);
           showToast(external.message || "החדר אינו זמין במערכת החיצונית.", "error");
-          return;
+          return null;
         }
       }
 
@@ -558,20 +610,23 @@ export function useReserveFlow({
       if (!ok) {
         onOptimisticRemove?.(id);
         showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
-        return;
+        return null;
       }
       onOptimisticPendingClear?.(id);
       showToast("השריון אושר ונשמר.", "success");
+      return nextReservation;
     },
     [
       addReservation,
       config.endHour,
       config.startHour,
       currentUser,
+      getBlockReservationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
       getLessonsForDate,
       getLimitViolationMessage,
+      getPolicyDayViolationMessage,
       checkExternalAvailability,
       onOptimisticCreate,
       onOptimisticPendingClear,
@@ -590,7 +645,20 @@ export function useReserveFlow({
       if (!entry || entry.kind) return;
       if (entry.reservedEmail !== currentUser.email) return;
 
+      const dayKey = getDayKeyFromDateKey(dateKey);
       const roomId = entry.roomId;
+      const policyDayMessage = getPolicyDayViolationMessage(dateKey, dayKey);
+      if (policyDayMessage) {
+        showToast(policyDayMessage);
+        return;
+      }
+
+      const blockedMessage = getBlockReservationMessage(dateKey, roomId, entry.time);
+      if (blockedMessage) {
+        showToast(blockedMessage);
+        return;
+      }
+
       const forwardMessage = getForwardLimitViolationMessage(dateKey, roomId, entry.time);
       if (forwardMessage) {
         showToast(forwardMessage);
@@ -603,7 +671,6 @@ export function useReserveFlow({
         return;
       }
 
-      const dayKey = getDayKeyFromDateKey(dateKey);
       const minStart = config.startHour * 60;
       const maxEnd = config.endHour * 60;
 
@@ -667,9 +734,11 @@ export function useReserveFlow({
       config.startHour,
       currentUser?.allowed,
       currentUser?.email,
+      getBlockReservationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
       getLimitViolationMessage,
+      getPolicyDayViolationMessage,
       getRemainingMinutes,
       reservationMap,
       roomMeta,
@@ -679,41 +748,53 @@ export function useReserveFlow({
 
   const handleConfirmEdit = useCallback(
     async (pending: PendingConfirm, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
-      if (!currentUser?.allowed || !pending.reservationId) return;
+      if (!currentUser?.allowed || !pending.reservationId) return false;
       const { date, day, roomId } = pending.request;
       const reservationId = pending.reservationId;
       const normalizedDescription = (privateDescription || "").trim();
 
       if (startMinutes % STEP !== 0 || durationMinutes % STEP !== 0) {
         showToast("יש לבחור שעות במרווחים של חצי שעה.");
-        return;
+        return false;
       }
       if (durationMinutes < MIN_DURATION) {
         showToast("משך מינימלי הוא חצי שעה.");
-        return;
+        return false;
+      }
+
+      const policyDayMessage = getPolicyDayViolationMessage(date, day);
+      if (policyDayMessage) {
+        showToast(policyDayMessage);
+        return false;
+      }
+
+      const blockedMessage = getBlockReservationMessage(date, roomId, startMinutes);
+      if (blockedMessage) {
+        showToast(blockedMessage);
+        return false;
       }
 
       const forwardMessage = getForwardLimitViolationMessage(date, roomId, startMinutes);
       if (forwardMessage) {
         showToast(forwardMessage);
-        return;
+        return false;
       }
 
       const cutoffMessage = getCutoffViolationMessage(date, roomId, startMinutes);
       if (cutoffMessage) {
         showToast(cutoffMessage);
-        return;
+        return false;
       }
 
       const currentEntry = (reservationMap[date] || []).find((item) => item.id === reservationId);
-      if (!currentEntry || currentEntry.kind) return;
-      if (currentEntry.reservedEmail !== currentUser.email) return;
+      if (!currentEntry || currentEntry.kind) return false;
+      if (currentEntry.reservedEmail !== currentUser.email) return false;
 
       const roomOpen = config.startHour * 60;
       const roomClose = config.endHour * 60;
       if (startMinutes < roomOpen || startMinutes + durationMinutes > roomClose) {
         showToast("השעה מחוץ לשעות הפעילות של החדר.");
-        return;
+        return false;
       }
 
       const dayLessons = getLessonsForDate(date, day);
@@ -724,7 +805,7 @@ export function useReserveFlow({
       });
       if (overlapsLesson) {
         showToast("קיים שיעור חופף.");
-        return;
+        return false;
       }
 
       const overlapsReservation = (reservationMap[date] || []).some((entry) => {
@@ -735,20 +816,20 @@ export function useReserveFlow({
       });
       if (overlapsReservation) {
         showToast("קיים שמור חופף.");
-        return;
+        return false;
       }
 
       const limitMessage = getLimitViolationMessage(date, roomId, startMinutes, durationMinutes, reservationId);
       if (limitMessage) {
         showToast(limitMessage);
-        return;
+        return false;
       }
 
       if (checkExternalAvailability) {
         const external = await checkExternalAvailability({ date, roomId, startMinutes, durationMinutes });
         if (!external.ok) {
           showToast(external.message || "החדר אינו זמין במערכת החיצונית.", "error");
-          return;
+          return false;
         }
       }
 
@@ -769,18 +850,21 @@ export function useReserveFlow({
       });
       if (!ok) {
         showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
-        return;
+        return false;
       }
       setPendingConfirm(null);
+      return true;
     },
     [
       config.endHour,
       config.startHour,
       currentUser,
+      getBlockReservationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
       getLessonsForDate,
       getLimitViolationMessage,
+      getPolicyDayViolationMessage,
       reservationMap,
       roomMeta,
       checkExternalAvailability,

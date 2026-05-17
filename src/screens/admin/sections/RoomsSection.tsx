@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { RoomRecord } from "../../../types/admin";
-import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
+import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon, UploadIcon } from "../../../components/Icons";
 import type { BulkState } from "../bulk";
 import ConfirmDialog from "../components/ConfirmDialog";
 import PropsOverlay from "../components/PropsOverlay";
@@ -16,7 +16,10 @@ type RoomsSectionProps = {
   setRoomDraft: Dispatch<SetStateAction<RoomRecord>>;
   toTimeInput: (minutes: number) => string;
   parseTimeInput: (value: string) => number;
-  onUpsert: (room: RoomRecord) => void;
+  onUpsert: (
+    room: RoomRecord,
+    imageFile?: File | null
+  ) => Promise<{ ok: true } | { ok: false; error: string }> | { ok: true } | { ok: false; error: string };
   onReorder: (orderedRooms: RoomRecord[]) => void;
   onRemove: (roomId: string) => void;
   onReset: () => void;
@@ -52,6 +55,19 @@ export default function RoomsSection({
   const [isNewEntry, setIsNewEntry] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [draggingRoomId, setDraggingRoomId] = useState<string>("");
+  const [roomImageFile, setRoomImageFile] = useState<File | null>(null);
+  const [roomImagePreview, setRoomImagePreview] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const roomImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (roomImagePreview.startsWith("blob:")) {
+        URL.revokeObjectURL(roomImagePreview);
+      }
+    };
+  }, [roomImagePreview]);
 
   const filteredRooms = useMemo(() => {
     let list: RoomRecord[] = roomsRaw;
@@ -64,7 +80,7 @@ export default function RoomsSection({
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter((room) => {
-        const haystack = [room.name, room.shortName || "", room.id].join(" ").toLowerCase();
+        const haystack = [room.name, room.shortName || "", room.id, room.imageUrl || ""].join(" ").toLowerCase();
         return haystack.includes(q);
       });
     }
@@ -126,6 +142,10 @@ export default function RoomsSection({
     setRoomDraft({ ...room });
     setIsEditing(true);
     setIsNewEntry(false);
+    setRoomImageFile(null);
+    setRoomImagePreview("");
+    setSubmitError("");
+    setIsSubmitting(false);
   };
 
   const handleNew = () => {
@@ -133,6 +153,10 @@ export default function RoomsSection({
     onReset();
     setIsEditing(true);
     setIsNewEntry(true);
+    setRoomImageFile(null);
+    setRoomImagePreview("");
+    setSubmitError("");
+    setIsSubmitting(false);
   };
 
   const duplicateRoom = (room: RoomRecord) => {
@@ -150,6 +174,10 @@ export default function RoomsSection({
     setRoomDraft(copy);
     setIsEditing(true);
     setIsNewEntry(false);
+    setRoomImageFile(null);
+    setRoomImagePreview("");
+    setSubmitError("");
+    setIsSubmitting(false);
   };
 
   const moveRoom = (fromId: string, toId: string) => {
@@ -283,8 +311,26 @@ export default function RoomsSection({
     setSelectedRoomId(null);
     setIsEditing(false);
     setIsNewEntry(false);
+    setRoomImageFile(null);
+    setRoomImagePreview("");
+    setSubmitError("");
+    setIsSubmitting(false);
     onReset();
   };
+
+  const submitRoom = async () => {
+    setSubmitError("");
+    setIsSubmitting(true);
+    const result = await onUpsert(roomDraft, roomImageFile);
+    if (!result.ok) {
+      setSubmitError(result.error || "שמירת חדר נכשלה.");
+      setIsSubmitting(false);
+      return;
+    }
+    closeEditor();
+  };
+
+  const activeImageUrl = roomImagePreview || (roomDraft.imageUrl || "").trim();
 
   return (
     <section className="admin-section">
@@ -304,7 +350,7 @@ export default function RoomsSection({
             <h3>פרטי חדר</h3>
             {roomStatus ? <span className="admin-meta">{roomStatus}</span> : null}
           </div>
-          <fieldset className="admin-fieldset" disabled={!isEditing}>
+          <fieldset className="admin-fieldset" disabled={!isEditing || isSubmitting}>
             <div className="admin-form-grid">
               <label>
                 מזהה
@@ -331,14 +377,96 @@ export default function RoomsSection({
                   onChange={(event) => setRoomDraft((prev) => ({ ...prev, shortName: event.target.value }))}
                 />
               </label>
+              <label>
+                תמונת באנר (URL)
+                <input
+                  type="url"
+                  value={roomDraft.imageUrl || ""}
+                  placeholder="https://..."
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, imageUrl: event.target.value }))}
+                />
+              </label>
+              <label>
+                תמונת חדר
+                <input
+                  ref={roomImageInputRef}
+                  type="file"
+                  hidden
+                  accept="image/*"
+                  disabled={isSubmitting}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    if (!file) return;
+                    if (!file.type.startsWith("image/")) return;
+                    const maxBytes = 8 * 1024 * 1024;
+                    if (file.size > maxBytes) return;
+                    setRoomImageFile(file);
+                    if (roomImagePreview.startsWith("blob:")) URL.revokeObjectURL(roomImagePreview);
+                    setRoomImagePreview(URL.createObjectURL(file));
+                  }}
+                />
+              </label>
+              <div className="admin-room-image-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={isSubmitting}
+                  onClick={() => roomImageInputRef.current?.click()}
+                >
+                  <UploadIcon />
+                  העלאת תמונה
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    if (roomImagePreview.startsWith("blob:")) URL.revokeObjectURL(roomImagePreview);
+                    setRoomImagePreview("");
+                    setRoomImageFile(null);
+                    setRoomDraft((prev) => ({ ...prev, imageUrl: "" }));
+                    if (roomImageInputRef.current) roomImageInputRef.current.value = "";
+                  }}
+                >
+                  <ReleaseIcon />
+                  הסרה
+                </button>
+              </div>
+              {isSubmitting ? (
+                <p className="admin-meta">{roomImageFile ? "מעלה תמונה ושומר חדר..." : "שומר חדר..."}</p>
+              ) : null}
+              {submitError ? <p className="admin-error">{submitError}</p> : null}
+              {activeImageUrl ? (
+                <div className="admin-room-image-preview">
+                  <img src={activeImageUrl} alt="תמונת חדר" loading="lazy" />
+                </div>
+              ) : null}
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(roomDraft.rehearsalSuitable)}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, rehearsalSuitable: event.target.checked }))}
+                />
+                מתאים לחזרות
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(roomDraft.recordingSuitable)}
+                  onChange={(event) => setRoomDraft((prev) => ({ ...prev, recordingSuitable: event.target.checked }))}
+                />
+                מתאים להקלטות
+              </label>
             </div>
           </fieldset>
           <div className="admin-actions">
             <button
               className="primary"
               type="button"
-              onClick={() => onUpsert(roomDraft)}
-              disabled={!roomDraft.id}
+              onClick={() => {
+                void submitRoom();
+              }}
+              disabled={!roomDraft.id || isSubmitting}
             >
               <ApproveIcon />
               {isNewEntry ? "הוספה" : "עדכון"}
@@ -347,12 +475,17 @@ export default function RoomsSection({
               className="secondary"
               type="button"
               onClick={() => (selectedRoom ? duplicateRoom(selectedRoom) : null)}
-              disabled={!selectedRoom}
+              disabled={!selectedRoom || isSubmitting}
             >
               <DuplicateIcon />
               שכפול
             </button>
-            <button className="danger" type="button" onClick={handleDelete} disabled={!selectedRoomId || selectedRoomIsSynced}>
+            <button
+              className="danger"
+              type="button"
+              onClick={handleDelete}
+              disabled={!selectedRoomId || selectedRoomIsSynced || isSubmitting}
+            >
               <ReleaseIcon />
               מחיקה
             </button>

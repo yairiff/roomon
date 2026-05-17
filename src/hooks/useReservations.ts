@@ -141,6 +141,12 @@ export function useReservations(window: ReservationsWindow = null) {
             ...(reservedPhone ? { reservedPhone } : {}),
             ...(reservedPicture ? { reservedPicture } : {}),
             ...(privateDescription ? { privateDescription } : {}),
+            ...(typeof data.linkedGroupId === "string" && data.linkedGroupId.trim()
+              ? { linkedGroupId: data.linkedGroupId.trim() }
+              : {}),
+            ...(typeof data.linkedRehearsalId === "string" && data.linkedRehearsalId.trim()
+              ? { linkedRehearsalId: data.linkedRehearsalId.trim() }
+              : {}),
             ...(kind ? { kind } : {})
           };
           if (!nextMap[reservation.date]) {

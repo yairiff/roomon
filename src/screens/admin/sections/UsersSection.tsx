@@ -179,6 +179,7 @@ export default function UsersSection({
     setUserDraft({
       ...user,
       role: user.role === "pending" ? "student" : user.role,
+      betaUser: user.betaUser === true,
       phone: user.phone || "",
       cohortStartYear: user.cohortStartYear ?? (user.role === "moderator" ? undefined : currentAcademicYear)
     });
@@ -208,6 +209,7 @@ export default function UsersSection({
       email: "",
       name: user.name ? `${user.name} (עותק)` : "",
       role: user.role === "pending" ? "student" : user.role,
+      betaUser: user.betaUser === true,
       phone: user.phone || "",
       cohortStartYear: user.cohortStartYear
     });
@@ -365,6 +367,16 @@ export default function UsersSection({
                   <option value="moderator">מתאם</option>
                   <option value="admin">מנהל</option>
                 </select>
+              </label>
+              <label className="admin-policy-toggle">
+                <input
+                  type="checkbox"
+                  checked={userDraft.betaUser === true}
+                  onChange={(event) =>
+                    setUserDraft((prev) => ({ ...prev, betaUser: event.target.checked }))
+                  }
+                />
+                משתמש בטא
               </label>
               <label>
                 אימייל
@@ -550,6 +562,7 @@ export default function UsersSection({
                           : "שנתון לא הוגדר"}
                       {" · "}
                       {roleLabel(user.role)}
+                      {user.betaUser ? " · בטא" : ""}
                     </p>
                     <p className="admin-row-meta">{user.email}</p>
                   </div>

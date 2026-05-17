@@ -13,5 +13,8 @@ export type MySchedulePin = {
   title: string;
   meta: string;
   reservedEmail?: string;
+  linkedGroupId?: string;
+  linkedRehearsalId?: string;
+  rehearsalStatus?: "pending" | "approved" | "declined";
   createdAt: number;
 };

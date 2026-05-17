@@ -9,6 +9,7 @@ export type BlockDetailsOverlayProps = {
   lines?: { label: string; value: string }[];
   pinned?: boolean;
   onTogglePin?: () => void;
+  actions?: Array<{ label: string; tone?: "primary" | "secondary" | "danger"; onClick: () => void }>;
   onClose: () => void;
 };
 
@@ -21,6 +22,7 @@ export default function BlockDetailsOverlay({
   lines = [],
   pinned = false,
   onTogglePin,
+  actions = [],
   onClose
 }: BlockDetailsOverlayProps) {
   if (!open) return null;
@@ -60,6 +62,20 @@ export default function BlockDetailsOverlay({
               {pinned ? <PinOnIcon /> : <PinAddIcon />}
               <span>{pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}</span>
             </button>
+          </div>
+        ) : null}
+        {actions.length ? (
+          <div className="reserve-actions reserve-actions-details">
+            {actions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                className={action.tone === "danger" ? "secondary danger" : action.tone === "primary" ? "primary" : "secondary"}
+                onClick={action.onClick}
+              >
+                {action.label}
+              </button>
+            ))}
           </div>
         ) : null}
       </div>

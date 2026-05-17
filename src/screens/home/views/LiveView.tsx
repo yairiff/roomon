@@ -82,9 +82,25 @@ export default function LiveView({
           detailSecondary: ""
         };
       }
+      if (activeReservation.kind === "special") {
+        return {
+          status: "special" as const,
+          label: "אירוע",
+          detailPrimary: activeReservation.reservedBy || "אירוע",
+          detailSecondary: ""
+        };
+      }
+      if (activeReservation.kind === "exam") {
+        return {
+          status: "exam" as const,
+          label: "מבחן",
+          detailPrimary: activeReservation.reservedBy || "מבחן",
+          detailSecondary: ""
+        };
+      }
       return {
         status: "reserved" as const,
-        label: activeReservation.kind === "special" ? "אירוע" : "שמור",
+        label: "שמור",
         detailPrimary: activeReservation.reservedBy || "",
         detailSecondary: ""
       };
@@ -137,7 +153,8 @@ export default function LiveView({
       .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
       .map((lesson) => ({
         start: lesson.startMinutes,
-        label: (lesson.title || "").trim() || "שיעור"
+        label: (lesson.title || "").trim() || "שיעור",
+        secondary: (lesson.teacher || "").trim()
       }));
 
     const reservationStarts = todayReservations
@@ -151,7 +168,8 @@ export default function LiveView({
               ? (entry.reservedBy || "מבחן")
               : entry.kind === "closed"
                 ? (entry.reservedBy || "סגור")
-                : (entry.reservedBy || "שריון")
+                : (entry.reservedBy || "שריון"),
+        secondary: ""
       }));
 
     const upcoming = [...lessonStarts, ...reservationStarts]
@@ -197,16 +215,17 @@ export default function LiveView({
           const nextBusyMinutes = busyUntil ? formatDiffMinutes(busyUntil) : "";
           const nextEventMinutes = nextEvent ? formatDiffMinutes(nextEvent.start) : "";
           const nextLine1 = busyUntil
-            ? `פנוי ב־${formatMinutes(busyUntil)}`
+            ? `מתפנה ב־${formatMinutes(busyUntil)}`
             : nextEvent
-              ? `הבא ב־${formatMinutes(nextEvent.start)}`
+              ? `פנוי עד ${formatMinutes(nextEvent.start)}`
               : "";
           const nextLine2 = busyUntil
             ? (nextBusyMinutes ? `בעוד ${nextBusyMinutes}` : "")
             : nextEvent
-              ? (nextEventMinutes ? `בעוד ${nextEventMinutes}` : "")
+              ? (nextEventMinutes ? `עוד ${nextEventMinutes}` : "")
               : "";
-          const nextEventName = status.status === "empty" ? (nextEvent?.label || "") : "";
+          const nextInlineSep = !busyUntil && nextEvent ? " - " : " · ";
+          const nextEventDetails = "";
           const detailsPrimary = status.detailPrimary.trim();
           const detailsSecondary = status.detailSecondary.trim();
           const hasDetails = Boolean(detailsPrimary || detailsSecondary);
@@ -218,6 +237,11 @@ export default function LiveView({
               onClick={() => onRoomSelect(room.id)}
               type="button"
             >
+              {room.imageUrl ? (
+                <div className="live-room-banner" aria-hidden="true">
+                  <img src={room.imageUrl} alt="" loading="lazy" />
+                </div>
+              ) : null}
               <p className="live-room">{room.name}</p>
 
               <div className="live-subline">
@@ -235,12 +259,19 @@ export default function LiveView({
               ) : null}
               {nextLine1 ? (
                 <p className="live-next">
-                  <span className="live-next-line">{nextLine1}</span>
+                  <span className={`live-next-line${busyUntil ? " live-next-release" : ""}`}>
+                    {nextLine1}
+                    {nextLine2 ? (
+                      <>
+                        <span className="live-next-sep">{nextInlineSep}</span>
+                        <span className="live-next-eta">{nextLine2}</span>
+                      </>
+                    ) : null}
+                  </span>
                   {nextLine2 ? (
-                    <span className="live-next-line sub">
-                      {nextEventName ? <span className="live-next-name">{nextEventName} · </span> : null}
-                      {nextLine2}
-                    </span>
+                    nextEventDetails ? (
+                      <span className="live-next-line sub">{nextEventDetails}</span>
+                    ) : null
                   ) : null}
                 </p>
               ) : <span className="live-next empty" />}

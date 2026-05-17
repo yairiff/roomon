@@ -6,6 +6,7 @@ export type User = {
   themePreference?: "light" | "dark";
   allowed: boolean;
   role?: "admin" | "moderator" | "student" | "pending";
+  betaUser?: boolean;
   phone?: string;
   cohortStartYear?: number;
 };

@@ -15,6 +15,6 @@ export function formatDurationLabelHe(minutes: number): string {
     if (hours === 2) return "שעתיים";
     return `${hours} שעות`;
   }
-  return `${hours.toFixed(2)} שעות`;
+  const normalizedHours = Number(hours.toFixed(2));
+  return `${normalizedHours} שעות`;
 }
-

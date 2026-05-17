@@ -1,5 +1,5 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { ChevronLeftIcon, ChevronRightIcon } from "../../../components/Icons";
+import { ApproveIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, EditIcon } from "../../../components/Icons";
 import { formatShortDate, getWeekNumber } from "../../../lib/date";
 import type { WeekDate } from "../../../lib/date";
 
@@ -14,6 +14,11 @@ type MyScheduleTopBarSubtitleProps = {
   onOpenDatePicker: () => void;
   dateInputRef: RefObject<HTMLInputElement>;
   setSelectedDate: Dispatch<SetStateAction<string>>;
+  availabilityEditMode: boolean;
+  availabilityEditSaving?: boolean;
+  onStartAvailabilityEditMode: () => void;
+  onSaveAvailabilityEditMode: () => void;
+  onCancelAvailabilityEditMode: () => void;
 };
 
 export default function MyScheduleTopBarSubtitle({
@@ -26,7 +31,12 @@ export default function MyScheduleTopBarSubtitle({
   onNext,
   onOpenDatePicker,
   dateInputRef,
-  setSelectedDate
+  setSelectedDate,
+  availabilityEditMode,
+  availabilityEditSaving = false,
+  onStartAvailabilityEditMode,
+  onSaveAvailabilityEditMode,
+  onCancelAvailabilityEditMode
 }: MyScheduleTopBarSubtitleProps) {
   const weekStart = weekDates[0]?.dateKey;
   const weekEnd = weekDates[weekDates.length - 1]?.dateKey;
@@ -41,8 +51,8 @@ export default function MyScheduleTopBarSubtitle({
 
   return (
     <div className="top-bar-schedule">
-      <div className="top-bar-schedule-row one-col">
-        <div className="top-bar-field schedule-date">
+      <div className="top-bar-schedule-row one-col schedule-with-edit">
+        <div className="top-bar-field schedule-date my-schedule-date-field">
           <div className="top-bar-field-hints">
             <span className="top-bar-field-hint">תאריך</span>
             <div className="top-bar-mode-group" role="tablist" aria-label="תצוגת מערכת">
@@ -113,8 +123,59 @@ export default function MyScheduleTopBarSubtitle({
             onChange={(event) => setSelectedDate(event.target.value)}
           />
         </div>
+        <div className="my-schedule-edit-slot">
+          {availabilityEditMode ? (
+            <div className="my-schedule-edit-actions" onPointerDown={(event) => event.stopPropagation()}>
+              <div className="my-schedule-edit-action-wrap">
+                <button
+                  type="button"
+                  className="my-schedule-edit-action save round-only"
+                  onClick={onSaveAvailabilityEditMode}
+                  disabled={availabilityEditSaving}
+                  aria-label="שמור שינויים"
+                >
+                  <span className="my-schedule-edit-round-content">
+                    <ApproveIcon />
+                    <span className="my-schedule-edit-round-text">שמירה</span>
+                  </span>
+                </button>
+              </div>
+              <div className="my-schedule-edit-action-wrap">
+                <button
+                  type="button"
+                  className="my-schedule-edit-action cancel round-only"
+                  onClick={onCancelAvailabilityEditMode}
+                  disabled={availabilityEditSaving}
+                  aria-label="בטל עריכה"
+                >
+                  <span className="my-schedule-edit-round-content">
+                    <CloseIcon />
+                    <span className="my-schedule-edit-round-text">ביטול</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="my-schedule-edit-action-wrap my-schedule-edit-action-wrap-full" onPointerDown={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                className="my-schedule-edit-action start round-only"
+                onClick={() => {
+                  if (myScheduleMode !== "week") setMyScheduleMode("week");
+                  onStartAvailabilityEditMode();
+                }}
+                disabled={availabilityEditSaving}
+                aria-label="עריכת זמינות"
+              >
+                <span className="my-schedule-edit-round-content">
+                  <EditIcon />
+                  <span className="my-schedule-edit-round-text">עריכה</span>
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
-

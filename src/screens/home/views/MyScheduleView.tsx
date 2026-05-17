@@ -9,6 +9,8 @@ import ScheduleGrid from "./ScheduleGrid";
 import Legend from "./Legend";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { weekDays } from "../../../config";
+import type { DirectoryUser } from "../../../types/admin";
+import type { AvailabilityDateOffs, CollaborationGroup, RehearsalParticipant, UserAvailability } from "../../../types/collaboration";
 
 type MyScheduleMode = "day" | "week" | "agenda";
 
@@ -23,6 +25,8 @@ type MyScheduleViewProps = {
   nowMinutes: number;
   weekDates: WeekDate[];
   rooms: Room[];
+  groups: CollaborationGroup[];
+  directoryUsers: DirectoryUser[];
   reservationMap: ReservationMap;
   currentUser: User | null;
   pins: MySchedulePin[];
@@ -35,7 +39,21 @@ type MyScheduleViewProps = {
   endHour: number;
   onNavigatePrev?: () => void;
   onNavigateNext?: () => void;
+  zoomResetToken?: number;
   pendingReservationIds?: string[];
+  availability: UserAvailability;
+  onAvailabilityDayUpdate: (
+    dayKey: DayKey,
+    updates: Partial<{ enabled: boolean; startMinutes: number; endMinutes: number }>
+  ) => void;
+  availabilityDateOffs: AvailabilityDateOffs;
+  onAvailabilityDateOffToggle: (dateKey: string, off: boolean) => void;
+  availabilityEditMode: boolean;
+  onLinkedRehearsalRespond?: (
+    groupId: string,
+    rehearsalId: string,
+    status: RehearsalParticipant["status"]
+  ) => void;
 };
 
 const MY_ROOM_ID = "__my_schedule__";
@@ -79,6 +97,8 @@ export default function MyScheduleView({
   nowMinutes,
   weekDates,
   rooms,
+  groups,
+  directoryUsers,
   reservationMap,
   currentUser,
   pins,
@@ -91,8 +111,16 @@ export default function MyScheduleView({
   endHour,
   onNavigatePrev,
   onNavigateNext,
-  pendingReservationIds
+  zoomResetToken = 0,
+  pendingReservationIds,
+  availability,
+  onAvailabilityDayUpdate,
+  availabilityDateOffs,
+  onAvailabilityDateOffToggle,
+  availabilityEditMode,
+  onLinkedRehearsalRespond
 }: MyScheduleViewProps) {
+  const effectiveAvailabilityEditMode = mode === "week" && availabilityEditMode;
   const email = (currentUser?.email || "").trim().toLowerCase();
 
   const roomName = (roomId: string) => {
@@ -153,6 +181,7 @@ export default function MyScheduleView({
         return;
       }
       if (pin.kind === "closed") {
+        const linkedPending = pin.rehearsalStatus === "pending";
         add({
           id,
           date: pin.dateKey,
@@ -161,7 +190,8 @@ export default function MyScheduleView({
           roomId: MY_ROOM_ID,
           reservedBy: `${pin.title}${pin.meta ? ` · ${pin.meta}` : ""}\n${roomLine}`,
           reservedEmail: "",
-          kind: "closed"
+          kind: "closed",
+          pending: linkedPending
         });
         return;
       }
@@ -187,7 +217,10 @@ export default function MyScheduleView({
         durationMinutes: pin.durationMinutes,
         roomId: MY_ROOM_ID,
         reservedBy: `${reservedBy || "ללא שם"}\n${roomLine}`,
-        reservedEmail: pin.reservedEmail || ""
+        reservedEmail: pin.reservedEmail || "",
+        pending: pin.rehearsalStatus === "pending",
+        linkedGroupId: pin.linkedGroupId,
+        linkedRehearsalId: pin.linkedRehearsalId
       });
     });
 
@@ -393,16 +426,10 @@ export default function MyScheduleView({
   }, [agendaDateKeys, agendaDateSet, email, onEditReservation, onOpenPinned, pins, reservationMap, roomName]);
 
   if (mode === "agenda") {
-    const today = parseDateKey(todayDateKey);
-    const weekdayLabel = new Intl.DateTimeFormat("he-IL", { weekday: "long" }).format(today);
-    const dateLabel = new Intl.DateTimeFormat("he-IL", { day: "2-digit", month: "2-digit" }).format(today);
     const nonEmptyDates = agendaDateKeys.filter((dateKey) => (agendaEntriesByDate.get(dateKey) || []).length > 0);
 
     return (
       <section className="finder my-schedule my-schedule-agenda">
-        <div className="my-schedule-agenda-note">
-          מהיום · {weekdayLabel} {dateLabel}
-        </div>
         <ul className="my-schedule-week">
           {nonEmptyDates.map((dateKey) => {
             const entries = agendaEntriesByDate.get(dateKey) || [];
@@ -491,6 +518,8 @@ export default function MyScheduleView({
   const selectedDayKey = getDayKeyFromDateKey(selectedDate);
   const gridProps = {
     rooms: [myScheduleRoom],
+    groups,
+    directoryUsers,
     reservationMap: syntheticReservations,
     currentUser,
     onReserve: () => {},
@@ -551,6 +580,7 @@ export default function MyScheduleView({
       onOpenPinned(pin);
       onSelectedDateChange(dateKey);
     },
+    onLinkedRehearsalRespond,
     nowMinutes,
     todayDateKey,
     pendingReservationIds
@@ -570,6 +600,12 @@ export default function MyScheduleView({
           footer={<Legend />}
           onNavigatePrev={onNavigatePrev}
           onNavigateNext={onNavigateNext}
+          zoomResetToken={zoomResetToken}
+          availability={availability}
+          availabilityDateOffs={availabilityDateOffs}
+          availabilityEditMode={effectiveAvailabilityEditMode}
+          onAvailabilityDayUpdate={onAvailabilityDayUpdate}
+          onAvailabilityDateOffToggle={onAvailabilityDateOffToggle}
         />
       ) : (
         <ScheduleGrid
@@ -588,6 +624,12 @@ export default function MyScheduleView({
           footer={<Legend />}
           onNavigatePrev={onNavigatePrev}
           onNavigateNext={onNavigateNext}
+          zoomResetToken={zoomResetToken}
+          availability={availability}
+          availabilityDateOffs={availabilityDateOffs}
+          availabilityEditMode={effectiveAvailabilityEditMode}
+          onAvailabilityDayUpdate={onAvailabilityDayUpdate}
+          onAvailabilityDateOffToggle={onAvailabilityDateOffToggle}
         />
       )}
     </section>

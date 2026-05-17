@@ -1,11 +1,12 @@
 import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
-import BookmarkRoundedIcon from "@mui/icons-material/BookmarkRounded";
+import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
 import MeetingRoomRoundedIcon from "@mui/icons-material/MeetingRoomRounded";
 import OnlinePredictionRoundedIcon from "@mui/icons-material/OnlinePredictionRounded";
 import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import RemoveRoundedIcon from "@mui/icons-material/RemoveRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
@@ -32,6 +33,9 @@ import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUnch
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RemoveCircleRoundedIcon from "@mui/icons-material/RemoveCircleRounded";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
+import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
+import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
+import MicRoundedIcon from "@mui/icons-material/MicRounded";
 
 export function CalendarIcon() {
   return <CalendarMonthRoundedIcon fontSize="small" />;
@@ -41,8 +45,8 @@ export function SearchIcon() {
   return <SearchRoundedIcon fontSize="small" />;
 }
 
-export function BookmarkIcon() {
-  return <BookmarkRoundedIcon fontSize="small" />;
+export function ScheduleIcon() {
+  return <ScheduleRoundedIcon fontSize="small" />;
 }
 
 export function RoomIcon() {
@@ -63,6 +67,10 @@ export function ChevronRightIcon() {
 
 export function AddIcon() {
   return <AddRoundedIcon fontSize="small" />;
+}
+
+export function RemoveIcon() {
+  return <RemoveRoundedIcon fontSize="small" />;
 }
 
 export function CloseIcon() {
@@ -169,4 +177,16 @@ export function SelectSomeIcon() {
 
 export function DarkModeIcon() {
   return <DarkModeRoundedIcon fontSize="small" />;
+}
+
+export function GroupsIcon() {
+  return <GroupsRoundedIcon fontSize="small" />;
+}
+
+export function MoreIcon() {
+  return <MoreVertRoundedIcon fontSize="small" />;
+}
+
+export function MicIcon() {
+  return <MicRoundedIcon fontSize="small" />;
 }
