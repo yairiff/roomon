@@ -1,5 +1,5 @@
 import { collection, deleteDoc, doc, onSnapshot, setDoc } from "firebase/firestore";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "../lib/firebase";
 import type { DirectoryUser } from "../types/admin";
 
@@ -54,12 +54,14 @@ export function useDirectoryUsers(enabled = true) {
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [usersReady, setUsersReady] = useState<boolean>(!db);
   const [usersError, setUsersError] = useState<string>("");
+  const sourceDocIdByEmailRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!enabled) {
       setUsers([]);
       setUsersError("");
       setUsersReady(true);
+      sourceDocIdByEmailRef.current = new Map();
       return;
     }
     if (!db) {
@@ -72,22 +74,27 @@ export function useDirectoryUsers(enabled = true) {
     const unsubscribe = onSnapshot(
       usersRef,
       (snapshot) => {
-        const byEmail = new Map<string, { user: DirectoryUser; canonicalDoc: boolean }>();
+        const byEmail = new Map<string, { user: DirectoryUser; canonicalDoc: boolean; sourceDocId: string }>();
         snapshot.forEach((docSnap) => {
           const raw = docSnap.data() as Record<string, unknown>;
           const nextUser = normalizeDirectoryUser(raw, docSnap.id);
           if (!nextUser) return;
           const canonicalDoc = normalizeEmail(docSnap.id) === nextUser.email;
+          const sourceDocId = String(docSnap.id || "").trim();
+          if (!sourceDocId) return;
           const existing = byEmail.get(nextUser.email);
           if (!existing) {
-            byEmail.set(nextUser.email, { user: nextUser, canonicalDoc });
+            byEmail.set(nextUser.email, { user: nextUser, canonicalDoc, sourceDocId });
             return;
           }
           if (existing.canonicalDoc && !canonicalDoc) return;
           if (!existing.canonicalDoc && canonicalDoc) {
-            byEmail.set(nextUser.email, { user: nextUser, canonicalDoc: true });
+            byEmail.set(nextUser.email, { user: nextUser, canonicalDoc: true, sourceDocId });
           }
         });
+        sourceDocIdByEmailRef.current = new Map(
+          Array.from(byEmail.entries()).map(([email, entry]) => [email, entry.sourceDocId])
+        );
         const next = Array.from(byEmail.values()).map((entry) => entry.user);
         next.sort((a, b) => a.email.localeCompare(b.email));
         setUsers(next);
@@ -113,6 +120,7 @@ export function useDirectoryUsers(enabled = true) {
     if (!db) return;
     const email = normalizeEmail(user.email);
     if (!email) return;
+    const targetDocId = sourceDocIdByEmailRef.current.get(email) || email;
     const safeName = String(user.name || "");
     const safeRole = user.role || "pending";
     const safePhone = String(user.phone || "");
@@ -133,7 +141,7 @@ export function useDirectoryUsers(enabled = true) {
       payload.themePreference = user.themePreference;
     }
     await setDoc(
-      doc(db, "users", email),
+      doc(db, "users", targetDocId),
       payload,
       { merge: true }
     );
@@ -141,9 +149,11 @@ export function useDirectoryUsers(enabled = true) {
 
   const removeUser = async (email: string) => {
     if (!db) return;
-    const safe = email.toLowerCase();
+    const safe = normalizeEmail(email);
     if (!safe) return;
-    await deleteDoc(doc(db, "users", safe));
+    const sourceDocId = sourceDocIdByEmailRef.current.get(safe);
+    const docIds = Array.from(new Set([safe, sourceDocId].filter((value): value is string => Boolean(value))));
+    await Promise.all(docIds.map((docId) => deleteDoc(doc(db, "users", docId))));
   };
 
   return {

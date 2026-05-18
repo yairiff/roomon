@@ -1030,8 +1030,10 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     try {
       await upsertUser(user);
       showToast("המשתמש נשמר.");
+      return true;
     } catch {
       showToast("שמירת משתמש נכשלה.", "error");
+      return false;
     }
   };
 

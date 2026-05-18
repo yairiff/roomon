@@ -22,7 +22,7 @@ type UsersSectionProps = {
   userDraft: DirectoryUser;
   setUserDraft: Dispatch<SetStateAction<DirectoryUser>>;
   currentAcademicYear: number;
-  onUpsert: (user: DirectoryUser) => void;
+  onUpsert: (user: DirectoryUser) => Promise<boolean> | boolean;
   onRemove: (email: string) => void;
   onReset: () => void;
   onFilteredUsersChange?: (users: DirectoryUser[]) => void;
@@ -73,6 +73,7 @@ export default function UsersSection({
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNewEntry, setIsNewEntry] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const counts = useMemo(() => {
     const base = {
@@ -303,6 +304,20 @@ export default function UsersSection({
     onReset();
   };
 
+  const handleSave = async () => {
+    if (!userDraft.email || saving) return;
+    setSaving(true);
+    try {
+      const ok = await onUpsert(userDraft);
+      if (ok === false) return;
+      setSelectedEmail(userDraft.email);
+      setIsEditing(false);
+      setIsNewEntry(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const sortLabel: Record<UserSort, string> = {
     name: "שם",
     email: "אימייל",
@@ -430,7 +445,7 @@ export default function UsersSection({
               </label>
             </div>
             <div className="admin-actions">
-              <button className="primary" type="button" onClick={() => onUpsert(userDraft)} disabled={!userDraft.email}>
+              <button className="primary" type="button" onClick={() => { void handleSave(); }} disabled={!userDraft.email || saving}>
                 {isNewEntry ? "הוספה" : "עדכון"}
               </button>
               <button
