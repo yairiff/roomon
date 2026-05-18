@@ -27,6 +27,7 @@ import {
 import { formatMinutes } from "../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../lib/formatDurationHe";
 import { applyLessonOverrides } from "../../lib/lessonOverrides";
+import { buildApprovedQuotaParticipantEmails, getReservationUsageShareForEmail, normalizeEmailList } from "../../lib/quotaUsage";
 import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
 import type { DayKey, Lesson, TimeSlot } from "../../types/schedule";
@@ -322,6 +323,11 @@ export default function HomeScreen({
   });
   const [finderPrefilledGroupId, setFinderPrefilledGroupId] = useState<string>("");
   const [pendingFinderAutoLink, setPendingFinderAutoLink] = useState<{ groupId?: string } | null>(null);
+  const pendingFinderAutoLinkRef = useRef<{ groupId?: string } | null>(null);
+  const setPendingFinderAutoLinkSynced = useCallback((value: { groupId?: string } | null) => {
+    pendingFinderAutoLinkRef.current = value;
+    setPendingFinderAutoLink(value);
+  }, []);
   const [collaboratorProfiles, setCollaboratorProfiles] = useState<CollaboratorProfile[]>([]);
   const [myScheduleAvailabilityEditMode, setMyScheduleAvailabilityEditMode] = useState(false);
   const [groupsTopBarContext, setGroupsTopBarContext] = useState<{
@@ -919,11 +925,11 @@ export default function HomeScreen({
   useEffect(() => {
     if (collaborationAvailable) return;
     setFinderPrefilledGroupId("");
-    setPendingFinderAutoLink(null);
+    setPendingFinderAutoLinkSynced(null);
     setGroupsTopBarContext(null);
     setPendingRehearsalResponse(null);
     setPendingLinkedEdit(null);
-  }, [collaborationAvailable]);
+  }, [collaborationAvailable, setPendingFinderAutoLinkSynced]);
 
   useEffect(() => {
     if (!requestedView) return;
@@ -1572,6 +1578,23 @@ export default function HomeScreen({
     [displayReservationMap]
   );
 
+  const isReservationInPast = useCallback((reservation: Reservation | null | undefined) => {
+    if (!reservation) return true;
+    const reservationStart = parseDateKey(reservation.date);
+    reservationStart.setHours(Math.floor(reservation.time / 60), reservation.time % 60, 0, 0);
+    return Date.now() >= reservationStart.getTime();
+  }, []);
+
+  const canReleaseReservationNow = useCallback(
+    (reservation: Reservation | null | undefined) => {
+      if (!reservation) return false;
+      if (!isReservationInPast(reservation)) return true;
+      showToast("לא ניתן לשחרר שריון בזמן עבר.", "error");
+      return false;
+    },
+    [isReservationInPast, showToast]
+  );
+
   const handleRelease = useCallback(
     (dateKey: string, reservationId: string) => {
       const reservation = findReservationById(dateKey, reservationId);
@@ -1579,6 +1602,7 @@ export default function HomeScreen({
         setPendingRelease({ dateKey, reservationId });
         return;
       }
+      if (!canReleaseReservationNow(reservation)) return;
       const linked = collaborationAvailable ? extractLinkedIdsFromReservation(reservation) : null;
       setPendingRelease({
         dateKey,
@@ -1586,7 +1610,7 @@ export default function HomeScreen({
         ...(linked ? { linkedGroupId: linked.groupId, linkedRehearsalId: linked.rehearsalId } : {})
       });
     },
-    [collaborationAvailable, findReservationById]
+    [canReleaseReservationNow, collaborationAvailable, findReservationById]
   );
 
   const handleEditReservation = useCallback(
@@ -2338,6 +2362,10 @@ export default function HomeScreen({
       const nowDate = new Date();
       const startDate = parseDateKey(dateKey);
       startDate.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+      if (nowDate.getTime() >= startDate.getTime()) {
+        showToast("לא ניתן לשריין או לעדכן שריון בזמן עבר.", "error");
+        return false;
+      }
       if (effectivePolicy.minLeadMode === "day_before_time" || effectivePolicy.minLeadDayBeforeEnabled) {
         const deadline = addDays(parseDateKey(dateKey), -1);
         const cutoffMinutes = Math.max(0, Math.min(23 * 60 + 59, effectivePolicy.minLeadDayBeforeMinutes));
@@ -2390,16 +2418,33 @@ export default function HomeScreen({
         return false;
       }
 
-      const currentEmail = currentUser.email.toLowerCase();
+      const currentEmail = (currentUser.email || "").trim().toLowerCase();
+      const maxConcurrentReservations = Math.max(1, Math.round(Number(effectivePolicy.maxConcurrentReservations) || 1));
+      const overlappingUserReservationCount = dayReservations.filter((entry) => {
+        if (entry.id === excludeReservationId) return false;
+        if (getReservationUsageShareForEmail(entry, currentEmail) <= 0) return false;
+        const entryEnd = entry.time + entry.durationMinutes;
+        return entry.time < endMinutes && entryEnd > startMinutes;
+      }).length;
+      if (overlappingUserReservationCount + 1 > maxConcurrentReservations) {
+        showToast(
+          firstMatched?.name
+            ? `מותר עד ${maxConcurrentReservations} שריונים במקביל לפי מדיניות "${firstMatched.name}".`
+            : `מותר עד ${maxConcurrentReservations} שריונים במקביל בזמן נתון.`,
+          "error"
+        );
+        return false;
+      }
+
       const roomDayUsed = dayReservations
         .filter(
           (entry) =>
-            entry.id !== excludeReservationId && entry.roomId === roomId && entry.reservedEmail === currentEmail
+            entry.id !== excludeReservationId && entry.roomId === roomId
         )
-        .reduce((sum, entry) => sum + entry.durationMinutes, 0);
+        .reduce((sum, entry) => sum + getReservationUsageShareForEmail(entry, currentEmail), 0);
       const totalDayUsed = dayReservations
-        .filter((entry) => entry.id !== excludeReservationId && entry.reservedEmail === currentEmail)
-        .reduce((sum, entry) => sum + entry.durationMinutes, 0);
+        .filter((entry) => entry.id !== excludeReservationId)
+        .reduce((sum, entry) => sum + getReservationUsageShareForEmail(entry, currentEmail), 0);
 
       const weekStart = getWeekStart(dateKey);
       const weekStartKey = formatDateKey(weekStart);
@@ -2409,9 +2454,11 @@ export default function HomeScreen({
       Object.entries(displayReservationMap).forEach(([entryDateKey, entries]) => {
         if (entryDateKey < weekStartKey || entryDateKey > weekEndKey) return;
         entries.forEach((entry) => {
-          if (entry.id === excludeReservationId || entry.reservedEmail !== currentEmail) return;
-          totalWeekUsed += entry.durationMinutes;
-          if (entry.roomId === roomId) roomWeekUsed += entry.durationMinutes;
+          if (entry.id === excludeReservationId) return;
+          const usageShare = getReservationUsageShareForEmail(entry, currentEmail);
+          if (usageShare <= 0) return;
+          totalWeekUsed += usageShare;
+          if (entry.roomId === roomId) roomWeekUsed += usageShare;
         });
       });
 
@@ -2503,15 +2550,15 @@ export default function HomeScreen({
         showToast("יש לבחור חדר כדי להמשיך.");
         return;
       }
-      const selectedGroup = selection.groupId ? groups.find((group) => group.id === selection.groupId) || null : null;
+      const selectedGroupId = (selection.groupId || "").trim();
+      const selectedGroup = selectedGroupId ? groups.find((group) => group.id === selectedGroupId) || null : null;
       const durationMinutes = Math.max(
         30,
         selection.preferredDurationMinutes || selection.endMinutes - selection.startMinutes
       );
       if (selection.mode.findRoom && selection.roomId) {
-        setPendingFinderAutoLink(
-          selection.mode.findCommonTime && selectedGroup ? { groupId: selectedGroup.id } : null
-        );
+        const autoLinkGroupId = selection.mode.findCommonTime ? selectedGroupId : "";
+        setPendingFinderAutoLinkSynced(autoLinkGroupId ? { groupId: autoLinkGroupId } : null);
         handleReserve({
           date: selection.dateKey,
           day: selection.dayKey,
@@ -2521,7 +2568,7 @@ export default function HomeScreen({
         }, { keepCurrentView: true });
         return;
       }
-      setPendingFinderAutoLink(null);
+      setPendingFinderAutoLinkSynced(null);
       const nowMs = Date.now();
       const defaultParticipants = selectedGroup?.memberEmails?.length
         ? selectedGroup.memberEmails
@@ -2609,7 +2656,7 @@ export default function HomeScreen({
       persistTentativePinForEmail,
       pinIdFor,
       setAuthError,
-      setPendingFinderAutoLink,
+      setPendingFinderAutoLinkSynced,
       showToast
     ]
   );
@@ -2649,6 +2696,36 @@ export default function HomeScreen({
     [displayReservationMap]
   );
 
+  useEffect(() => {
+    if (!collaborationAvailable || !db) return;
+    const pendingUpdates: Array<Promise<unknown>> = [];
+    groups.forEach((group) => {
+      (group.rehearsals || []).forEach((rehearsal) => {
+        const linkedReservation = findLinkedReservationForRehearsal(group.id, rehearsal);
+        if (!linkedReservation) return;
+        const desiredParticipants = buildApprovedQuotaParticipantEmails(
+          rehearsal.participants,
+          linkedReservation.reservedEmail
+        );
+        const currentParticipants = normalizeEmailList(linkedReservation.quotaParticipantEmails || []);
+        const desiredSorted = [...desiredParticipants].sort();
+        const currentSorted = [...currentParticipants].sort();
+        const unchanged =
+          desiredSorted.length === currentSorted.length &&
+          desiredSorted.every((value, index) => value === currentSorted[index]);
+        if (unchanged) return;
+        pendingUpdates.push(
+          updateDoc(doc(db, "reservations", linkedReservation.id), {
+            quotaParticipantEmails: desiredParticipants,
+            updatedAt: serverTimestamp()
+          })
+        );
+      });
+    });
+    if (!pendingUpdates.length) return;
+    void Promise.allSettled(pendingUpdates);
+  }, [collaborationAvailable, findLinkedReservationForRehearsal, groups]);
+
   const clearReservationLinkMetadata = useCallback(
     async (reservationId: string) => {
       if (!db || !reservationId) return false;
@@ -2656,6 +2733,7 @@ export default function HomeScreen({
         await updateDoc(doc(db, "reservations", reservationId), {
           linkedGroupId: deleteField(),
           linkedRehearsalId: deleteField(),
+          quotaParticipantEmails: deleteField(),
           updatedAt: serverTimestamp()
         });
         return true;
@@ -2734,6 +2812,10 @@ export default function HomeScreen({
           reservedBy: linkedReservation?.reservedBy || `חזרת הרכב · ${group.name}`,
           reservedEmail:
             linkedReservation?.reservedEmail || nextRehearsal.createdBy || group.ownerEmail,
+          quotaParticipantEmails: buildApprovedQuotaParticipantEmails(
+            nextRehearsal.participants,
+            linkedReservation?.reservedEmail || nextRehearsal.createdBy || group.ownerEmail
+          ),
           linkedGroupId: group.id,
           linkedRehearsalId: nextRehearsal.id
         };
@@ -2870,6 +2952,7 @@ export default function HomeScreen({
 
       const linkedSaved = await upsertReservation({
         ...reservation,
+        quotaParticipantEmails: buildApprovedQuotaParticipantEmails(rehearsal.participants, reservation.reservedEmail),
         linkedGroupId: group.id,
         linkedRehearsalId: rehearsal.id
       });
@@ -2965,6 +3048,10 @@ export default function HomeScreen({
       const releaseLinkedReservation = options?.releaseLinkedReservation !== false;
       if (linkedReservation) {
         if (releaseLinkedReservation) {
+          if (isReservationInPast(linkedReservation)) {
+            showToast("לא ניתן לשחרר את החדר המשויך לחזרה בזמן עבר.", "error");
+            return;
+          }
           const ok = await releaseReservation(rehearsal.dateKey, linkedReservation.id);
           if (!ok) {
             showToast("לא ניתן היה לשחרר את החדר המשויך לחזרה.", "error");
@@ -2989,6 +3076,7 @@ export default function HomeScreen({
       deleteGroupRehearsal,
       findGroupRehearsal,
       findLinkedReservationForRehearsal,
+      isReservationInPast,
       releaseReservation,
       removeLinkedPinsForGroupRehearsal,
       showToast,
@@ -3007,6 +3095,14 @@ export default function HomeScreen({
         const linkedReservation = findLinkedReservationForRehearsal(group.id, rehearsal);
         if (linkedReservation && !handledReservationIds.has(linkedReservation.id)) {
           handledReservationIds.add(linkedReservation.id);
+          if (isReservationInPast(linkedReservation)) {
+            failedReleaseCount += 1;
+            const cleared = await clearReservationLinkMetadata(linkedReservation.id);
+            if (!cleared) {
+              failedUnlinkCount += 1;
+            }
+            continue;
+          }
           const released = await releaseReservation(rehearsal.dateKey, linkedReservation.id);
           if (!released) {
             failedReleaseCount += 1;
@@ -3034,6 +3130,7 @@ export default function HomeScreen({
       deleteGroup,
       findLinkedReservationForRehearsal,
       groups,
+      isReservationInPast,
       releaseReservation,
       removeLinkedPinsForGroupRehearsal,
       showToast
@@ -3439,6 +3536,7 @@ export default function HomeScreen({
   const pendingConfirmLinkedGroupName = pendingConfirmLinkedIds
     ? groups.find((group) => group.id === pendingConfirmLinkedIds.groupId)?.name || "ללא שם"
     : undefined;
+  const effectivePendingFinderAutoLink = pendingFinderAutoLinkRef.current || pendingFinderAutoLink;
 
   return (
     <div className={`booking-shell${scheduleView ? " schedule-view" : ""}`}>
@@ -3487,8 +3585,8 @@ export default function HomeScreen({
           currentEmail={currentUser?.email}
           onCreateGroup={handleCreateGroup}
           linkedGroupName={pendingConfirmLinkedGroupName}
-          initialLinkToGroup={collaborationAvailable && Boolean(pendingFinderAutoLink?.groupId)}
-          initialGroupId={collaborationAvailable ? (pendingFinderAutoLink?.groupId || "") : ""}
+          initialLinkToGroup={collaborationAvailable && Boolean(effectivePendingFinderAutoLink?.groupId)}
+          initialGroupId={collaborationAvailable ? (effectivePendingFinderAutoLink?.groupId || "") : ""}
           mode={pendingConfirm.mode}
           onRelease={
             pendingConfirm.mode === "edit" && pendingConfirm.reservationId
@@ -3517,7 +3615,7 @@ export default function HomeScreen({
                 }
                 return;
               }
-              const autoLinkedGroupId = pendingFinderAutoLink?.groupId;
+              const autoLinkedGroupId = effectivePendingFinderAutoLink?.groupId;
               const createdReservation = await handleConfirmReserve(
                 pendingConfirm.request,
                 startMinutes,
@@ -3533,13 +3631,13 @@ export default function HomeScreen({
                   rehearsalName
                 );
               }
-              setPendingFinderAutoLink(null);
+              setPendingFinderAutoLinkSynced(null);
             })();
           }}
           onClose={() => {
             setPendingConfirm(null);
             if (collaborationAvailable) {
-              setPendingFinderAutoLink(null);
+              setPendingFinderAutoLinkSynced(null);
             }
           }}
         />
@@ -3722,6 +3820,7 @@ export default function HomeScreen({
               onClick: () => {
                 if (!pendingRelease?.linkedGroupId || !pendingRelease.linkedRehearsalId) return;
                 void (async () => {
+                  if (!canReleaseReservationNow(pendingReleaseEntry)) return;
                   const ok = await releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
                   if (!ok) {
                     showToast("שחרור נכשל (בדוק הגדרות Firestore).", "error");
@@ -3741,6 +3840,7 @@ export default function HomeScreen({
               onClick: () => {
                 if (!pendingRelease?.linkedGroupId || !pendingRelease.linkedRehearsalId) return;
                 void (async () => {
+                  if (!canReleaseReservationNow(pendingReleaseEntry)) return;
                   const ok = await releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
                   if (!ok) {
                     showToast("שחרור נכשל (בדוק הגדרות Firestore).", "error");
@@ -3770,6 +3870,7 @@ export default function HomeScreen({
           onConfirm={() => {
             if (!pendingRelease) return;
             void (async () => {
+              if (!canReleaseReservationNow(pendingReleaseEntry)) return;
               const ok = await releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
               if (!ok) {
                 showToast("שחרור נכשל (בדוק הגדרות Firestore).", "error");

@@ -1924,9 +1924,10 @@ body,
 }
 
 .reserve-info {
-  border: none;
-  background: transparent;
-  color: rgba(31, 42, 46, 0.85);
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
+  color: color-mix(in srgb, var(--ink) 88%, transparent);
+  border-radius: 999px;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -2189,9 +2190,30 @@ body,
   font-weight: 700;
 }
 
+.auth-quotas-reset-note,
+.quota-reset-note {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.25;
+  color: var(--muted);
+}
+
+.quota-progress-reset-date {
+  font-size: 0.6rem;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.quota-progress-title {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
 .quota-progress-row {
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 
 .quota-progress-head {
@@ -2201,6 +2223,20 @@ body,
   gap: 10px;
 }
 
+.quota-progress-inline-value {
+  font-size: 0.67rem;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--accent-strong);
+  text-align: end;
+}
+
+.quota-progress-wrap {
+  position: relative;
+  display: block;
+  padding-top: 2px;
+}
+
 .quota-progress-track {
   width: 100%;
   height: 6px;
@@ -2208,13 +2244,31 @@ body,
   background: rgba(31, 42, 46, 0.12);
   overflow: hidden;
   display: block;
+  position: relative;
 }
 
 .quota-progress-fill {
-  display: block;
-  height: 100%;
+  position: absolute;
+  inset-block: 0;
+  right: 0;
   border-radius: 999px;
   background: var(--accent);
+}
+
+:root[data-theme="dark"] .quota-progress-track {
+  background: color-mix(in srgb, #97a7b2 42%, var(--surface-solid));
+}
+
+.quota-progress-marker {
+  position: absolute;
+  top: 0;
+  transform: translateX(50%);
+  font-size: 0.62rem;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--accent-strong);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .booking-shell {
@@ -3416,8 +3470,8 @@ select,
 }
 
 .schedule-reservation-avatar {
-  width: 21px;
-  height: 21px;
+  width: 23px;
+  height: 23px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
   background: color-mix(in srgb, var(--ink) 10%, var(--schedule-block-reserved-bg));
@@ -3437,8 +3491,8 @@ select,
 }
 
 .schedule-reservation-avatar.compact {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   font-size: 0.48rem;
 }
 
@@ -3458,8 +3512,8 @@ select,
 
 .schedule-block-avatar-anchor {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
+  left: 5px;
+  bottom: 5px;
   display: inline-flex;
   align-items: center;
   pointer-events: none;
@@ -3467,8 +3521,8 @@ select,
 }
 
 .schedule-block-avatar-anchor.compact {
-  left: 4px;
-  bottom: 4px;
+  left: 3px;
+  bottom: 3px;
 }
 
 .schedule-avatar-stack {
@@ -8824,15 +8878,28 @@ select,
 }
 
 .admin-policy-overlay-card {
-  width: min(760px, 100%);
+  width: min(940px, 100%);
   max-height: 88vh;
   position: relative;
 }
 
-.admin-policy-editor-switch {
-  position: absolute;
-  top: 12px;
-  left: 56px;
+.admin-policy-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-inline-end: 44px;
+}
+
+.admin-policy-heading {
+  justify-content: flex-start;
+}
+
+.admin-policy-header-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .admin-policy-row-switch {
@@ -8840,18 +8907,64 @@ select,
   font-weight: 600;
 }
 
+.admin-policy-form {
+  gap: 14px;
+}
+
+.admin-policy-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
 .admin-policy-editor-panel {
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 12px;
+  padding: 14px;
   background: var(--surface-solid);
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .admin-policy-editor-panel h4 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.98rem;
+}
+
+.admin-policy-setting-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  background: color-mix(in srgb, var(--surface-solid) 86%, var(--card));
+}
+
+.admin-policy-setting-block > .admin-policy-toggle {
+  align-self: start;
+}
+
+.admin-policy-setting-block .admin-form-row,
+.admin-policy-setting-block .admin-policy-matrix {
+  margin-top: 2px;
+}
+
+.admin-policy-lead-modes {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-policy-radio {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.admin-policy-radio input[type="radio"] {
+  margin: 0;
 }
 
 .admin-policy-toggle {
@@ -9283,6 +9396,10 @@ select,
 
   .admin-policy-matrix {
     grid-template-columns: 78px minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .admin-policy-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-policy-item {

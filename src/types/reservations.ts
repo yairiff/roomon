@@ -13,6 +13,7 @@ export type Reservation = {
   privateDescription?: string;
   linkedGroupId?: string;
   linkedRehearsalId?: string;
+  quotaParticipantEmails?: string[];
   pending?: boolean;
   kind?: "special" | "exam" | "closed";
 };

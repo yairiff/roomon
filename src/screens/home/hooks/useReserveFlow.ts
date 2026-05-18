@@ -8,6 +8,7 @@ import type { ReservationPolicy, ReservationScopedPolicy } from "../../../types/
 import { addDays, formatDateKey, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
+import { getReservationUsageShareForEmail } from "../../../lib/quotaUsage";
 
 const STEP = 30;
 const MIN_DURATION = 30;
@@ -196,14 +197,10 @@ export function useReserveFlow({
   const getUserReservedMinutesForRoomDate = useCallback(
     (dateKey: string, roomId: string, excludeReservationId?: string) => {
       if (!currentUser?.email) return 0;
+      const currentEmail = (currentUser.email || "").trim().toLowerCase();
       return (reservationMap[dateKey] || [])
-        .filter(
-          (entry) =>
-            entry.id !== excludeReservationId &&
-            entry.roomId === roomId &&
-            entry.reservedEmail === currentUser.email
-        )
-        .reduce((sum, entry) => sum + entry.durationMinutes, 0);
+        .filter((entry) => entry.id !== excludeReservationId && entry.roomId === roomId)
+        .reduce((sum, entry) => sum + getReservationUsageShareForEmail(entry, currentEmail), 0);
     },
     [currentUser?.email, reservationMap]
   );
@@ -211,9 +208,10 @@ export function useReserveFlow({
   const getUserReservedMinutesForDate = useCallback(
     (dateKey: string, excludeReservationId?: string) => {
       if (!currentUser?.email) return 0;
+      const currentEmail = (currentUser.email || "").trim().toLowerCase();
       return (reservationMap[dateKey] || [])
-        .filter((entry) => entry.id !== excludeReservationId && entry.reservedEmail === currentUser.email)
-        .reduce((sum, entry) => sum + entry.durationMinutes, 0);
+        .filter((entry) => entry.id !== excludeReservationId)
+        .reduce((sum, entry) => sum + getReservationUsageShareForEmail(entry, currentEmail), 0);
     },
     [currentUser?.email, reservationMap]
   );
@@ -221,6 +219,7 @@ export function useReserveFlow({
   const getUserReservedMinutesForRoomWeek = useCallback(
     (dateKey: string, roomId: string, excludeReservationId?: string) => {
       if (!currentUser?.email) return 0;
+      const currentEmail = (currentUser.email || "").trim().toLowerCase();
       const weekStart = getWeekStart(dateKey);
       const weekStartKey = formatDateKey(weekStart);
       const weekEndKey = formatDateKey(addDays(weekStart, 6));
@@ -230,8 +229,7 @@ export function useReserveFlow({
         entries.forEach((entry) => {
           if (entry.id === excludeReservationId) return;
           if (entry.roomId !== roomId) return;
-          if (entry.reservedEmail !== currentUser.email) return;
-          total += entry.durationMinutes;
+          total += getReservationUsageShareForEmail(entry, currentEmail);
         });
       });
       return total;
@@ -242,6 +240,7 @@ export function useReserveFlow({
   const getUserReservedMinutesForWeek = useCallback(
     (dateKey: string, excludeReservationId?: string) => {
       if (!currentUser?.email) return 0;
+      const currentEmail = (currentUser.email || "").trim().toLowerCase();
       const weekStart = getWeekStart(dateKey);
       const weekStartKey = formatDateKey(weekStart);
       const weekEndKey = formatDateKey(addDays(weekStart, 6));
@@ -250,14 +249,27 @@ export function useReserveFlow({
         if (key < weekStartKey || key > weekEndKey) return;
         entries.forEach((entry) => {
           if (entry.id === excludeReservationId) return;
-          if (entry.reservedEmail !== currentUser.email) return;
-          total += entry.durationMinutes;
+          total += getReservationUsageShareForEmail(entry, currentEmail);
         });
       });
       return total;
     },
     [currentUser?.email, reservationMap]
   );
+
+  const getQuotaCounterWeekDateKey = useCallback((reservationDateKey: string) => {
+    const todayKey = formatDateKey(new Date());
+    const currentWeekStart = getWeekStart(todayKey);
+    const nextWeekStartKey = formatDateKey(addDays(currentWeekStart, 7));
+    const reservationWeekStartKey = formatDateKey(getWeekStart(reservationDateKey));
+    return reservationWeekStartKey === nextWeekStartKey ? reservationDateKey : todayKey;
+  }, []);
+
+  const getQuotaCounterDayDateKey = useCallback((reservationDateKey: string) => {
+    const todayKey = formatDateKey(new Date());
+    const tomorrowKey = formatDateKey(addDays(new Date(), 1));
+    return reservationDateKey === tomorrowKey ? reservationDateKey : todayKey;
+  }, []);
 
   const getForwardLimitViolationMessage = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
@@ -355,11 +367,48 @@ export function useReserveFlow({
     [getRemainingMinutes]
   );
 
+  const getConcurrentReservationCount = useCallback(
+    (dateKey: string, startMinutes: number, durationMinutes: number, excludeReservationId?: string) => {
+      const email = (currentUser?.email || "").trim().toLowerCase();
+      if (!email) return 0;
+      const endMinutes = startMinutes + durationMinutes;
+      return (reservationMap[dateKey] || []).filter((entry) => {
+        if (entry.id === excludeReservationId) return false;
+        if (getReservationUsageShareForEmail(entry, email) <= 0) return false;
+        const entryEnd = entry.time + entry.durationMinutes;
+        return entry.time < endMinutes && entryEnd > startMinutes;
+      }).length;
+    },
+    [currentUser?.email, reservationMap]
+  );
+
+  const getConcurrencyViolationMessage = useCallback(
+    (
+      dateKey: string,
+      roomId: string,
+      startMinutes: number,
+      durationMinutes: number,
+      excludeReservationId?: string
+    ) => {
+      const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
+      const maxConcurrent = Math.max(1, Math.round(Number(effectivePolicy.maxConcurrentReservations) || 1));
+      const overlapCount = getConcurrentReservationCount(dateKey, startMinutes, durationMinutes, excludeReservationId);
+      if (overlapCount + 1 <= maxConcurrent) return null;
+      return appliedPolicyName
+        ? `מותר עד ${maxConcurrent} שריונים במקביל לפי מדיניות "${appliedPolicyName}".`
+        : `מותר עד ${maxConcurrent} שריונים במקביל בזמן נתון.`;
+    },
+    [getConcurrentReservationCount, getPolicyContext]
+  );
+
   const getCutoffViolationMessage = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
       const now = new Date();
       const startDate = parseDateKey(dateKey);
       startDate.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+      if (now.getTime() >= startDate.getTime()) {
+        return "לא ניתן לשריין או לעדכן שריון בזמן עבר.";
+      }
       const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
       if (effectivePolicy.minLeadMode === "day_before_time" || effectivePolicy.minLeadDayBeforeEnabled) {
         const deadline = addDays(parseDateKey(dateKey), -1);
@@ -408,6 +457,10 @@ export function useReserveFlow({
       const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
       const remaining = getRemainingMinutes(request.date, request.roomId, alignedStart, excludeReservationId);
       if (windowDuration < MIN_DURATION || remaining.effectiveRemaining < MIN_DURATION) return null;
+      const quotaCounterDayDateKey = getQuotaCounterDayDateKey(request.date);
+      const currentDayUsed = getUserReservedMinutesForDate(quotaCounterDayDateKey, excludeReservationId);
+      const quotaCounterDateKey = getQuotaCounterWeekDateKey(request.date);
+      const currentWeekUsed = getUserReservedMinutesForWeek(quotaCounterDateKey, excludeReservationId);
 
       let windowStart = minStart;
       for (const interval of intervals) {
@@ -429,14 +482,25 @@ export function useReserveFlow({
           roomDayLimitMinutes: remaining.roomDayLimitMinutes,
           roomWeekUsedMinutes: Math.max(0, remaining.roomWeekUsed),
           roomWeekLimitMinutes: remaining.roomWeekLimitMinutes,
-          dayUsedMinutes: Math.max(0, remaining.dayUsed),
+          dayUsedMinutes: Math.max(0, currentDayUsed),
           dayLimitMinutes: remaining.dayTotalLimitMinutes,
-          weekUsedMinutes: Math.max(0, remaining.weekUsed),
+          weekUsedMinutes: Math.max(0, currentWeekUsed),
           weekLimitMinutes: remaining.weekTotalLimitMinutes
         }
       };
     },
-    [buildIntervals, config.endHour, config.startHour, getPolicyContext, getRemainingMinutes, roomMeta]
+    [
+      buildIntervals,
+      config.endHour,
+      config.startHour,
+      getQuotaCounterDayDateKey,
+      getPolicyContext,
+      getQuotaCounterWeekDateKey,
+      getRemainingMinutes,
+      getUserReservedMinutesForDate,
+      getUserReservedMinutesForWeek,
+      roomMeta
+    ]
   );
 
   const openRoomDay = useCallback(
@@ -628,6 +692,12 @@ export function useReserveFlow({
         return null;
       }
 
+      const concurrencyMessage = getConcurrencyViolationMessage(date, roomId, startMinutes, durationMinutes);
+      if (concurrencyMessage) {
+        showToast(concurrencyMessage);
+        return null;
+      }
+
       const id =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
@@ -677,6 +747,7 @@ export function useReserveFlow({
       config.startHour,
       currentUser,
       getBlockReservationMessage,
+      getConcurrencyViolationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
       getLessonsForDate,
@@ -756,6 +827,10 @@ export function useReserveFlow({
         if (limitMessage) showToast(limitMessage);
         return;
       }
+      const quotaCounterDayDateKey = getQuotaCounterDayDateKey(dateKey);
+      const currentDayUsed = getUserReservedMinutesForDate(quotaCounterDayDateKey, reservationId);
+      const quotaCounterDateKey = getQuotaCounterWeekDateKey(dateKey);
+      const currentWeekUsed = getUserReservedMinutesForWeek(quotaCounterDateKey, reservationId);
 
       const request: ReserveRequest = {
         date: dateKey,
@@ -786,9 +861,9 @@ export function useReserveFlow({
           roomDayLimitMinutes: remaining.roomDayLimitMinutes,
           roomWeekUsedMinutes: Math.max(0, remaining.roomWeekUsed),
           roomWeekLimitMinutes: remaining.roomWeekLimitMinutes,
-          dayUsedMinutes: Math.max(0, remaining.dayUsed),
+          dayUsedMinutes: Math.max(0, currentDayUsed),
           dayLimitMinutes: remaining.dayTotalLimitMinutes,
-          weekUsedMinutes: Math.max(0, remaining.weekUsed),
+          weekUsedMinutes: Math.max(0, currentWeekUsed),
           weekLimitMinutes: remaining.weekTotalLimitMinutes
         }
       });
@@ -804,7 +879,11 @@ export function useReserveFlow({
       getForwardLimitViolationMessage,
       getLimitViolationMessage,
       getPolicyDayViolationMessage,
+      getQuotaCounterDayDateKey,
+      getQuotaCounterWeekDateKey,
       getRemainingMinutes,
+      getUserReservedMinutesForDate,
+      getUserReservedMinutesForWeek,
       reservationMap,
       roomMeta,
       showToast
@@ -890,6 +969,18 @@ export function useReserveFlow({
         return false;
       }
 
+      const concurrencyMessage = getConcurrencyViolationMessage(
+        date,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        reservationId
+      );
+      if (concurrencyMessage) {
+        showToast(concurrencyMessage);
+        return false;
+      }
+
       if (checkExternalAvailability) {
         const external = await checkExternalAvailability({ date, roomId, startMinutes, durationMinutes });
         if (!external.ok) {
@@ -925,6 +1016,7 @@ export function useReserveFlow({
       config.startHour,
       currentUser,
       getBlockReservationMessage,
+      getConcurrencyViolationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
       getLessonsForDate,

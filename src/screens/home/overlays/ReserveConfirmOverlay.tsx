@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { addDays, formatDateKey, formatShortDate, getWeekStart, parseDateKey } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
-import { parseDateKey } from "../../../lib/date";
 import type { ReserveRequest } from "../../../types/reservations";
 import type { DirectoryUser } from "../../../types/admin";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
@@ -95,53 +95,71 @@ export default function ReserveConfirmOverlay({
   onConfirm,
   onClose
 }: ReserveConfirmOverlayProps) {
-  const formatQuotaValue = (usedMinutes: number, limitMinutes: number) => {
-    const usedHours = Math.max(0, usedMinutes) / 60;
-    const limitHours = Math.max(0, limitMinutes) / 60;
-    const formatHours = (value: number) => {
-      const rounded = Math.round(value * 10) / 10;
-      return Number.isInteger(rounded) ? String(rounded) : String(rounded);
-    };
-    return `${formatHours(usedHours)} / ${formatHours(limitHours)} שעות`;
+  const roundDownToHalfHourMinutes = (minutes: number) => Math.max(0, Math.floor(minutes / 30) * 30);
+  const formatQuotaHours = (minutes: number) => {
+    const hours = roundDownToHalfHourMinutes(minutes) / 60;
+    return Number.isInteger(hours) ? String(hours) : String(hours);
   };
   const quotaRows = useMemo(() => {
+    const now = new Date();
+    const todayKey = formatDateKey(now);
+    const tomorrowKey = formatDateKey(addDays(now, 1));
+    const isTomorrow = request.date === tomorrowKey;
+    const dailyLabel = isTomorrow ? "מחר" : "היום";
+    const dailyResetBase = isTomorrow ? parseDateKey(tomorrowKey) : parseDateKey(todayKey);
+    const nextDayResetDateKey = formatDateKey(addDays(dailyResetBase, 1));
+    const nextDayStart = parseDateKey(tomorrowKey);
+    const hoursUntilDayReset = Math.max(1, Math.ceil((nextDayStart.getTime() - now.getTime()) / (60 * 60 * 1000)));
+    const currentWeekStart = getWeekStart(todayKey);
+    const requestWeekStart = getWeekStart(request.date);
+    const nextWeekStart = addDays(currentWeekStart, 7);
+    const isNextWeek = formatDateKey(requestWeekStart) === formatDateKey(nextWeekStart);
+    const weeklyLabel = isNextWeek ? "בשבוע הבא" : "בשבוע זה";
+    const weeklyResetBase = isNextWeek ? nextWeekStart : currentWeekStart;
+    const weekStartKey = formatDateKey(weeklyResetBase);
+    const weekEndKey = formatDateKey(addDays(weeklyResetBase, 6));
+    const daysUntilWeekReset = Math.max(1, Math.ceil((nextWeekStart.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
+    const dailyResetLabel = isTomorrow
+      ? `מתאפס בתאריך ${formatShortDate(nextDayResetDateKey)}`
+      : `מתאפס בעוד ${hoursUntilDayReset} שעות`;
+    const weeklyResetLabel = isNextWeek
+      ? `מתאפס בתאריכים ${formatShortDate(weekStartKey)}-${formatShortDate(weekEndKey)}`
+      : `מתאפס בעוד ${daysUntilWeekReset} ימים`;
     const rows = [
-      { label: "חדר/יום", used: quotaUsage.roomDayUsedMinutes, limit: quotaUsage.roomDayLimitMinutes },
-      { label: "חדר/שבוע", used: quotaUsage.roomWeekUsedMinutes, limit: quotaUsage.roomWeekLimitMinutes },
-      { label: "סה\"כ/יום", used: quotaUsage.dayUsedMinutes, limit: quotaUsage.dayLimitMinutes },
-      { label: "סה\"כ/שבוע", used: quotaUsage.weekUsedMinutes, limit: quotaUsage.weekLimitMinutes }
+      {
+        label: dailyLabel,
+        used: quotaUsage.dayUsedMinutes,
+        limit: quotaUsage.dayLimitMinutes,
+        resetLabel: dailyResetLabel
+      },
+      {
+        label: weeklyLabel,
+        used: quotaUsage.weekUsedMinutes,
+        limit: quotaUsage.weekLimitMinutes,
+        resetLabel: weeklyResetLabel
+      }
     ];
     return rows
       .filter((row) => Number.isFinite(row.limit) && row.limit > 0)
       .map((row) => {
         const used = Math.max(0, row.used);
         const limit = Math.max(1, row.limit);
-        const percent = Math.max(0, Math.min(100, (used / limit) * 100));
+        const remaining = Math.max(0, limit - used);
+        const percent = Math.max(0, Math.min(100, (remaining / limit) * 100));
+        const totalHoursLabel = formatQuotaHours(limit);
+        const remainingHoursLabel = formatQuotaHours(remaining);
         return {
           ...row,
           used,
           limit,
           percent,
-          value: formatQuotaValue(used, limit)
+          totalLabel: totalHoursLabel,
+          remainingLabel: remainingHoursLabel,
+          summaryLabel: `נותרו ${remainingHoursLabel} שעות`,
+          markerPercent: percent
         };
       });
-  }, [quotaUsage]);
-  const forwardQuota = useMemo(() => {
-    if (!Number.isFinite(limitMaxDaysForward) || limitMaxDaysForward <= 0) return null;
-    const today = new Date();
-    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const target = parseDateKey(request.date);
-    const deltaDays = Math.max(
-      0,
-      Math.floor((target.getTime() - todayMidnight.getTime()) / (24 * 60 * 60 * 1000))
-    );
-    const percent = Math.max(0, Math.min(100, (deltaDays / limitMaxDaysForward) * 100));
-    return {
-      label: "קדימה",
-      value: `${deltaDays} / ${limitMaxDaysForward} ימים`,
-      percent
-    };
-  }, [limitMaxDaysForward, request.date]);
+  }, [quotaUsage, request.date]);
   const [startMinutes, setStartMinutes] = useState(initialStart);
   const [endMinutes, setEndMinutes] = useState(initialStart + initialDuration);
   const [privateDescription, setPrivateDescription] = useState(initialPrivateDescription);
@@ -176,9 +194,12 @@ export default function ReserveConfirmOverlay({
       return;
     }
     if (!groupOptions.some((group) => group.id === selectedGroupId)) {
-      setSelectedGroupId(groupOptions[0].id);
+      const preferredId = initialGroupId && groupOptions.some((group) => group.id === initialGroupId)
+        ? initialGroupId
+        : groupOptions[0].id;
+      setSelectedGroupId(preferredId);
     }
-  }, [groupOptions, linkToGroup, selectedGroupId]);
+  }, [groupOptions, initialGroupId, linkToGroup, selectedGroupId]);
 
   const selectedGroup = useMemo(
     () => groupOptions.find((group) => group.id === selectedGroupId) || null,
@@ -325,18 +346,22 @@ export default function ReserveConfirmOverlay({
                 <InfoOutlinedIcon fontSize="small" />
               </button>
               <div className={`reserve-tooltip${infoOpen ? " open" : ""}`} role="tooltip">
-                {[...quotaRows, ...(forwardQuota ? [forwardQuota] : [])].map((row) => (
+                <div className="quota-progress-title">מכסת שריונים</div>
+                {quotaRows.map((row) => (
                   <div key={`quota-row-${row.label}`} className="quota-progress-row">
                     <div className="quota-progress-head">
                       <span>{row.label}</span>
-                      <span>{row.value}</span>
+                      <span className="quota-progress-inline-value">{row.summaryLabel}</span>
                     </div>
-                    <span className="quota-progress-track" aria-hidden="true">
-                      <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                    <span className="quota-progress-wrap" aria-hidden="true">
+                      <span className="quota-progress-track">
+                        <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                      </span>
                     </span>
+                    <span className="quota-progress-reset-date">{row.resetLabel}</span>
                   </div>
                 ))}
-                {![...quotaRows, ...(forwardQuota ? [forwardQuota] : [])].length ? (
+                {!quotaRows.length ? (
                   <div>אין מכסות פעילות.</div>
                 ) : null}
               </div>

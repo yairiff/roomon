@@ -928,21 +928,28 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
               onLinkedRehearsalRespond
           );
           const hasRehearsalStack = rehearsalAvatars.length > 0;
+          const hasMultiParticipantRehearsalStack = rehearsalAvatars.length > 1;
           // If there's not enough vertical space for a dedicated meta line, render it inline to avoid clipping.
           // (Font sizes are fixed, so a fixed px threshold is more stable than a duration heuristic.)
           const canShowSecondLine = height >= 48;
           const showInlineMeta = showDetails && hasMeta && !canShowSecondLine;
           const showCompactMeta = showCompactDetails && hasMeta;
           const showCompactPending = showPendingSpinner && height >= 20;
-          const minAvatarHeight = compact
-            ? showCompactMeta || showPendingRehearsalActions
-              ? 34
-              : 24
-            : showInlineMeta || showPendingRehearsalActions
-              ? 42
-              : 56;
+          const minAvatarHeight = hasMultiParticipantRehearsalStack
+            ? compact
+              ? 16
+              : 20
+            : compact
+              ? showCompactMeta || showPendingRehearsalActions
+                ? 34
+                : 24
+              : showInlineMeta || showPendingRehearsalActions
+                ? 42
+                : 56;
           const canShowBottomAvatar = height >= minAvatarHeight;
-          const showBottomAvatar = canShowBottomAvatar && (hasRehearsalStack || Boolean(reservationAvatar));
+          const showBottomAvatar = hasRehearsalStack
+            ? canShowBottomAvatar
+            : canShowBottomAvatar && Boolean(reservationAvatar);
           const rehearsalAvatarPreviewLimit = compact ? 3 : 4;
           const rehearsalAvatarVisibleTarget =
             rehearsalAvatars.length === rehearsalAvatarPreviewLimit + 1

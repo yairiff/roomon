@@ -147,6 +147,14 @@ export function useReservations(window: ReservationsWindow = null) {
             ...(typeof data.linkedRehearsalId === "string" && data.linkedRehearsalId.trim()
               ? { linkedRehearsalId: data.linkedRehearsalId.trim() }
               : {}),
+            ...(Array.isArray(data.quotaParticipantEmails)
+              ? {
+                  quotaParticipantEmails: data.quotaParticipantEmails
+                    .filter((entry): entry is string => typeof entry === "string")
+                    .map((entry) => entry.trim().toLowerCase())
+                    .filter(Boolean)
+                }
+              : {}),
             ...(kind ? { kind } : {})
           };
           if (!nextMap[reservation.date]) {

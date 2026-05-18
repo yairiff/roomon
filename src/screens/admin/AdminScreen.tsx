@@ -66,6 +66,7 @@ type ScopedPolicyDraft = {
   maxHoursPerWeekTotal: string;
   useMaxDaysForward: boolean;
   maxDaysForward: string;
+  maxConcurrentReservations: string;
   useMinLeadHours: boolean;
   useMinLeadDayBefore: boolean;
   minLeadHours: string;
@@ -309,6 +310,7 @@ const createEmptyScopedPolicyDraft = (): ScopedPolicyDraft => ({
   maxHoursPerWeekTotal: "",
   useMaxDaysForward: false,
   maxDaysForward: "",
+  maxConcurrentReservations: "1",
   useMinLeadHours: false,
   useMinLeadDayBefore: false,
   minLeadHours: "0",
@@ -352,6 +354,7 @@ const toScopedPolicyDraft = (policy: ReservationScopedPolicy): ScopedPolicyDraft
   maxHoursPerWeekTotal: parseOptionalLimitDraft(policy.rules.maxHoursPerWeekTotal),
   useMaxDaysForward: Number(policy.rules.maxDaysForward || 0) > 0,
   maxDaysForward: parseOptionalLimitDraft(policy.rules.maxDaysForward),
+  maxConcurrentReservations: String(Math.max(1, Math.round(Number(policy.rules.maxConcurrentReservations) || 1))),
   useMinLeadHours: Number(policy.rules.minLeadHours || 0) > 0,
   useMinLeadDayBefore:
     policy.rules.minLeadDayBeforeEnabled === true ||
@@ -409,7 +412,8 @@ const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
     maxHoursPerRoomPerWeek: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerRoomPerWeek) : 0,
     maxHoursPerDayTotal: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerDayTotal) : 0,
     maxHoursPerWeekTotal: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerWeekTotal) : 0,
-    maxDaysForward: draft.useMaxDaysForward ? parseLimitNumber(draft.maxDaysForward) : 0
+    maxDaysForward: draft.useMaxDaysForward ? parseLimitNumber(draft.maxDaysForward) : 0,
+    maxConcurrentReservations: Math.max(1, Math.round(parseOptionalNumber(draft.maxConcurrentReservations) || 1))
   };
 
   rules.minLeadMode = draft.useMinLeadDayBefore ? "day_before_time" : "hours_before";
@@ -443,6 +447,7 @@ const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
   pushLimit(policy.rules.maxHoursPerDayTotal, (numeric) => `עד ${numeric} שעות ביום`);
   pushLimit(policy.rules.maxHoursPerWeekTotal, (numeric) => `עד ${numeric} שעות בשבוע`);
   pushLimit(policy.rules.maxDaysForward, (numeric) => `עד ${numeric} ימים מראש`);
+  pushLimit(policy.rules.maxConcurrentReservations, (numeric) => `עד ${numeric} שריונים במקביל`);
 
   if ((policy.rules.minLeadHours || 0) > 0) {
     parts.push(`לפחות ${policy.rules.minLeadHours} שעות מראש`);
@@ -1382,6 +1387,11 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
   const showSyncSettings = activeSection === "syncSettings";
   const showSemesterSettings = activeSection === "semesterSettings";
   const showPolicySettings = activeSection === "policySettings";
+  const policyLeadMode: "none" | "hours_before" | "day_before_time" = policyEditorDraft.useMinLeadDayBefore
+    ? "day_before_time"
+    : policyEditorDraft.useMinLeadHours
+      ? "hours_before"
+      : "none";
   const syncAllEnabled = API_SYNC_ENTITY_ORDER.every((entity) => apiSyncDraft.entities[entity].enabled);
   const apiSyncLastSuccessAt = useMemo(() => {
     const values = API_SYNC_ENTITY_ORDER
@@ -1916,26 +1926,34 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
               >
                 <CloseIcon />
               </button>
-              <label className="admin-policy-toggle admin-policy-editor-switch">
-                <input
-                  type="checkbox"
-                  checked={policyEditorDraft.enabled}
-                  disabled={policyEditorDraft.isDefault}
-                  onChange={(event) =>
-                    setPolicyEditorDraft((prev) => ({
-                      ...prev,
-                      enabled: event.target.checked
-                    }))
-                  }
-                />
-                פעילה
-              </label>
-              <div className="admin-tool-overlay-heading">
-                <h3>{editingPolicyId ? "עריכת מדיניות" : "מדיניות חדשה"}</h3>
+              <div className="admin-policy-header">
+                <div className="admin-tool-overlay-heading admin-policy-heading">
+                  <h3>{editingPolicyId ? "עריכת מדיניות" : "מדיניות חדשה"}</h3>
+                </div>
+                <div className="admin-policy-header-controls">
+                  {policyEditorDraft.isDefault ? <span className="admin-policy-pill">ברירת מחדל</span> : null}
+                  <label className="admin-policy-toggle admin-policy-row-switch">
+                    <input
+                      type="checkbox"
+                      checked={policyEditorDraft.enabled}
+                      disabled={policyEditorDraft.isDefault}
+                      onChange={(event) =>
+                        setPolicyEditorDraft((prev) => ({
+                          ...prev,
+                          enabled: event.target.checked
+                        }))
+                      }
+                    />
+                    פעילה
+                  </label>
+                </div>
               </div>
+              <p className="admin-meta hint">
+                הגדירו על אילו שריונים המדיניות תחול, ואז קבעו את המגבלות. ברירת המחדל חלה כששום מדיניות אחרת לא תופסת.
+              </p>
 
               <form
-                className="admin-form"
+                className="admin-form admin-policy-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   void handleApplyPolicyEditor();
@@ -1958,431 +1976,497 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                   </label>
                 </div>
 
-                <fieldset className="admin-fieldset">
+                <fieldset className="admin-fieldset admin-policy-layout">
                   <div className="admin-policy-editor-panel">
-                    <h4>תנאים</h4>
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.isDefault || policyEditorDraft.useConditionDays}
-                        disabled={policyEditorDraft.isDefault}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useConditionDays: event.target.checked,
-                            dayKeys: event.target.checked ? prev.dayKeys : []
-                          }))
-                        }
-                      />
-                      ימים
-                    </label>
-                    {policyEditorDraft.isDefault || policyEditorDraft.useConditionDays ? (
-                      <div className="admin-policy-rooms">
-                        {POLICY_DAY_OPTIONS.map((day) => {
-                          const checked = policyEditorDraft.dayKeys.includes(day.key);
-                          return (
-                            <label key={day.key} className="admin-policy-room-chip">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  setPolicyEditorDraft((prev) => ({
-                                    ...prev,
-                                    dayKeys: checked
-                                      ? prev.dayKeys.filter((key) => key !== day.key)
-                                      : [...prev.dayKeys, day.key]
-                                  }))
-                                }
-                              />
-                              <span>{day.label}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    ) : null}
+                    <h4>על מה המדיניות תחול</h4>
+                    <p className="admin-meta hint">הפעילו תנאי רק אם רוצים לצמצם את התחולה שלו.</p>
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionRooms}
-                        disabled={policyEditorDraft.isDefault}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useConditionRooms: event.target.checked,
-                            roomIds: event.target.checked ? prev.roomIds : []
-                          }))
-                        }
-                      />
-                      חדרים
-                    </label>
-                    {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionRooms ? (
-                      <div className="admin-policy-rooms">
-                        {roomsRaw.map((room) => {
-                          const checked = policyEditorDraft.roomIds.includes(room.id);
-                          return (
-                            <label key={room.id} className="admin-policy-room-chip">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  setPolicyEditorDraft((prev) => ({
-                                    ...prev,
-                                    roomIds: checked
-                                      ? prev.roomIds.filter((roomId) => roomId !== room.id)
-                                      : [...prev.roomIds, room.id]
-                                  }))
-                                }
-                              />
-                              <span>{room.name || room.shortName || room.id}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    ) : null}
+                    <div className="admin-policy-setting-block">
+                      <label className="admin-policy-toggle">
+                        <input
+                          type="checkbox"
+                          checked={policyEditorDraft.isDefault || policyEditorDraft.useConditionDays}
+                          disabled={policyEditorDraft.isDefault}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              useConditionDays: event.target.checked,
+                              dayKeys: event.target.checked ? prev.dayKeys : []
+                            }))
+                          }
+                        />
+                        ימים
+                      </label>
+                      {policyEditorDraft.isDefault || policyEditorDraft.useConditionDays ? (
+                        <div className="admin-policy-rooms">
+                          {POLICY_DAY_OPTIONS.map((day) => {
+                            const checked = policyEditorDraft.dayKeys.includes(day.key);
+                            return (
+                              <label key={day.key} className="admin-policy-room-chip">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    setPolicyEditorDraft((prev) => ({
+                                      ...prev,
+                                      dayKeys: checked
+                                        ? prev.dayKeys.filter((key) => key !== day.key)
+                                        : [...prev.dayKeys, day.key]
+                                    }))
+                                  }
+                                />
+                                <span>{day.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionSemesters}
-                        disabled={policyEditorDraft.isDefault}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useConditionSemesters: event.target.checked,
-                            semesterIds: event.target.checked ? prev.semesterIds : []
-                          }))
-                        }
-                      />
-                      סמסטרים
-                    </label>
-                    {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionSemesters ? (
-                      <div className="admin-policy-rooms">
-                        {semestersDraft.map((semester) => {
-                          const checked = policyEditorDraft.semesterIds.includes(semester.id);
-                          return (
-                            <label key={semester.id} className="admin-policy-room-chip">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  setPolicyEditorDraft((prev) => ({
-                                    ...prev,
-                                    semesterIds: checked
-                                      ? prev.semesterIds.filter((semesterId) => semesterId !== semester.id)
-                                      : [...prev.semesterIds, semester.id]
-                                  }))
-                                }
-                              />
-                              <span>{formatAcademicYearLabel(semester.studyYear)} · {resolveSemesterName(semester)}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    ) : null}
+                    <div className="admin-policy-setting-block">
+                      <label className="admin-policy-toggle">
+                        <input
+                          type="checkbox"
+                          checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionRooms}
+                          disabled={policyEditorDraft.isDefault}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              useConditionRooms: event.target.checked,
+                              roomIds: event.target.checked ? prev.roomIds : []
+                            }))
+                          }
+                        />
+                        חדרים
+                      </label>
+                      {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionRooms ? (
+                        <div className="admin-policy-rooms">
+                          {roomsRaw.map((room) => {
+                            const checked = policyEditorDraft.roomIds.includes(room.id);
+                            return (
+                              <label key={room.id} className="admin-policy-room-chip">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    setPolicyEditorDraft((prev) => ({
+                                      ...prev,
+                                      roomIds: checked
+                                        ? prev.roomIds.filter((roomId) => roomId !== room.id)
+                                        : [...prev.roomIds, room.id]
+                                    }))
+                                  }
+                                />
+                                <span>{room.name || room.shortName || room.id}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionDateRange}
-                        disabled={policyEditorDraft.isDefault}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useConditionDateRange: event.target.checked,
-                            dateStart: event.target.checked ? prev.dateStart : "",
-                            dateEnd: event.target.checked ? prev.dateEnd : ""
-                          }))
-                        }
-                      />
-                      תאריכים
-                    </label>
-                    {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionDateRange ? (
-                      <div className="admin-form-row">
-                        <label>
-                          מתאריך
-                          <input
-                            type="date"
-                            value={policyEditorDraft.dateStart}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                dateStart: event.target.value
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          עד תאריך
-                          <input
-                            type="date"
-                            value={policyEditorDraft.dateEnd}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                dateEnd: event.target.value
-                              }))
-                            }
-                          />
-                        </label>
-                      </div>
-                    ) : null}
+                    <div className="admin-policy-setting-block">
+                      <label className="admin-policy-toggle">
+                        <input
+                          type="checkbox"
+                          checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionSemesters}
+                          disabled={policyEditorDraft.isDefault}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              useConditionSemesters: event.target.checked,
+                              semesterIds: event.target.checked ? prev.semesterIds : []
+                            }))
+                          }
+                        />
+                        סמסטרים
+                      </label>
+                      {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionSemesters ? (
+                        <div className="admin-policy-rooms">
+                          {semestersDraft.map((semester) => {
+                            const checked = policyEditorDraft.semesterIds.includes(semester.id);
+                            return (
+                              <label key={semester.id} className="admin-policy-room-chip">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    setPolicyEditorDraft((prev) => ({
+                                      ...prev,
+                                      semesterIds: checked
+                                        ? prev.semesterIds.filter((semesterId) => semesterId !== semester.id)
+                                        : [...prev.semesterIds, semester.id]
+                                    }))
+                                  }
+                                />
+                                <span>{formatAcademicYearLabel(semester.studyYear)} · {resolveSemesterName(semester)}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.isDefault || policyEditorDraft.useConditionTimeRange}
-                        disabled={policyEditorDraft.isDefault}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useConditionTimeRange: event.target.checked,
-                            startTime: event.target.checked ? prev.startTime : "",
-                            endTime: event.target.checked ? prev.endTime : ""
-                          }))
-                        }
-                      />
-                      שעות
-                    </label>
-                    {policyEditorDraft.isDefault || policyEditorDraft.useConditionTimeRange ? (
-                      <div className="admin-form-row">
-                        <label>
-                          משעה
-                          <input
-                            type="time"
-                            value={policyEditorDraft.startTime}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                startTime: event.target.value
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          עד שעה
-                          <input
-                            type="time"
-                            value={policyEditorDraft.endTime}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                endTime: event.target.value
-                              }))
-                            }
-                          />
-                        </label>
-                      </div>
-                    ) : null}
+                    <div className="admin-policy-setting-block">
+                      <label className="admin-policy-toggle">
+                        <input
+                          type="checkbox"
+                          checked={policyEditorDraft.isDefault ? false : policyEditorDraft.useConditionDateRange}
+                          disabled={policyEditorDraft.isDefault}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              useConditionDateRange: event.target.checked,
+                              dateStart: event.target.checked ? prev.dateStart : "",
+                              dateEnd: event.target.checked ? prev.dateEnd : ""
+                            }))
+                          }
+                        />
+                        טווח תאריכים
+                      </label>
+                      {policyEditorDraft.isDefault ? null : policyEditorDraft.useConditionDateRange ? (
+                        <div className="admin-form-row">
+                          <label>
+                            מתאריך
+                            <input
+                              type="date"
+                              value={policyEditorDraft.dateStart}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  dateStart: event.target.value
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            עד תאריך
+                            <input
+                              type="date"
+                              value={policyEditorDraft.dateEnd}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  dateEnd: event.target.value
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="admin-policy-setting-block">
+                      <label className="admin-policy-toggle">
+                        <input
+                          type="checkbox"
+                          checked={policyEditorDraft.isDefault || policyEditorDraft.useConditionTimeRange}
+                          disabled={policyEditorDraft.isDefault}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              useConditionTimeRange: event.target.checked,
+                              startTime: event.target.checked ? prev.startTime : "",
+                              endTime: event.target.checked ? prev.endTime : ""
+                            }))
+                          }
+                        />
+                        טווח שעות
+                      </label>
+                      {policyEditorDraft.isDefault || policyEditorDraft.useConditionTimeRange ? (
+                        <div className="admin-form-row">
+                          <label>
+                            משעה
+                            <input
+                              type="time"
+                              value={policyEditorDraft.startTime}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  startTime: event.target.value
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            עד שעה
+                            <input
+                              type="time"
+                              value={policyEditorDraft.endTime}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  endTime: event.target.value
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="admin-policy-editor-panel">
-                    <h4>כללים</h4>
+                    <h4>מה המדיניות עושה</h4>
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.blockReservations}
-                        disabled={policyEditorDraft.isDefault}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            blockReservations: event.target.checked
-                          }))
-                        }
-                      />
-                      חסימת שריונים
-                    </label>
+                    <div className="admin-policy-setting-block">
+                      <label className="admin-policy-toggle">
+                        <input
+                          type="checkbox"
+                          checked={policyEditorDraft.blockReservations}
+                          disabled={policyEditorDraft.isDefault}
+                          onChange={(event) =>
+                            setPolicyEditorDraft((prev) => ({
+                              ...prev,
+                              blockReservations: event.target.checked
+                            }))
+                          }
+                        />
+                        חסימת שריונים
+                      </label>
+                      <p className="admin-meta hint">כאשר מופעל, שאר ההגבלות אינן רלוונטיות לאותה מדיניות.</p>
+                    </div>
 
                     <fieldset className="admin-fieldset" disabled={policyEditorDraft.blockReservations}>
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.useHourQuota}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useHourQuota: event.target.checked,
-                            maxHoursPerRoomPerDay: event.target.checked ? prev.maxHoursPerRoomPerDay : "",
-                            maxHoursPerRoomPerWeek: event.target.checked ? prev.maxHoursPerRoomPerWeek : "",
-                            maxHoursPerDayTotal: event.target.checked ? prev.maxHoursPerDayTotal : "",
-                            maxHoursPerWeekTotal: event.target.checked ? prev.maxHoursPerWeekTotal : ""
-                          }))
-                        }
-                      />
-                      מגבלת שעות
-                    </label>
-
-                    {policyEditorDraft.useHourQuota ? (
-                      <div className="admin-policy-matrix">
-                        <div className="admin-policy-matrix-head" />
-                        <div className="admin-policy-matrix-head">לחדר</div>
-                        <div className="admin-policy-matrix-head">סה״כ</div>
-
-                        <div className="admin-policy-matrix-rowlabel">ליום</div>
-                        <div className="admin-policy-matrix-cell rich">
+                      <div className="admin-policy-setting-block">
+                        <label className="admin-policy-toggle">
                           <input
-                            type="number"
-                            min={0}
-                            step={0.5}
-                            placeholder="ללא מגבלה"
-                            value={policyEditorDraft.maxHoursPerRoomPerDay}
+                            type="checkbox"
+                            checked={policyEditorDraft.useHourQuota}
                             onChange={(event) =>
                               setPolicyEditorDraft((prev) => ({
                                 ...prev,
-                                maxHoursPerRoomPerDay: normalizeUnlimitedInput(event.target.value)
+                                useHourQuota: event.target.checked,
+                                maxHoursPerRoomPerDay: event.target.checked ? prev.maxHoursPerRoomPerDay : "",
+                                maxHoursPerRoomPerWeek: event.target.checked ? prev.maxHoursPerRoomPerWeek : "",
+                                maxHoursPerDayTotal: event.target.checked ? prev.maxHoursPerDayTotal : "",
+                                maxHoursPerWeekTotal: event.target.checked ? prev.maxHoursPerWeekTotal : ""
                               }))
                             }
                           />
-                        </div>
-                        <div className="admin-policy-matrix-cell rich">
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.5}
-                            placeholder="ללא מגבלה"
-                            value={policyEditorDraft.maxHoursPerDayTotal}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                maxHoursPerDayTotal: normalizeUnlimitedInput(event.target.value)
-                              }))
-                            }
-                          />
-                        </div>
-
-                        <div className="admin-policy-matrix-rowlabel">לשבוע</div>
-                        <div className="admin-policy-matrix-cell rich">
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.5}
-                            placeholder="ללא מגבלה"
-                            value={policyEditorDraft.maxHoursPerRoomPerWeek}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                maxHoursPerRoomPerWeek: normalizeUnlimitedInput(event.target.value)
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="admin-policy-matrix-cell rich">
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.5}
-                            placeholder="ללא מגבלה"
-                            value={policyEditorDraft.maxHoursPerWeekTotal}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                maxHoursPerWeekTotal: normalizeUnlimitedInput(event.target.value)
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.useMaxDaysForward}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useMaxDaysForward: event.target.checked,
-                            maxDaysForward: event.target.checked ? prev.maxDaysForward : ""
-                          }))
-                        }
-                      />
-                      ימים מראש
-                    </label>
-                    {policyEditorDraft.useMaxDaysForward ? (
-                      <div className="admin-form-row single">
-                        <label>
-                          מקסימום ימים מראש
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            placeholder="ללא מגבלה"
-                            value={policyEditorDraft.maxDaysForward}
-                            onChange={(event) =>
-                              setPolicyEditorDraft((prev) => ({
-                                ...prev,
-                                maxDaysForward: normalizeUnlimitedInput(event.target.value)
-                              }))
-                            }
-                          />
+                          מגבלות שעות
                         </label>
+
+                        {policyEditorDraft.useHourQuota ? (
+                          <div className="admin-policy-matrix">
+                            <div className="admin-policy-matrix-head" />
+                            <div className="admin-policy-matrix-head">לחדר</div>
+                            <div className="admin-policy-matrix-head">סה״כ</div>
+
+                            <div className="admin-policy-matrix-rowlabel">ליום</div>
+                            <div className="admin-policy-matrix-cell rich">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.5}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.maxHoursPerRoomPerDay}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    maxHoursPerRoomPerDay: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="admin-policy-matrix-cell rich">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.5}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.maxHoursPerDayTotal}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    maxHoursPerDayTotal: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </div>
+
+                            <div className="admin-policy-matrix-rowlabel">לשבוע</div>
+                            <div className="admin-policy-matrix-cell rich">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.5}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.maxHoursPerRoomPerWeek}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    maxHoursPerRoomPerWeek: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="admin-policy-matrix-cell rich">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.5}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.maxHoursPerWeekTotal}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    maxHoursPerWeekTotal: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.useMinLeadHours}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useMinLeadHours: event.target.checked,
-                            useMinLeadDayBefore: event.target.checked ? false : prev.useMinLeadDayBefore,
-                            minLeadHours: event.target.checked ? prev.minLeadHours || "1" : "0"
-                          }))
-                        }
-                      />
-                      שעות מראש
-                    </label>
-                    {policyEditorDraft.useMinLeadHours ? (
-                      <label>
-                        מינימום שעות מראש
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.5}
-                          value={policyEditorDraft.minLeadHours}
-                          onChange={(event) =>
-                            setPolicyEditorDraft((prev) => ({
-                              ...prev,
-                              minLeadHours: event.target.value
-                            }))
-                          }
-                        />
-                      </label>
-                    ) : null}
+                      <div className="admin-policy-setting-block">
+                        <label className="admin-policy-toggle">
+                          <input
+                            type="checkbox"
+                            checked={policyEditorDraft.useMaxDaysForward}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                useMaxDaysForward: event.target.checked,
+                                maxDaysForward: event.target.checked ? prev.maxDaysForward : ""
+                              }))
+                            }
+                          />
+                          הגבלת שריון מראש
+                        </label>
+                        {policyEditorDraft.useMaxDaysForward ? (
+                          <div className="admin-form-row single">
+                            <label>
+                              מקסימום ימים מראש
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.maxDaysForward}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    maxDaysForward: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+                      </div>
 
-                    <label className="admin-policy-toggle">
-                      <input
-                        type="checkbox"
-                        checked={policyEditorDraft.useMinLeadDayBefore}
-                        onChange={(event) =>
-                          setPolicyEditorDraft((prev) => ({
-                            ...prev,
-                            useMinLeadDayBefore: event.target.checked,
-                            useMinLeadHours: event.target.checked ? false : prev.useMinLeadHours,
-                            minLeadDayBeforeTime: event.target.checked ? prev.minLeadDayBeforeTime || "18:00" : "18:00"
-                          }))
-                        }
-                      />
-                      נעילה ביום שלפני
-                    </label>
-                    {policyEditorDraft.useMinLeadDayBefore ? (
-                      <label>
-                        שעת נעילה ביום שלפני
-                        <input
-                          type="time"
-                          value={policyEditorDraft.minLeadDayBeforeTime}
-                          onChange={(event) =>
-                            setPolicyEditorDraft((prev) => ({
-                              ...prev,
-                              minLeadDayBeforeTime: event.target.value
-                            }))
-                          }
-                        />
-                      </label>
-                    ) : null}
+                      <div className="admin-policy-setting-block">
+                        <div className="admin-form-row single">
+                          <label>
+                            שריונים במקביל
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={policyEditorDraft.maxConcurrentReservations}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  maxConcurrentReservations: String(
+                                    Math.max(1, Math.round(Number(event.target.value) || 1))
+                                  )
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="admin-policy-setting-block">
+                        <p className="admin-meta hint">זמן מינימלי לפני תחילת השריון</p>
+                        <div className="admin-policy-lead-modes">
+                          <label className="admin-policy-radio">
+                            <input
+                              type="radio"
+                              name="policy-lead-mode"
+                              checked={policyLeadMode === "none"}
+                              onChange={() =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  useMinLeadHours: false,
+                                  useMinLeadDayBefore: false,
+                                  minLeadHours: "0",
+                                  minLeadDayBeforeTime: prev.minLeadDayBeforeTime || "18:00"
+                                }))
+                              }
+                            />
+                            <span>ללא הגבלה</span>
+                          </label>
+                          <label className="admin-policy-radio">
+                            <input
+                              type="radio"
+                              name="policy-lead-mode"
+                              checked={policyLeadMode === "hours_before"}
+                              onChange={() =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  useMinLeadHours: true,
+                                  useMinLeadDayBefore: false,
+                                  minLeadHours: prev.minLeadHours || "1"
+                                }))
+                              }
+                            />
+                            <span>שעות מראש</span>
+                          </label>
+                          <label className="admin-policy-radio">
+                            <input
+                              type="radio"
+                              name="policy-lead-mode"
+                              checked={policyLeadMode === "day_before_time"}
+                              onChange={() =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  useMinLeadHours: false,
+                                  useMinLeadDayBefore: true,
+                                  minLeadDayBeforeTime: prev.minLeadDayBeforeTime || "18:00"
+                                }))
+                              }
+                            />
+                            <span>נעילה ביום שלפני</span>
+                          </label>
+                        </div>
+
+                        {policyLeadMode === "hours_before" ? (
+                          <label>
+                            מינימום שעות מראש
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.5}
+                              value={policyEditorDraft.minLeadHours}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  minLeadHours: event.target.value
+                                }))
+                              }
+                            />
+                          </label>
+                        ) : null}
+
+                        {policyLeadMode === "day_before_time" ? (
+                          <label>
+                            שעת נעילה ביום שלפני
+                            <input
+                              type="time"
+                              value={policyEditorDraft.minLeadDayBeforeTime}
+                              onChange={(event) =>
+                                setPolicyEditorDraft((prev) => ({
+                                  ...prev,
+                                  minLeadDayBeforeTime: event.target.value
+                                }))
+                              }
+                            />
+                          </label>
+                        ) : null}
+                      </div>
                     </fieldset>
                   </div>
                 </fieldset>

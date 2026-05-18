@@ -256,6 +256,7 @@ export default function App() {
         onInstall={() => { void handleInstall(); }}
         reservationPolicy={reservationPolicy}
         reservationMap={reservationMap}
+        quotaReferenceDate={reservationsWindow.startDate}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen

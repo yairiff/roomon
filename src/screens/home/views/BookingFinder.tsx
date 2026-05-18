@@ -55,6 +55,7 @@ export type BookingFinderProps = {
 type FinderResult = {
   date: string;
   day: DayKey;
+  groupId?: string;
   roomId?: string;
   roomName?: string;
   roomCount?: number;
@@ -69,6 +70,7 @@ type FinderResult = {
 type FinderRoomOption = {
   roomId: string;
   roomName: string;
+  groupId?: string;
   start: number;
   end: number;
   participantsCount: number;
@@ -607,6 +609,7 @@ export default function BookingFinder({
                   items.push({
                     date: dateKey,
                     day: dayKey,
+                    ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
                     roomId: room.id,
                     roomName: room.name,
                     start: candidate.start,
@@ -626,6 +629,7 @@ export default function BookingFinder({
             items.push({
               date: dateKey,
               day: dayKey,
+              ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
               roomId: room.id,
               roomName: room.name,
               start: alignedStart,
@@ -645,6 +649,7 @@ export default function BookingFinder({
             items.push({
               date: dateKey,
               day: dayKey,
+              ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
               start: candidate.start,
               end: candidate.end,
               participantsCount: candidate.participantEmails.length,
@@ -662,6 +667,7 @@ export default function BookingFinder({
         items.push({
           date: dateKey,
           day: dayKey,
+          ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
           start: alignedStart,
           end: alignedEnd,
           participantsCount: Math.max(1, selfParticipantEmails.length),
@@ -718,6 +724,7 @@ export default function BookingFinder({
           roomOptionsById.set(item.roomId, {
             roomId: item.roomId,
             roomName: item.roomName || "חדר",
+            ...(item.groupId ? { groupId: item.groupId } : {}),
             start: item.start,
             end: item.end,
             participantsCount: item.participantsCount,
@@ -748,6 +755,7 @@ export default function BookingFinder({
           existing.roomOptionsById.set(item.roomId, {
             roomId: item.roomId,
             roomName: item.roomName || "חדר",
+            ...(item.groupId ? { groupId: item.groupId } : {}),
             start: item.start,
             end: item.end,
             participantsCount: item.participantsCount,
@@ -890,7 +898,7 @@ export default function BookingFinder({
       endMinutes: roomOption?.end ?? item.end,
       preferredDurationMinutes: durationFilterMinutes,
       ...(roomOption?.roomId ? { roomId: roomOption.roomId } : item.roomId ? { roomId: item.roomId } : {}),
-      ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
+      ...(findCommonTime ? { groupId: roomOption?.groupId || item.groupId || selectedGroupId } : {}),
       mode: { findCommonTime, findRoom },
       participantEmails: roomOption?.participantEmails || item.participantEmails
     });

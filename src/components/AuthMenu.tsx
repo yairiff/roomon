@@ -6,7 +6,8 @@ import type { ReservationPolicy } from "../types/settings";
 import type { ReservationMap } from "../types/reservations";
 import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
-import { addDays, formatDateKey, getWeekStart } from "../lib/date";
+import { addDays, formatDateKey, formatShortDate, getWeekStart, parseDateKey } from "../lib/date";
+import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
 import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
 
 export type AuthMenuProps = {
@@ -26,6 +27,7 @@ export type AuthMenuProps = {
   onInstall?: () => void;
   reservationPolicy?: ReservationPolicy;
   reservationMap?: ReservationMap;
+  quotaReferenceDate?: string;
 };
 
 export default function AuthMenu({
@@ -44,7 +46,8 @@ export default function AuthMenu({
   isStandalone = false,
   onInstall,
   reservationPolicy,
-  reservationMap = {}
+  reservationMap = {},
+  quotaReferenceDate
 }: AuthMenuProps) {
   if (!open) return null;
 
@@ -110,33 +113,57 @@ export default function AuthMenu({
   const quotaRows = useMemo(() => {
     if (!user || !reservationPolicy) return [];
     const email = user.email.toLowerCase();
-    const todayKey = formatDateKey(new Date());
-    const weekStartKey = formatDateKey(getWeekStart(todayKey));
-    const weekEndKey = formatDateKey(addDays(getWeekStart(todayKey), 6));
+    const now = new Date();
+    const todayKey = formatDateKey(now);
+    const tomorrowKey = formatDateKey(addDays(now, 1));
+    const referenceDateKey =
+      quotaReferenceDate && /^\d{4}-\d{2}-\d{2}$/.test(quotaReferenceDate) ? quotaReferenceDate : todayKey;
+    const isTomorrow = referenceDateKey === tomorrowKey;
+    const dayCounterDateKey = isTomorrow ? tomorrowKey : todayKey;
+    const dailyLabel = isTomorrow ? "מחר" : "היום";
+    const dayResetBaseDate = parseDateKey(dayCounterDateKey);
+    const nextDayResetDateKey = formatDateKey(addDays(dayResetBaseDate, 1));
+    const nextDayStart = parseDateKey(tomorrowKey);
+    const hoursUntilDayReset = Math.max(1, Math.ceil((nextDayStart.getTime() - now.getTime()) / (60 * 60 * 1000)));
+    const dailyResetLabel = isTomorrow
+      ? `מתאפס בתאריך ${formatShortDate(nextDayResetDateKey)}`
+      : `מתאפס בעוד ${hoursUntilDayReset} שעות`;
+
+    const currentWeekStart = getWeekStart(todayKey);
+    const currentWeekStartKey = formatDateKey(currentWeekStart);
+    const nextWeekStartDate = addDays(currentWeekStart, 7);
+    const nextWeekStartKey = formatDateKey(nextWeekStartDate);
+    const referenceWeekStartKey = formatDateKey(getWeekStart(referenceDateKey));
+    const isNextWeek = referenceWeekStartKey === nextWeekStartKey;
+    const weekLabel = isNextWeek ? "בשבוע הבא" : "בשבוע זה";
+    const weekStartDate = isNextWeek ? nextWeekStartDate : currentWeekStart;
+    const weekStartKey = isNextWeek ? nextWeekStartKey : currentWeekStartKey;
+    const weekEndKey = formatDateKey(addDays(weekStartDate, 6));
+    const daysUntilWeekReset = Math.max(
+      1,
+      Math.ceil((nextWeekStartDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+    );
+    const weeklyResetLabel = isNextWeek
+      ? `מתאפס בתאריכים ${formatShortDate(weekStartKey)}-${formatShortDate(weekEndKey)}`
+      : `מתאפס בעוד ${daysUntilWeekReset} ימים`;
     const userEntries = Object.entries(reservationMap)
       .flatMap(([dateKey, entries]) =>
         entries
-          .filter((entry) => entry.reservedEmail === email)
-          .map((entry) => ({ ...entry, dateKey }))
+          .map((entry) => ({
+            ...entry,
+            dateKey,
+            usageShare: getReservationUsageShareForEmail(entry, email)
+          }))
+          .filter((entry) => entry.usageShare > 0)
       );
-    const dayEntries = userEntries.filter((entry) => entry.dateKey === todayKey);
+    const dayEntries = userEntries.filter((entry) => entry.dateKey === dayCounterDateKey);
     const weekEntries = userEntries.filter((entry) => entry.dateKey >= weekStartKey && entry.dateKey <= weekEndKey);
-    const totalDayUsed = dayEntries.reduce((sum, entry) => sum + entry.durationMinutes, 0);
-    const totalWeekUsed = weekEntries.reduce((sum, entry) => sum + entry.durationMinutes, 0);
-    const roomDayByRoom = new Map<string, number>();
-    dayEntries.forEach((entry) => {
-      roomDayByRoom.set(entry.roomId, (roomDayByRoom.get(entry.roomId) || 0) + entry.durationMinutes);
-    });
-    const roomWeekByRoom = new Map<string, number>();
-    weekEntries.forEach((entry) => {
-      roomWeekByRoom.set(entry.roomId, (roomWeekByRoom.get(entry.roomId) || 0) + entry.durationMinutes);
-    });
-    const maxRoomDayUsed = Math.max(0, ...Array.from(roomDayByRoom.values()));
-    const maxRoomWeekUsed = Math.max(0, ...Array.from(roomWeekByRoom.values()));
+    const totalDayUsed = dayEntries.reduce((sum, entry) => sum + entry.usageShare, 0);
+    const totalWeekUsed = weekEntries.reduce((sum, entry) => sum + entry.usageShare, 0);
+    const roundDownToHalfHourMinutes = (minutes: number) => Math.max(0, Math.floor(minutes / 30) * 30);
     const formatHours = (minutes: number) => {
-      const hours = minutes / 60;
-      const rounded = Math.round(hours * 10) / 10;
-      return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+      const hours = roundDownToHalfHourMinutes(minutes) / 60;
+      return Number.isInteger(hours) ? String(hours) : String(hours);
     };
     const toLimitMinutes = (hours: number) => {
       const numeric = Number(hours);
@@ -145,34 +172,36 @@ export default function AuthMenu({
     };
     const rows = [
       {
-        label: "לחדר ביום",
-        used: maxRoomDayUsed,
-        limit: toLimitMinutes(reservationPolicy.maxHoursPerRoomPerDay)
-      },
-      {
-        label: "לחדר בשבוע",
-        used: maxRoomWeekUsed,
-        limit: toLimitMinutes(reservationPolicy.maxHoursPerRoomPerWeek)
-      },
-      {
-        label: "סה\"כ ביום",
+        label: dailyLabel,
         used: totalDayUsed,
-        limit: toLimitMinutes(reservationPolicy.maxHoursPerDayTotal)
+        limit: toLimitMinutes(reservationPolicy.maxHoursPerDayTotal),
+        resetLabel: dailyResetLabel
       },
       {
-        label: "סה\"כ בשבוע",
+        label: weekLabel,
         used: totalWeekUsed,
-        limit: toLimitMinutes(reservationPolicy.maxHoursPerWeekTotal)
+        limit: toLimitMinutes(reservationPolicy.maxHoursPerWeekTotal),
+        resetLabel: weeklyResetLabel
       }
     ];
     return rows
       .filter((row) => Number.isFinite(row.limit) && row.limit > 0)
-      .map((row) => ({
-        ...row,
-        value: `${formatHours(row.used)} / ${formatHours(row.limit)} שעות`,
-        percent: Math.max(0, Math.min(100, (row.used / Math.max(1, row.limit)) * 100))
-      }));
-  }, [reservationMap, reservationPolicy, user]);
+      .map((row) => {
+        const remaining = Math.max(0, row.limit - row.used);
+        const remainingPercent = Math.max(0, Math.min(100, (remaining / Math.max(1, row.limit)) * 100));
+        const totalHoursLabel = formatHours(row.limit);
+        const remainingHoursLabel = formatHours(remaining);
+        return {
+          ...row,
+          remaining,
+          totalLabel: totalHoursLabel,
+          remainingLabel: remainingHoursLabel,
+          summaryLabel: `נותרו ${remainingHoursLabel} שעות`,
+          percent: remainingPercent,
+          markerPercent: remainingPercent
+        };
+      });
+  }, [quotaReferenceDate, reservationMap, reservationPolicy, user]);
   const initials = (() => {
     const source = (user?.name || "").trim() || (user?.email || "").trim();
     if (!source) return "";
@@ -356,19 +385,22 @@ export default function AuthMenu({
               </div>
             </div>
             {quotaRows.length ? (
-              <div className="auth-quotas" aria-label="מכסות שריון">
-                <p className="auth-quotas-title">מכסות שריון</p>
+              <div className="auth-quotas" aria-label="מכסות שריונים">
+                <p className="auth-quotas-title">מכסות שריונים</p>
                 <ul className="auth-quotas-list">
                   {quotaRows.map((row) => (
                     <li key={row.label} className="auth-quotas-row">
                       <div className="quota-progress-row">
                         <div className="quota-progress-head">
                           <span className="auth-quotas-label">{row.label}</span>
-                          <span className="auth-quotas-value">{row.value}</span>
+                          <span className="quota-progress-inline-value">{row.summaryLabel}</span>
                         </div>
-                        <span className="quota-progress-track" aria-hidden="true">
-                          <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                        <span className="quota-progress-wrap" aria-hidden="true">
+                          <span className="quota-progress-track">
+                            <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                          </span>
                         </span>
+                        <span className="quota-progress-reset-date">{row.resetLabel}</span>
                       </div>
                     </li>
                   ))}
