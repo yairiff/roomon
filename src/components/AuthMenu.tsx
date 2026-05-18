@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import type { User } from "../types/auth";
+import type { ReservationPolicy } from "../types/settings";
+import type { ReservationMap } from "../types/reservations";
 import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
+import { addDays, formatDateKey, getWeekStart } from "../lib/date";
 import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
 
 export type AuthMenuProps = {
@@ -21,6 +24,8 @@ export type AuthMenuProps = {
   installAvailable?: boolean;
   isStandalone?: boolean;
   onInstall?: () => void;
+  reservationPolicy?: ReservationPolicy;
+  reservationMap?: ReservationMap;
 };
 
 export default function AuthMenu({
@@ -37,7 +42,9 @@ export default function AuthMenu({
   onToggleDarkMode,
   installAvailable = false,
   isStandalone = false,
-  onInstall
+  onInstall,
+  reservationPolicy,
+  reservationMap = {}
 }: AuthMenuProps) {
   if (!open) return null;
 
@@ -100,6 +107,72 @@ export default function AuthMenu({
   };
 
   const pictureUrl = (user?.picture || "").trim();
+  const quotaRows = useMemo(() => {
+    if (!user || !reservationPolicy) return [];
+    const email = user.email.toLowerCase();
+    const todayKey = formatDateKey(new Date());
+    const weekStartKey = formatDateKey(getWeekStart(todayKey));
+    const weekEndKey = formatDateKey(addDays(getWeekStart(todayKey), 6));
+    const userEntries = Object.entries(reservationMap)
+      .flatMap(([dateKey, entries]) =>
+        entries
+          .filter((entry) => entry.reservedEmail === email)
+          .map((entry) => ({ ...entry, dateKey }))
+      );
+    const dayEntries = userEntries.filter((entry) => entry.dateKey === todayKey);
+    const weekEntries = userEntries.filter((entry) => entry.dateKey >= weekStartKey && entry.dateKey <= weekEndKey);
+    const totalDayUsed = dayEntries.reduce((sum, entry) => sum + entry.durationMinutes, 0);
+    const totalWeekUsed = weekEntries.reduce((sum, entry) => sum + entry.durationMinutes, 0);
+    const roomDayByRoom = new Map<string, number>();
+    dayEntries.forEach((entry) => {
+      roomDayByRoom.set(entry.roomId, (roomDayByRoom.get(entry.roomId) || 0) + entry.durationMinutes);
+    });
+    const roomWeekByRoom = new Map<string, number>();
+    weekEntries.forEach((entry) => {
+      roomWeekByRoom.set(entry.roomId, (roomWeekByRoom.get(entry.roomId) || 0) + entry.durationMinutes);
+    });
+    const maxRoomDayUsed = Math.max(0, ...Array.from(roomDayByRoom.values()));
+    const maxRoomWeekUsed = Math.max(0, ...Array.from(roomWeekByRoom.values()));
+    const formatHours = (minutes: number) => {
+      const hours = minutes / 60;
+      const rounded = Math.round(hours * 10) / 10;
+      return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+    };
+    const toLimitMinutes = (hours: number) => {
+      const numeric = Number(hours);
+      if (!Number.isFinite(numeric) || numeric <= 0) return Number.POSITIVE_INFINITY;
+      return Math.max(0, Math.round(numeric * 60));
+    };
+    const rows = [
+      {
+        label: "לחדר ביום",
+        used: maxRoomDayUsed,
+        limit: toLimitMinutes(reservationPolicy.maxHoursPerRoomPerDay)
+      },
+      {
+        label: "לחדר בשבוע",
+        used: maxRoomWeekUsed,
+        limit: toLimitMinutes(reservationPolicy.maxHoursPerRoomPerWeek)
+      },
+      {
+        label: "סה\"כ ביום",
+        used: totalDayUsed,
+        limit: toLimitMinutes(reservationPolicy.maxHoursPerDayTotal)
+      },
+      {
+        label: "סה\"כ בשבוע",
+        used: totalWeekUsed,
+        limit: toLimitMinutes(reservationPolicy.maxHoursPerWeekTotal)
+      }
+    ];
+    return rows
+      .filter((row) => Number.isFinite(row.limit) && row.limit > 0)
+      .map((row) => ({
+        ...row,
+        value: `${formatHours(row.used)} / ${formatHours(row.limit)} שעות`,
+        percent: Math.max(0, Math.min(100, (row.used / Math.max(1, row.limit)) * 100))
+      }));
+  }, [reservationMap, reservationPolicy, user]);
   const initials = (() => {
     const source = (user?.name || "").trim() || (user?.email || "").trim();
     if (!source) return "";
@@ -282,6 +355,26 @@ export default function AuthMenu({
                 <span className="auth-user-email">{user.email}</span>
               </div>
             </div>
+            {quotaRows.length ? (
+              <div className="auth-quotas" aria-label="מכסות שריון">
+                <p className="auth-quotas-title">מכסות שריון</p>
+                <ul className="auth-quotas-list">
+                  {quotaRows.map((row) => (
+                    <li key={row.label} className="auth-quotas-row">
+                      <div className="quota-progress-row">
+                        <div className="quota-progress-head">
+                          <span className="auth-quotas-label">{row.label}</span>
+                          <span className="auth-quotas-value">{row.value}</span>
+                        </div>
+                        <span className="quota-progress-track" aria-hidden="true">
+                          <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {user.role === "admin" ? (
               <>
                 <button

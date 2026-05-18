@@ -14,6 +14,7 @@ import SignupOverlay from "./components/SignupOverlay";
 import { addDays, formatDateKey, getWeekStart } from "./lib/date";
 import { weekDays } from "./config";
 import { db } from "./lib/firebase";
+import { useScheduleSettings } from "./hooks/useScheduleSettings";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
@@ -69,6 +70,7 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const collaborationEnabled = user?.betaUser === true;
+  const { reservationPolicy } = useScheduleSettings();
 
   const reservationsCount = useMemo(() => {
     // Kept for potential future UI.
@@ -252,6 +254,8 @@ export default function App() {
         installAvailable={Boolean(installPrompt)}
         isStandalone={isStandalone}
         onInstall={() => { void handleInstall(); }}
+        reservationPolicy={reservationPolicy}
+        reservationMap={reservationMap}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen

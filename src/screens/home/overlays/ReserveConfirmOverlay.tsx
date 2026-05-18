@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
+import { parseDateKey } from "../../../lib/date";
 import type { ReserveRequest } from "../../../types/reservations";
 import type { DirectoryUser } from "../../../types/admin";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
@@ -30,6 +31,16 @@ export type ReserveConfirmOverlayProps = {
   limitHoursPerDayTotal: number;
   limitHoursPerWeekTotal: number;
   limitMaxDaysForward: number;
+  quotaUsage: {
+    roomDayUsedMinutes: number;
+    roomDayLimitMinutes: number;
+    roomWeekUsedMinutes: number;
+    roomWeekLimitMinutes: number;
+    dayUsedMinutes: number;
+    dayLimitMinutes: number;
+    weekUsedMinutes: number;
+    weekLimitMinutes: number;
+  };
   groupOptions?: Array<{
     id: string;
     name: string;
@@ -71,6 +82,7 @@ export default function ReserveConfirmOverlay({
   limitHoursPerDayTotal,
   limitHoursPerWeekTotal,
   limitMaxDaysForward,
+  quotaUsage,
   groupOptions = [],
   directoryUsers = [],
   currentEmail,
@@ -83,7 +95,53 @@ export default function ReserveConfirmOverlay({
   onConfirm,
   onClose
 }: ReserveConfirmOverlayProps) {
-  const formatHoursLimit = (hours: number) => (hours <= 0 ? "ללא הגבלה" : `${hours}`);
+  const formatQuotaValue = (usedMinutes: number, limitMinutes: number) => {
+    const usedHours = Math.max(0, usedMinutes) / 60;
+    const limitHours = Math.max(0, limitMinutes) / 60;
+    const formatHours = (value: number) => {
+      const rounded = Math.round(value * 10) / 10;
+      return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+    };
+    return `${formatHours(usedHours)} / ${formatHours(limitHours)} שעות`;
+  };
+  const quotaRows = useMemo(() => {
+    const rows = [
+      { label: "חדר/יום", used: quotaUsage.roomDayUsedMinutes, limit: quotaUsage.roomDayLimitMinutes },
+      { label: "חדר/שבוע", used: quotaUsage.roomWeekUsedMinutes, limit: quotaUsage.roomWeekLimitMinutes },
+      { label: "סה\"כ/יום", used: quotaUsage.dayUsedMinutes, limit: quotaUsage.dayLimitMinutes },
+      { label: "סה\"כ/שבוע", used: quotaUsage.weekUsedMinutes, limit: quotaUsage.weekLimitMinutes }
+    ];
+    return rows
+      .filter((row) => Number.isFinite(row.limit) && row.limit > 0)
+      .map((row) => {
+        const used = Math.max(0, row.used);
+        const limit = Math.max(1, row.limit);
+        const percent = Math.max(0, Math.min(100, (used / limit) * 100));
+        return {
+          ...row,
+          used,
+          limit,
+          percent,
+          value: formatQuotaValue(used, limit)
+        };
+      });
+  }, [quotaUsage]);
+  const forwardQuota = useMemo(() => {
+    if (!Number.isFinite(limitMaxDaysForward) || limitMaxDaysForward <= 0) return null;
+    const today = new Date();
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const target = parseDateKey(request.date);
+    const deltaDays = Math.max(
+      0,
+      Math.floor((target.getTime() - todayMidnight.getTime()) / (24 * 60 * 60 * 1000))
+    );
+    const percent = Math.max(0, Math.min(100, (deltaDays / limitMaxDaysForward) * 100));
+    return {
+      label: "קדימה",
+      value: `${deltaDays} / ${limitMaxDaysForward} ימים`,
+      percent
+    };
+  }, [limitMaxDaysForward, request.date]);
   const [startMinutes, setStartMinutes] = useState(initialStart);
   const [endMinutes, setEndMinutes] = useState(initialStart + initialDuration);
   const [privateDescription, setPrivateDescription] = useState(initialPrivateDescription);
@@ -267,12 +325,20 @@ export default function ReserveConfirmOverlay({
                 <InfoOutlinedIcon fontSize="small" />
               </button>
               <div className={`reserve-tooltip${infoOpen ? " open" : ""}`} role="tooltip">
-                <div>חדר/יום: {formatHoursLimit(limitHoursPerRoomPerDay)}.</div>
-                <div>חדר/שבוע: {formatHoursLimit(limitHoursPerRoomPerWeek)}.</div>
-                <div>סה&quot;כ/יום: {formatHoursLimit(limitHoursPerDayTotal)}.</div>
-                <div>סה&quot;כ/שבוע: {formatHoursLimit(limitHoursPerWeekTotal)}.</div>
-                <div>קדימה: {limitMaxDaysForward <= 0 ? "ללא הגבלה" : `${limitMaxDaysForward} ימים`}.</div>
-                <div>להחרגה יש לפנות למנהל מורשה.</div>
+                {[...quotaRows, ...(forwardQuota ? [forwardQuota] : [])].map((row) => (
+                  <div key={`quota-row-${row.label}`} className="quota-progress-row">
+                    <div className="quota-progress-head">
+                      <span>{row.label}</span>
+                      <span>{row.value}</span>
+                    </div>
+                    <span className="quota-progress-track" aria-hidden="true">
+                      <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                    </span>
+                  </div>
+                ))}
+                {![...quotaRows, ...(forwardQuota ? [forwardQuota] : [])].length ? (
+                  <div>אין מכסות פעילות.</div>
+                ) : null}
               </div>
             </div>
             <select

@@ -27,6 +27,16 @@ export type PendingConfirm = {
   limitHoursPerDayTotal: number;
   limitHoursPerWeekTotal: number;
   limitMaxDaysForward: number;
+  quotaUsage: {
+    roomDayUsedMinutes: number;
+    roomDayLimitMinutes: number;
+    roomWeekUsedMinutes: number;
+    roomWeekLimitMinutes: number;
+    dayUsedMinutes: number;
+    dayLimitMinutes: number;
+    weekUsedMinutes: number;
+    weekLimitMinutes: number;
+  };
 };
 
 type UseReserveFlowArgs = {
@@ -301,6 +311,14 @@ export function useReserveFlow({
 
       return {
         effectivePolicy,
+        roomUsed,
+        roomWeekUsed,
+        dayUsed,
+        weekUsed,
+        roomDayLimitMinutes,
+        roomWeekLimitMinutes,
+        dayTotalLimitMinutes,
+        weekTotalLimitMinutes,
         roomRemaining,
         roomWeekRemaining,
         dayRemaining,
@@ -405,7 +423,17 @@ export function useReserveFlow({
         startMinutes: alignedStart,
         windowStart: alignedWindowStart,
         userRemainingMinutes: remaining.effectiveRemaining,
-        effectivePolicy: remaining.effectivePolicy
+        effectivePolicy: remaining.effectivePolicy,
+        quotaUsage: {
+          roomDayUsedMinutes: Math.max(0, remaining.roomUsed),
+          roomDayLimitMinutes: remaining.roomDayLimitMinutes,
+          roomWeekUsedMinutes: Math.max(0, remaining.roomWeekUsed),
+          roomWeekLimitMinutes: remaining.roomWeekLimitMinutes,
+          dayUsedMinutes: Math.max(0, remaining.dayUsed),
+          dayLimitMinutes: remaining.dayTotalLimitMinutes,
+          weekUsedMinutes: Math.max(0, remaining.weekUsed),
+          weekLimitMinutes: remaining.weekTotalLimitMinutes
+        }
       };
     },
     [buildIntervals, config.endHour, config.startHour, getPolicyContext, getRemainingMinutes, roomMeta]
@@ -453,10 +481,35 @@ export function useReserveFlow({
         return;
       }
 
-      const availability = getAvailability(request);
-      if (!availability) return;
+      const requestedDuration = Math.max(
+        MIN_DURATION,
+        Math.floor((request.durationMinutes || MIN_DURATION) / STEP) * STEP || MIN_DURATION
+      );
+      const requestedLimitMessage = getLimitViolationMessage(
+        request.date,
+        request.roomId,
+        request.time,
+        requestedDuration
+      );
+      if (requestedLimitMessage) {
+        showToast(requestedLimitMessage);
+      }
 
-      const { limitEnd, startMinutes, windowStart, userRemainingMinutes, effectivePolicy } = availability;
+      const availability = getAvailability(request);
+      if (!availability) {
+        const minimumLimitMessage = getLimitViolationMessage(
+          request.date,
+          request.roomId,
+          request.time,
+          MIN_DURATION
+        );
+        if (minimumLimitMessage) {
+          showToast(minimumLimitMessage);
+        }
+        return;
+      }
+
+      const { limitEnd, startMinutes, windowStart, userRemainingMinutes, effectivePolicy, quotaUsage } = availability;
       const windowDuration = limitEnd - startMinutes;
       const maxDuration = Math.min(windowDuration, userRemainingMinutes);
       if (maxDuration < MIN_DURATION) return;
@@ -479,7 +532,8 @@ export function useReserveFlow({
         limitHoursPerRoomPerWeek: effectivePolicy.maxHoursPerRoomPerWeek,
         limitHoursPerDayTotal: effectivePolicy.maxHoursPerDayTotal,
         limitHoursPerWeekTotal: effectivePolicy.maxHoursPerWeekTotal,
-        limitMaxDaysForward: effectivePolicy.maxDaysForward
+        limitMaxDaysForward: effectivePolicy.maxDaysForward,
+        quotaUsage
       });
 
       if (view === "finder" && !options?.keepCurrentView) {
@@ -492,6 +546,7 @@ export function useReserveFlow({
       getAvailability,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getLimitViolationMessage,
       getPolicyDayViolationMessage,
       openRoomDay,
       setAuthError,
@@ -725,7 +780,17 @@ export function useReserveFlow({
         limitHoursPerRoomPerWeek: remaining.effectivePolicy.maxHoursPerRoomPerWeek,
         limitHoursPerDayTotal: remaining.effectivePolicy.maxHoursPerDayTotal,
         limitHoursPerWeekTotal: remaining.effectivePolicy.maxHoursPerWeekTotal,
-        limitMaxDaysForward: remaining.effectivePolicy.maxDaysForward
+        limitMaxDaysForward: remaining.effectivePolicy.maxDaysForward,
+        quotaUsage: {
+          roomDayUsedMinutes: Math.max(0, remaining.roomUsed),
+          roomDayLimitMinutes: remaining.roomDayLimitMinutes,
+          roomWeekUsedMinutes: Math.max(0, remaining.roomWeekUsed),
+          roomWeekLimitMinutes: remaining.roomWeekLimitMinutes,
+          dayUsedMinutes: Math.max(0, remaining.dayUsed),
+          dayLimitMinutes: remaining.dayTotalLimitMinutes,
+          weekUsedMinutes: Math.max(0, remaining.weekUsed),
+          weekLimitMinutes: remaining.weekTotalLimitMinutes
+        }
       });
     },
     [

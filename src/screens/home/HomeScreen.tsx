@@ -3481,6 +3481,7 @@ export default function HomeScreen({
           limitHoursPerDayTotal={pendingConfirm.limitHoursPerDayTotal}
           limitHoursPerWeekTotal={pendingConfirm.limitHoursPerWeekTotal}
           limitMaxDaysForward={pendingConfirm.limitMaxDaysForward}
+          quotaUsage={pendingConfirm.quotaUsage}
           groupOptions={reservationGroupOptions}
           directoryUsers={users}
           currentEmail={currentUser?.email}
