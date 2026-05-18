@@ -90,6 +90,24 @@ const toDayDelta = (fromDateKey: string, toDateKey: string) => {
   return Math.floor(ms / (24 * 60 * 60 * 1000));
 };
 
+const toWeekKey = (dateKey: string) => formatDateKey(getWeekStart(dateKey));
+
+const policyMatchesSlot = (
+  policy: ReservationScopedPolicy,
+  input: { dateKey: string; dayKey: DayKey; startMinutes: number; roomId?: string }
+) => {
+  const scope = policy.scope;
+  if (scope.roomIds.length) {
+    if (!input.roomId || !scope.roomIds.includes(input.roomId)) return false;
+  }
+  if (scope.dayKeys.length && !scope.dayKeys.includes(input.dayKey)) return false;
+  if (scope.dateStart && input.dateKey < scope.dateStart) return false;
+  if (scope.dateEnd && input.dateKey > scope.dateEnd) return false;
+  if (scope.startMinutes !== undefined && input.startMinutes < scope.startMinutes) return false;
+  if (scope.endMinutes !== undefined && input.startMinutes >= scope.endMinutes) return false;
+  return true;
+};
+
 export function useReserveFlow({
   currentUser,
   view,
@@ -116,6 +134,7 @@ export function useReserveFlow({
   checkExternalAvailability
 }: UseReserveFlowArgs) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  const currentUserEmail = useMemo(() => (currentUser?.email || "").trim().toLowerCase(), [currentUser?.email]);
   const policyDayKeySet = useMemo(() => {
     const valid = allowedPolicyDayKeys.filter(
       (dayKey): dayKey is DayKey =>
@@ -130,12 +149,48 @@ export function useReserveFlow({
     const fallback: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
     return new Set<DayKey>(valid.length ? valid : fallback);
   }, [allowedPolicyDayKeys]);
+  const usageIndex = useMemo(() => {
+    const dayTotals = new Map<string, number>();
+    const weekTotals = new Map<string, number>();
+    const roomDayTotals = new Map<string, number>();
+    const roomWeekTotals = new Map<string, number>();
+    const byReservationId = new Map<
+      string,
+      { dateKey: string; weekKey: string; roomId: string; usageShare: number }
+    >();
+    if (!currentUserEmail) {
+      return { dayTotals, weekTotals, roomDayTotals, roomWeekTotals, byReservationId };
+    }
+
+    Object.entries(reservationMap).forEach(([dateKey, entries]) => {
+      const weekKey = toWeekKey(dateKey);
+      entries.forEach((entry) => {
+        const usageShare = getReservationUsageShareForEmail(entry, currentUserEmail);
+        if (usageShare <= 0) return;
+        const roomDayKey = `${dateKey}::${entry.roomId}`;
+        const roomWeekKey = `${weekKey}::${entry.roomId}`;
+        dayTotals.set(dateKey, (dayTotals.get(dateKey) || 0) + usageShare);
+        weekTotals.set(weekKey, (weekTotals.get(weekKey) || 0) + usageShare);
+        roomDayTotals.set(roomDayKey, (roomDayTotals.get(roomDayKey) || 0) + usageShare);
+        roomWeekTotals.set(roomWeekKey, (roomWeekTotals.get(roomWeekKey) || 0) + usageShare);
+        byReservationId.set(entry.id, {
+          dateKey,
+          weekKey,
+          roomId: entry.roomId,
+          usageShare
+        });
+      });
+    });
+
+    return { dayTotals, weekTotals, roomDayTotals, roomWeekTotals, byReservationId };
+  }, [currentUserEmail, reservationMap]);
 
   const getPolicyContext = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
       const orderedPolicies = reservationPolicies.filter((policy) => policy.enabled);
       let effectivePolicy: ReservationPolicy = { ...reservationPolicy };
       const matchedPolicies: { id: string; name: string; rules: Partial<ReservationPolicy> }[] = [];
+      const dayKey = getDayKeyFromDateKey(dateKey);
 
       orderedPolicies.forEach((policy) => {
         if (policy.isDefault) {
@@ -144,14 +199,7 @@ export function useReserveFlow({
             ...(policy.rules as ReservationPolicy)
           };
         } else {
-          const scope = policy.scope;
-          if (scope.roomIds.length && !scope.roomIds.includes(roomId)) return;
-          const dayKey = getDayKeyFromDateKey(dateKey);
-          if (scope.dayKeys.length && !scope.dayKeys.includes(dayKey)) return;
-          if (scope.dateStart && dateKey < scope.dateStart) return;
-          if (scope.dateEnd && dateKey > scope.dateEnd) return;
-          if (scope.startMinutes !== undefined && startMinutes < scope.startMinutes) return;
-          if (scope.endMinutes !== undefined && startMinutes >= scope.endMinutes) return;
+          if (!policyMatchesSlot(policy, { dateKey, dayKey, roomId, startMinutes })) return;
           matchedPolicies.push({
             id: policy.id,
             name: policy.name,
@@ -169,6 +217,38 @@ export function useReserveFlow({
       }
 
       return { effectivePolicy, matchedPolicies, appliedPolicyName: firstMatched?.name || "" };
+    },
+    [reservationPolicies, reservationPolicy]
+  );
+  const getGlobalQuotaPolicyForSlot = useCallback(
+    (dateKey: string, startMinutes: number) => {
+      const orderedPolicies = reservationPolicies.filter((policy) => policy.enabled);
+      const dayKey = getDayKeyFromDateKey(dateKey);
+      let effectivePolicy: ReservationPolicy = { ...reservationPolicy };
+      let firstMatched: ReservationScopedPolicy | null = null;
+
+      orderedPolicies.forEach((policy) => {
+        if (policy.isDefault) {
+          effectivePolicy = {
+            ...effectivePolicy,
+            ...(policy.rules as ReservationPolicy)
+          };
+          return;
+        }
+        // Progress bars represent only global personal day/week quotas.
+        if (policy.scope.roomIds.length) return;
+        if (!policyMatchesSlot(policy, { dateKey, dayKey, startMinutes })) return;
+        if (!firstMatched) firstMatched = policy;
+      });
+
+      if (firstMatched) {
+        effectivePolicy = {
+          ...effectivePolicy,
+          ...(firstMatched.rules as Partial<ReservationPolicy>)
+        };
+      }
+
+      return effectivePolicy;
     },
     [reservationPolicies, reservationPolicy]
   );
@@ -196,80 +276,67 @@ export function useReserveFlow({
 
   const getUserReservedMinutesForRoomDate = useCallback(
     (dateKey: string, roomId: string, excludeReservationId?: string) => {
-      if (!currentUser?.email) return 0;
-      const currentEmail = (currentUser.email || "").trim().toLowerCase();
-      return (reservationMap[dateKey] || [])
-        .filter((entry) => entry.id !== excludeReservationId && entry.roomId === roomId)
-        .reduce((sum, entry) => sum + getReservationUsageShareForEmail(entry, currentEmail), 0);
+      if (!currentUserEmail) return 0;
+      const key = `${dateKey}::${roomId}`;
+      let total = usageIndex.roomDayTotals.get(key) || 0;
+      if (excludeReservationId) {
+        const excluded = usageIndex.byReservationId.get(excludeReservationId);
+        if (excluded && excluded.dateKey === dateKey && excluded.roomId === roomId) {
+          total -= excluded.usageShare;
+        }
+      }
+      return Math.max(0, total);
     },
-    [currentUser?.email, reservationMap]
+    [currentUserEmail, usageIndex.byReservationId, usageIndex.roomDayTotals]
   );
 
   const getUserReservedMinutesForDate = useCallback(
     (dateKey: string, excludeReservationId?: string) => {
-      if (!currentUser?.email) return 0;
-      const currentEmail = (currentUser.email || "").trim().toLowerCase();
-      return (reservationMap[dateKey] || [])
-        .filter((entry) => entry.id !== excludeReservationId)
-        .reduce((sum, entry) => sum + getReservationUsageShareForEmail(entry, currentEmail), 0);
+      if (!currentUserEmail) return 0;
+      let total = usageIndex.dayTotals.get(dateKey) || 0;
+      if (excludeReservationId) {
+        const excluded = usageIndex.byReservationId.get(excludeReservationId);
+        if (excluded && excluded.dateKey === dateKey) {
+          total -= excluded.usageShare;
+        }
+      }
+      return Math.max(0, total);
     },
-    [currentUser?.email, reservationMap]
+    [currentUserEmail, usageIndex.byReservationId, usageIndex.dayTotals]
   );
 
   const getUserReservedMinutesForRoomWeek = useCallback(
     (dateKey: string, roomId: string, excludeReservationId?: string) => {
-      if (!currentUser?.email) return 0;
-      const currentEmail = (currentUser.email || "").trim().toLowerCase();
-      const weekStart = getWeekStart(dateKey);
-      const weekStartKey = formatDateKey(weekStart);
-      const weekEndKey = formatDateKey(addDays(weekStart, 6));
-      let total = 0;
-      Object.entries(reservationMap).forEach(([key, entries]) => {
-        if (key < weekStartKey || key > weekEndKey) return;
-        entries.forEach((entry) => {
-          if (entry.id === excludeReservationId) return;
-          if (entry.roomId !== roomId) return;
-          total += getReservationUsageShareForEmail(entry, currentEmail);
-        });
-      });
-      return total;
+      if (!currentUserEmail) return 0;
+      const weekKey = toWeekKey(dateKey);
+      const key = `${weekKey}::${roomId}`;
+      let total = usageIndex.roomWeekTotals.get(key) || 0;
+      if (excludeReservationId) {
+        const excluded = usageIndex.byReservationId.get(excludeReservationId);
+        if (excluded && excluded.weekKey === weekKey && excluded.roomId === roomId) {
+          total -= excluded.usageShare;
+        }
+      }
+      return Math.max(0, total);
     },
-    [currentUser?.email, reservationMap]
+    [currentUserEmail, usageIndex.byReservationId, usageIndex.roomWeekTotals]
   );
 
   const getUserReservedMinutesForWeek = useCallback(
     (dateKey: string, excludeReservationId?: string) => {
-      if (!currentUser?.email) return 0;
-      const currentEmail = (currentUser.email || "").trim().toLowerCase();
-      const weekStart = getWeekStart(dateKey);
-      const weekStartKey = formatDateKey(weekStart);
-      const weekEndKey = formatDateKey(addDays(weekStart, 6));
-      let total = 0;
-      Object.entries(reservationMap).forEach(([key, entries]) => {
-        if (key < weekStartKey || key > weekEndKey) return;
-        entries.forEach((entry) => {
-          if (entry.id === excludeReservationId) return;
-          total += getReservationUsageShareForEmail(entry, currentEmail);
-        });
-      });
-      return total;
+      if (!currentUserEmail) return 0;
+      const weekKey = toWeekKey(dateKey);
+      let total = usageIndex.weekTotals.get(weekKey) || 0;
+      if (excludeReservationId) {
+        const excluded = usageIndex.byReservationId.get(excludeReservationId);
+        if (excluded && excluded.weekKey === weekKey) {
+          total -= excluded.usageShare;
+        }
+      }
+      return Math.max(0, total);
     },
-    [currentUser?.email, reservationMap]
+    [currentUserEmail, usageIndex.byReservationId, usageIndex.weekTotals]
   );
-
-  const getQuotaCounterWeekDateKey = useCallback((reservationDateKey: string) => {
-    const todayKey = formatDateKey(new Date());
-    const currentWeekStart = getWeekStart(todayKey);
-    const nextWeekStartKey = formatDateKey(addDays(currentWeekStart, 7));
-    const reservationWeekStartKey = formatDateKey(getWeekStart(reservationDateKey));
-    return reservationWeekStartKey === nextWeekStartKey ? reservationDateKey : todayKey;
-  }, []);
-
-  const getQuotaCounterDayDateKey = useCallback((reservationDateKey: string) => {
-    const todayKey = formatDateKey(new Date());
-    const tomorrowKey = formatDateKey(addDays(new Date(), 1));
-    return reservationDateKey === tomorrowKey ? reservationDateKey : todayKey;
-  }, []);
 
   const getForwardLimitViolationMessage = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
@@ -457,10 +524,9 @@ export function useReserveFlow({
       const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
       const remaining = getRemainingMinutes(request.date, request.roomId, alignedStart, excludeReservationId);
       if (windowDuration < MIN_DURATION || remaining.effectiveRemaining < MIN_DURATION) return null;
-      const quotaCounterDayDateKey = getQuotaCounterDayDateKey(request.date);
-      const currentDayUsed = getUserReservedMinutesForDate(quotaCounterDayDateKey, excludeReservationId);
-      const quotaCounterDateKey = getQuotaCounterWeekDateKey(request.date);
-      const currentWeekUsed = getUserReservedMinutesForWeek(quotaCounterDateKey, excludeReservationId);
+      const currentDayUsed = getUserReservedMinutesForDate(request.date, excludeReservationId);
+      const currentWeekUsed = getUserReservedMinutesForWeek(request.date, excludeReservationId);
+      const globalQuotaPolicy = getGlobalQuotaPolicyForSlot(request.date, alignedStart);
 
       let windowStart = minStart;
       for (const interval of intervals) {
@@ -483,9 +549,9 @@ export function useReserveFlow({
           roomWeekUsedMinutes: Math.max(0, remaining.roomWeekUsed),
           roomWeekLimitMinutes: remaining.roomWeekLimitMinutes,
           dayUsedMinutes: Math.max(0, currentDayUsed),
-          dayLimitMinutes: remaining.dayTotalLimitMinutes,
+          dayLimitMinutes: toPolicyLimitMinutes(globalQuotaPolicy.maxHoursPerDayTotal),
           weekUsedMinutes: Math.max(0, currentWeekUsed),
-          weekLimitMinutes: remaining.weekTotalLimitMinutes
+          weekLimitMinutes: toPolicyLimitMinutes(globalQuotaPolicy.maxHoursPerWeekTotal)
         }
       };
     },
@@ -493,13 +559,11 @@ export function useReserveFlow({
       buildIntervals,
       config.endHour,
       config.startHour,
-      getQuotaCounterDayDateKey,
+      getGlobalQuotaPolicyForSlot,
       getPolicyContext,
-      getQuotaCounterWeekDateKey,
       getRemainingMinutes,
       getUserReservedMinutesForDate,
-      getUserReservedMinutesForWeek,
-      roomMeta
+      getUserReservedMinutesForWeek
     ]
   );
 
@@ -827,10 +891,9 @@ export function useReserveFlow({
         if (limitMessage) showToast(limitMessage);
         return;
       }
-      const quotaCounterDayDateKey = getQuotaCounterDayDateKey(dateKey);
-      const currentDayUsed = getUserReservedMinutesForDate(quotaCounterDayDateKey, reservationId);
-      const quotaCounterDateKey = getQuotaCounterWeekDateKey(dateKey);
-      const currentWeekUsed = getUserReservedMinutesForWeek(quotaCounterDateKey, reservationId);
+      const currentDayUsed = getUserReservedMinutesForDate(dateKey, reservationId);
+      const currentWeekUsed = getUserReservedMinutesForWeek(dateKey, reservationId);
+      const globalQuotaPolicy = getGlobalQuotaPolicyForSlot(dateKey, alignedStart);
 
       const request: ReserveRequest = {
         date: dateKey,
@@ -862,9 +925,9 @@ export function useReserveFlow({
           roomWeekUsedMinutes: Math.max(0, remaining.roomWeekUsed),
           roomWeekLimitMinutes: remaining.roomWeekLimitMinutes,
           dayUsedMinutes: Math.max(0, currentDayUsed),
-          dayLimitMinutes: remaining.dayTotalLimitMinutes,
+          dayLimitMinutes: toPolicyLimitMinutes(globalQuotaPolicy.maxHoursPerDayTotal),
           weekUsedMinutes: Math.max(0, currentWeekUsed),
-          weekLimitMinutes: remaining.weekTotalLimitMinutes
+          weekLimitMinutes: toPolicyLimitMinutes(globalQuotaPolicy.maxHoursPerWeekTotal)
         }
       });
     },
@@ -877,15 +940,13 @@ export function useReserveFlow({
       getBlockReservationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getGlobalQuotaPolicyForSlot,
       getLimitViolationMessage,
       getPolicyDayViolationMessage,
-      getQuotaCounterDayDateKey,
-      getQuotaCounterWeekDateKey,
       getRemainingMinutes,
       getUserReservedMinutesForDate,
       getUserReservedMinutesForWeek,
       reservationMap,
-      roomMeta,
       showToast
     ]
   );

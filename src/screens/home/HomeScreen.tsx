@@ -55,6 +55,7 @@ export type HomeScreenProps = {
   setAuthError: (message: string) => void;
   onContextChange?: (context: TopBarContext) => void;
   onReservationWindowChange?: (window: { startDate: string; endDate: string }) => void;
+  onQuotaReferenceDateChange?: (dateKey: string) => void;
   reservationMap: ReservationMap;
   addReservation: (reservation: Reservation) => Promise<boolean>;
   upsertReservation: (reservation: Reservation) => Promise<boolean>;
@@ -249,6 +250,7 @@ export default function HomeScreen({
   setAuthError,
   onContextChange,
   onReservationWindowChange,
+  onQuotaReferenceDateChange,
   reservationMap,
   addReservation,
   upsertReservation,
@@ -315,6 +317,7 @@ export default function HomeScreen({
   >(new Map());
   const [detailsContact, setDetailsContact] = useState<{ name: string; phone: string; pictureUrl?: string } | null>(null);
   const lastWindowKeyRef = useRef<string>("");
+  const lastQuotaReferenceDateRef = useRef<string>("");
   const [finderWindow, setFinderWindow] = useState<{ startDate: string; endDate: string }>(() => {
     const today = new Date();
     const start = formatDateKey(today);
@@ -1378,7 +1381,7 @@ export default function HomeScreen({
   ]);
 
   useEffect(() => {
-    if (!onReservationWindowChange) return;
+    if (!onReservationWindowChange && !onQuotaReferenceDateChange) return;
     const liveWeekStart = getWeekStart(todayDateKey);
     const liveWeekRange = {
       startDate: formatDateKey(liveWeekStart),
@@ -1400,15 +1403,33 @@ export default function HomeScreen({
               ? { startDate: todayDateKey, endDate: agendaEnd }
               : selectedWeekRange)
           : weekRange;
+    const quotaReferenceDate =
+      effectiveView === "live"
+        ? todayDateKey
+        : effectiveView === "finder"
+          ? finderWindow.startDate
+          : effectiveView === "mySchedule"
+            ? (myScheduleMode === "agenda" ? todayDateKey : selectedDate)
+            : selectedDate;
+    if (onQuotaReferenceDateChange && quotaReferenceDate !== lastQuotaReferenceDateRef.current) {
+      lastQuotaReferenceDateRef.current = quotaReferenceDate;
+      onQuotaReferenceDateChange(quotaReferenceDate);
+    }
 
-    const key = `${desired.startDate}|${desired.endDate}`;
+    if (!onReservationWindowChange) return;
+    const expandedWindow = {
+      startDate: formatDateKey(getWeekStart(desired.startDate)),
+      endDate: formatDateKey(addDays(getWeekStart(desired.endDate), 6))
+    };
+    const key = `${expandedWindow.startDate}|${expandedWindow.endDate}`;
     if (key === lastWindowKeyRef.current) return;
     lastWindowKeyRef.current = key;
-    onReservationWindowChange(desired);
+    onReservationWindowChange(expandedWindow);
   }, [
     finderWindow,
     myScheduleAgendaDays,
     myScheduleMode,
+    onQuotaReferenceDateChange,
     onReservationWindowChange,
     selectedDate,
     todayDateKey,

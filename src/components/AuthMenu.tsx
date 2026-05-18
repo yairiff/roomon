@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import type { User } from "../types/auth";
-import type { ReservationPolicy } from "../types/settings";
+import type { ReservationPolicy, ReservationScopedPolicy } from "../types/settings";
 import type { ReservationMap } from "../types/reservations";
 import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
-import { addDays, formatDateKey, formatShortDate, getWeekStart, parseDateKey } from "../lib/date";
+import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../lib/date";
 import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
 import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
 
@@ -26,6 +26,7 @@ export type AuthMenuProps = {
   isStandalone?: boolean;
   onInstall?: () => void;
   reservationPolicy?: ReservationPolicy;
+  reservationPolicies?: ReservationScopedPolicy[];
   reservationMap?: ReservationMap;
   quotaReferenceDate?: string;
 };
@@ -46,6 +47,7 @@ export default function AuthMenu({
   isStandalone = false,
   onInstall,
   reservationPolicy,
+  reservationPolicies = [],
   reservationMap = {},
   quotaReferenceDate
 }: AuthMenuProps) {
@@ -118,69 +120,132 @@ export default function AuthMenu({
     const tomorrowKey = formatDateKey(addDays(now, 1));
     const referenceDateKey =
       quotaReferenceDate && /^\d{4}-\d{2}-\d{2}$/.test(quotaReferenceDate) ? quotaReferenceDate : todayKey;
-    const isTomorrow = referenceDateKey === tomorrowKey;
-    const dayCounterDateKey = isTomorrow ? tomorrowKey : todayKey;
-    const dailyLabel = isTomorrow ? "מחר" : "היום";
-    const dayResetBaseDate = parseDateKey(dayCounterDateKey);
-    const nextDayResetDateKey = formatDateKey(addDays(dayResetBaseDate, 1));
-    const nextDayStart = parseDateKey(tomorrowKey);
-    const hoursUntilDayReset = Math.max(1, Math.ceil((nextDayStart.getTime() - now.getTime()) / (60 * 60 * 1000)));
-    const dailyResetLabel = isTomorrow
-      ? `מתאפס בתאריך ${formatShortDate(nextDayResetDateKey)}`
-      : `מתאפס בעוד ${hoursUntilDayReset} שעות`;
+    const referenceDayKey = getDayKeyFromDateKey(referenceDateKey);
+    const referenceStartMinutes = Math.max(
+      0,
+      Math.min(
+        24 * 60 - 1,
+        reservationPolicies.find((policy) => policy.isDefault)?.scope.startMinutes ?? 12 * 60
+      )
+    );
+    let effectiveGlobalPolicy: ReservationPolicy = { ...reservationPolicy };
+    let firstMatchedGlobalPolicy: ReservationScopedPolicy | null = null;
+    reservationPolicies
+      .filter((policy) => policy.enabled)
+      .forEach((policy) => {
+        if (policy.isDefault) {
+          effectiveGlobalPolicy = {
+            ...effectiveGlobalPolicy,
+            ...(policy.rules as ReservationPolicy)
+          };
+          return;
+        }
+        if (policy.scope.roomIds.length) return;
+        if (policy.scope.dayKeys.length && !policy.scope.dayKeys.includes(referenceDayKey)) return;
+        if (policy.scope.dateStart && referenceDateKey < policy.scope.dateStart) return;
+        if (policy.scope.dateEnd && referenceDateKey > policy.scope.dateEnd) return;
+        if (
+          typeof policy.scope.startMinutes === "number" &&
+          referenceStartMinutes < policy.scope.startMinutes
+        ) {
+          return;
+        }
+        if (
+          typeof policy.scope.endMinutes === "number" &&
+          referenceStartMinutes >= policy.scope.endMinutes
+        ) {
+          return;
+        }
+        if (!firstMatchedGlobalPolicy) firstMatchedGlobalPolicy = policy;
+      });
+    if (firstMatchedGlobalPolicy) {
+      effectiveGlobalPolicy = {
+        ...effectiveGlobalPolicy,
+        ...(firstMatchedGlobalPolicy.rules as Partial<ReservationPolicy>)
+      };
+    }
 
+    const nextDayResetDateKey = formatDateKey(addDays(parseDateKey(referenceDateKey), 1));
+    const hoursUntilDayReset = Math.max(
+      1,
+      Math.ceil((parseDateKey(nextDayResetDateKey).getTime() - now.getTime()) / (60 * 60 * 1000))
+    );
+    const isCurrentDay = referenceDateKey === todayKey;
+    const isNextDay = referenceDateKey === tomorrowKey;
+    const dailyLabel =
+      referenceDateKey === todayKey
+        ? "היום"
+        : referenceDateKey === tomorrowKey
+          ? "מחר"
+          : `יום ${formatShortDate(referenceDateKey)}`;
+    const dailyResetLabel = isCurrentDay
+      ? `מתאפס בעוד ${hoursUntilDayReset} שעות`
+      : isNextDay
+        ? `בתאריך ${formatShortDate(nextDayResetDateKey)}`
+        : "";
     const currentWeekStart = getWeekStart(todayKey);
     const currentWeekStartKey = formatDateKey(currentWeekStart);
     const nextWeekStartDate = addDays(currentWeekStart, 7);
     const nextWeekStartKey = formatDateKey(nextWeekStartDate);
     const referenceWeekStartKey = formatDateKey(getWeekStart(referenceDateKey));
-    const isNextWeek = referenceWeekStartKey === nextWeekStartKey;
-    const weekLabel = isNextWeek ? "בשבוע הבא" : "בשבוע זה";
-    const weekStartDate = isNextWeek ? nextWeekStartDate : currentWeekStart;
-    const weekStartKey = isNextWeek ? nextWeekStartKey : currentWeekStartKey;
-    const weekEndKey = formatDateKey(addDays(weekStartDate, 6));
+    const referenceWeekStartDate = getWeekStart(referenceDateKey);
+    const referenceWeekEndKey = formatDateKey(addDays(referenceWeekStartDate, 6));
+    const weekLabel =
+      referenceWeekStartKey === currentWeekStartKey
+        ? "השבוע"
+        : referenceWeekStartKey === nextWeekStartKey
+          ? "שבוע הבא"
+          : `שבוע ${formatShortDate(referenceWeekStartKey)}-${formatShortDate(referenceWeekEndKey)}`;
+    const nextWeekStartForReferenceKey = formatDateKey(addDays(referenceWeekStartDate, 7));
+    const nextWeekEndForReferenceKey = formatDateKey(addDays(referenceWeekStartDate, 13));
     const daysUntilWeekReset = Math.max(
       1,
       Math.ceil((nextWeekStartDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
     );
-    const weeklyResetLabel = isNextWeek
-      ? `מתאפס בתאריכים ${formatShortDate(weekStartKey)}-${formatShortDate(weekEndKey)}`
-      : `מתאפס בעוד ${daysUntilWeekReset} ימים`;
-    const userEntries = Object.entries(reservationMap)
-      .flatMap(([dateKey, entries]) =>
-        entries
-          .map((entry) => ({
-            ...entry,
-            dateKey,
-            usageShare: getReservationUsageShareForEmail(entry, email)
-          }))
-          .filter((entry) => entry.usageShare > 0)
-      );
-    const dayEntries = userEntries.filter((entry) => entry.dateKey === dayCounterDateKey);
-    const weekEntries = userEntries.filter((entry) => entry.dateKey >= weekStartKey && entry.dateKey <= weekEndKey);
-    const totalDayUsed = dayEntries.reduce((sum, entry) => sum + entry.usageShare, 0);
-    const totalWeekUsed = weekEntries.reduce((sum, entry) => sum + entry.usageShare, 0);
+    const isCurrentWeek = referenceWeekStartKey === currentWeekStartKey;
+    const isNextWeek = referenceWeekStartKey === nextWeekStartKey;
+    const weeklyResetLabel = isCurrentWeek
+      ? `מתאפס בעוד ${daysUntilWeekReset} ימים`
+      : isNextWeek
+        ? `בתאריכים ${formatShortDate(nextWeekStartForReferenceKey)}-${formatShortDate(nextWeekEndForReferenceKey)}`
+        : "";
+
+    let totalDayUsed = 0;
+    let totalWeekUsed = 0;
+    Object.entries(reservationMap).forEach(([dateKey, entries]) => {
+      const inWeek = dateKey >= referenceWeekStartKey && dateKey <= referenceWeekEndKey;
+      const inDay = dateKey === referenceDateKey;
+      if (!inWeek && !inDay) return;
+      entries.forEach((entry) => {
+        const usageShare = getReservationUsageShareForEmail(entry, email);
+        if (usageShare <= 0) return;
+        if (inDay) totalDayUsed += usageShare;
+        if (inWeek) totalWeekUsed += usageShare;
+      });
+    });
+
     const roundDownToHalfHourMinutes = (minutes: number) => Math.max(0, Math.floor(minutes / 30) * 30);
     const formatHours = (minutes: number) => {
       const hours = roundDownToHalfHourMinutes(minutes) / 60;
       return Number.isInteger(hours) ? String(hours) : String(hours);
     };
-    const toLimitMinutes = (hours: number) => {
+    const toLimitMinutes = (hours: number, stepMinutes = 30) => {
       const numeric = Number(hours);
       if (!Number.isFinite(numeric) || numeric <= 0) return Number.POSITIVE_INFINITY;
-      return Math.max(0, Math.round(numeric * 60));
+      const raw = Math.floor(numeric * 60);
+      return Math.max(0, Math.floor(raw / stepMinutes) * stepMinutes);
     };
     const rows = [
       {
         label: dailyLabel,
         used: totalDayUsed,
-        limit: toLimitMinutes(reservationPolicy.maxHoursPerDayTotal),
+        limit: toLimitMinutes(effectiveGlobalPolicy.maxHoursPerDayTotal),
         resetLabel: dailyResetLabel
       },
       {
         label: weekLabel,
         used: totalWeekUsed,
-        limit: toLimitMinutes(reservationPolicy.maxHoursPerWeekTotal),
+        limit: toLimitMinutes(effectiveGlobalPolicy.maxHoursPerWeekTotal),
         resetLabel: weeklyResetLabel
       }
     ];
@@ -201,7 +266,7 @@ export default function AuthMenu({
           markerPercent: remainingPercent
         };
       });
-  }, [quotaReferenceDate, reservationMap, reservationPolicy, user]);
+  }, [quotaReferenceDate, reservationMap, reservationPolicies, reservationPolicy, user]);
   const initials = (() => {
     const source = (user?.name || "").trim() || (user?.email || "").trim();
     if (!source) return "";
@@ -400,7 +465,9 @@ export default function AuthMenu({
                             <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
                           </span>
                         </span>
-                        <span className="quota-progress-reset-date">{row.resetLabel}</span>
+                        {row.resetLabel ? (
+                          <span className="quota-progress-reset-date">{row.resetLabel}</span>
+                        ) : null}
                       </div>
                     </li>
                   ))}

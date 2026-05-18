@@ -102,29 +102,54 @@ export default function ReserveConfirmOverlay({
   };
   const quotaRows = useMemo(() => {
     const now = new Date();
+    const requestDay = request.date;
+    const requestDate = parseDateKey(requestDay);
     const todayKey = formatDateKey(now);
     const tomorrowKey = formatDateKey(addDays(now, 1));
-    const isTomorrow = request.date === tomorrowKey;
-    const dailyLabel = isTomorrow ? "מחר" : "היום";
-    const dailyResetBase = isTomorrow ? parseDateKey(tomorrowKey) : parseDateKey(todayKey);
-    const nextDayResetDateKey = formatDateKey(addDays(dailyResetBase, 1));
-    const nextDayStart = parseDateKey(tomorrowKey);
-    const hoursUntilDayReset = Math.max(1, Math.ceil((nextDayStart.getTime() - now.getTime()) / (60 * 60 * 1000)));
     const currentWeekStart = getWeekStart(todayKey);
+    const currentWeekStartKey = formatDateKey(currentWeekStart);
     const requestWeekStart = getWeekStart(request.date);
-    const nextWeekStart = addDays(currentWeekStart, 7);
-    const isNextWeek = formatDateKey(requestWeekStart) === formatDateKey(nextWeekStart);
-    const weeklyLabel = isNextWeek ? "בשבוע הבא" : "בשבוע זה";
-    const weeklyResetBase = isNextWeek ? nextWeekStart : currentWeekStart;
-    const weekStartKey = formatDateKey(weeklyResetBase);
-    const weekEndKey = formatDateKey(addDays(weeklyResetBase, 6));
-    const daysUntilWeekReset = Math.max(1, Math.ceil((nextWeekStart.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
-    const dailyResetLabel = isTomorrow
-      ? `מתאפס בתאריך ${formatShortDate(nextDayResetDateKey)}`
-      : `מתאפס בעוד ${hoursUntilDayReset} שעות`;
-    const weeklyResetLabel = isNextWeek
-      ? `מתאפס בתאריכים ${formatShortDate(weekStartKey)}-${formatShortDate(weekEndKey)}`
-      : `מתאפס בעוד ${daysUntilWeekReset} ימים`;
+    const requestWeekStartKey = formatDateKey(requestWeekStart);
+    const requestWeekEndKey = formatDateKey(addDays(requestWeekStart, 6));
+    const nextWeekFromTodayKey = formatDateKey(addDays(currentWeekStart, 7));
+    const nextDayResetDateKey = formatDateKey(addDays(requestDate, 1));
+    const nextWeekStartKey = formatDateKey(addDays(requestWeekStart, 7));
+    const nextWeekEndKey = formatDateKey(addDays(requestWeekStart, 13));
+    const hoursUntilDayReset = Math.max(
+      1,
+      Math.ceil((parseDateKey(nextDayResetDateKey).getTime() - now.getTime()) / (60 * 60 * 1000))
+    );
+    const daysUntilWeekReset = Math.max(
+      1,
+      Math.ceil((addDays(currentWeekStart, 7).getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+    );
+    const isCurrentDay = requestDay === todayKey;
+    const isNextDay = requestDay === tomorrowKey;
+    const isCurrentWeek = requestWeekStartKey === currentWeekStartKey;
+    const isNextWeek = requestWeekStartKey === nextWeekFromTodayKey;
+
+    const dailyLabel =
+      requestDay === todayKey
+        ? "היום"
+        : requestDay === tomorrowKey
+          ? "מחר"
+          : `יום ${formatShortDate(requestDay)}`;
+    const weeklyLabel =
+      requestWeekStartKey === currentWeekStartKey
+        ? "השבוע"
+        : requestWeekStartKey === nextWeekFromTodayKey
+          ? "שבוע הבא"
+          : `שבוע ${formatShortDate(requestWeekStartKey)}-${formatShortDate(requestWeekEndKey)}`;
+    const dailyResetLabel = isCurrentDay
+      ? `מתאפס בעוד ${hoursUntilDayReset} שעות`
+      : isNextDay
+        ? `בתאריך ${formatShortDate(nextDayResetDateKey)}`
+        : "";
+    const weeklyResetLabel = isCurrentWeek
+      ? `מתאפס בעוד ${daysUntilWeekReset} ימים`
+      : isNextWeek
+        ? `בתאריכים ${formatShortDate(nextWeekStartKey)}-${formatShortDate(nextWeekEndKey)}`
+        : "";
     const rows = [
       {
         label: dailyLabel,
@@ -358,7 +383,9 @@ export default function ReserveConfirmOverlay({
                         <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
                       </span>
                     </span>
-                    <span className="quota-progress-reset-date">{row.resetLabel}</span>
+                    {row.resetLabel ? (
+                      <span className="quota-progress-reset-date">{row.resetLabel}</span>
+                    ) : null}
                   </div>
                 ))}
                 {!quotaRows.length ? (

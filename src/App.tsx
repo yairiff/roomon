@@ -53,6 +53,7 @@ export default function App() {
     const endKey = formatDateKey(addDays(weekStart, weekDays.length - 1));
     return { startDate: startKey, endDate: endKey };
   });
+  const [quotaReferenceDate, setQuotaReferenceDate] = useState(() => formatDateKey(new Date()));
   const { reservationMap, addReservation, upsertReservation, releaseReservation } = useReservations(reservationsWindow);
   const [authOpen, setAuthOpen] = useState(false);
   const [topBar, setTopBar] = useState<TopBarContext>({ title: "" });
@@ -70,7 +71,7 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const collaborationEnabled = user?.betaUser === true;
-  const { reservationPolicy } = useScheduleSettings();
+  const { reservationPolicy, reservationPolicies } = useScheduleSettings();
 
   const reservationsCount = useMemo(() => {
     // Kept for potential future UI.
@@ -255,8 +256,9 @@ export default function App() {
         isStandalone={isStandalone}
         onInstall={() => { void handleInstall(); }}
         reservationPolicy={reservationPolicy}
+        reservationPolicies={reservationPolicies}
         reservationMap={reservationMap}
-        quotaReferenceDate={reservationsWindow.startDate}
+        quotaReferenceDate={quotaReferenceDate}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen
@@ -264,6 +266,7 @@ export default function App() {
           setAuthError={(message) => setAuthError(message)}
           onContextChange={setTopBar}
           onReservationWindowChange={setReservationsWindow}
+          onQuotaReferenceDateChange={setQuotaReferenceDate}
           reservationMap={reservationMap}
           addReservation={addReservation}
           upsertReservation={upsertReservation}
