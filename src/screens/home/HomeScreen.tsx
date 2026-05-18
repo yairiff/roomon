@@ -776,9 +776,10 @@ export default function HomeScreen({
 
       const room = rooms.find((entry) => entry.id === roomId);
       const mappedExternalId =
-        room?.externalId ||
-        Object.entries(apiSync.roomIdMap).find(([, localRoomId]) => localRoomId === roomId)?.[0] ||
-        roomId;
+        (room?.externalId || "").trim() ||
+        (Object.entries(apiSync.roomIdMap).find(([, localRoomId]) => localRoomId === roomId)?.[0] || "").trim();
+      // Manual/local rooms that are not mapped to an external room should not be blocked by external checks.
+      if (!mappedExternalId) return { ok: true };
 
       const startTime = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
       const cacheKey = `${mappedExternalId}|${date}|${startTime}|${durationMinutes}`;

@@ -3,6 +3,53 @@ import { useEffect, useMemo, useState } from "react";
 import { db } from "../lib/firebase";
 import type { DirectoryUser } from "../types/admin";
 
+const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCase();
+
+const normalizeDirectoryUser = (raw: Record<string, unknown>, docId: string): DirectoryUser | null => {
+  const data = raw as Partial<DirectoryUser>;
+  const email = normalizeEmail(data.email || docId);
+  if (!email) return null;
+  const cohortStartYear = typeof data.cohortStartYear === "number" ? data.cohortStartYear : undefined;
+  const phone =
+    typeof raw.phone === "string"
+      ? raw.phone
+      : typeof raw.phoneNumber === "string"
+        ? raw.phoneNumber
+        : typeof raw.phone_number === "string"
+          ? raw.phone_number
+          : typeof raw.mobile === "string"
+            ? raw.mobile
+            : typeof raw.tel === "string"
+              ? raw.tel
+              : "";
+  const pictureUrl =
+    typeof raw.pictureUrl === "string"
+      ? raw.pictureUrl
+      : typeof raw.picture === "string"
+        ? raw.picture
+        : typeof raw.photoURL === "string"
+          ? raw.photoURL
+          : typeof raw.photoUrl === "string"
+            ? raw.photoUrl
+            : "";
+  const themePreference =
+    raw.themePreference === "dark" || raw.themePreference === "light"
+      ? raw.themePreference
+      : undefined;
+  return {
+    email,
+    name: typeof data.name === "string" ? data.name : "",
+    role: data.role || "pending",
+    betaUser: raw.betaUser === true,
+    phone,
+    pictureUrl,
+    pictureRemoved: raw.pictureRemoved === true,
+    themePreference,
+    cohortStartYear,
+    notes: typeof data.notes === "string" ? data.notes : ""
+  };
+};
+
 export function useDirectoryUsers(enabled = true) {
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [usersReady, setUsersReady] = useState<boolean>(!db);
@@ -25,54 +72,23 @@ export function useDirectoryUsers(enabled = true) {
     const unsubscribe = onSnapshot(
       usersRef,
       (snapshot) => {
-        const next: DirectoryUser[] = [];
+        const byEmail = new Map<string, { user: DirectoryUser; canonicalDoc: boolean }>();
         snapshot.forEach((docSnap) => {
           const raw = docSnap.data() as Record<string, unknown>;
-          const data = raw as Partial<DirectoryUser>;
-          const email = (data.email || docSnap.id || "").toLowerCase();
-          if (!email) return;
-          const cohortStartYear = typeof data.cohortStartYear === "number" ? data.cohortStartYear : undefined;
-          const phone =
-            typeof raw.phone === "string"
-              ? raw.phone
-              : typeof raw.phoneNumber === "string"
-                ? raw.phoneNumber
-                : typeof raw.phone_number === "string"
-                  ? raw.phone_number
-                  : typeof raw.mobile === "string"
-                    ? raw.mobile
-                    : typeof raw.tel === "string"
-                      ? raw.tel
-                      : "";
-          const pictureUrl =
-            typeof raw.pictureUrl === "string"
-              ? raw.pictureUrl
-              : typeof raw.picture === "string"
-                ? raw.picture
-                : typeof raw.photoURL === "string"
-                  ? raw.photoURL
-                  : typeof raw.photoUrl === "string"
-                    ? raw.photoUrl
-                    : "";
-          const pictureRemoved = raw.pictureRemoved === true;
-          const themePreference =
-            raw.themePreference === "dark" || raw.themePreference === "light"
-              ? raw.themePreference
-              : undefined;
-          const betaUser = raw.betaUser === true;
-          next.push({
-            email,
-            name: data.name || "",
-            role: data.role || "pending",
-            betaUser,
-            phone: phone || (data.phone || ""),
-            pictureUrl: pictureUrl || "",
-            pictureRemoved,
-            themePreference,
-            cohortStartYear,
-            notes: data.notes || ""
-          });
+          const nextUser = normalizeDirectoryUser(raw, docSnap.id);
+          if (!nextUser) return;
+          const canonicalDoc = normalizeEmail(docSnap.id) === nextUser.email;
+          const existing = byEmail.get(nextUser.email);
+          if (!existing) {
+            byEmail.set(nextUser.email, { user: nextUser, canonicalDoc });
+            return;
+          }
+          if (existing.canonicalDoc && !canonicalDoc) return;
+          if (!existing.canonicalDoc && canonicalDoc) {
+            byEmail.set(nextUser.email, { user: nextUser, canonicalDoc: true });
+          }
         });
+        const next = Array.from(byEmail.values()).map((entry) => entry.user);
         next.sort((a, b) => a.email.localeCompare(b.email));
         setUsers(next);
         setUsersError("");
@@ -95,17 +111,30 @@ export function useDirectoryUsers(enabled = true) {
 
   const upsertUser = async (user: DirectoryUser) => {
     if (!db) return;
-    const email = user.email.toLowerCase();
+    const email = normalizeEmail(user.email);
     if (!email) return;
+    const safeName = String(user.name || "");
+    const safeRole = user.role || "pending";
+    const safePhone = String(user.phone || "");
+    const safePictureUrl = String(user.pictureUrl || "");
+    const safeNotes = String(user.notes || "");
+    const payload: Record<string, unknown> = {
+      email,
+      name: safeName,
+      role: safeRole,
+      betaUser: user.betaUser === true,
+      phone: safePhone,
+      pictureUrl: safePictureUrl,
+      pictureRemoved: user.pictureRemoved === true,
+      notes: safeNotes,
+      cohortStartYear: typeof user.cohortStartYear === "number" ? user.cohortStartYear : null
+    };
+    if (user.themePreference === "light" || user.themePreference === "dark") {
+      payload.themePreference = user.themePreference;
+    }
     await setDoc(
       doc(db, "users", email),
-      {
-        ...user,
-        email,
-        betaUser: user.betaUser === true,
-        phone: user.phone || "",
-        cohortStartYear: user.cohortStartYear ?? null
-      },
+      payload,
       { merge: true }
     );
   };
