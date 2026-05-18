@@ -993,6 +993,11 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                   }
                   return;
                 }
+                // All-rooms daily mode: tap any existing block to expand into this room/day view.
+                if (view === "daily" && onRoomSelect) {
+                  onRoomSelect(roomId, dateKey);
+                  return;
+                }
                 // Weekly mode: tap any block to jump into the daily view for that date.
                 if (view === "room" && onDateSelect) {
                   onDateSelect(dateKey);

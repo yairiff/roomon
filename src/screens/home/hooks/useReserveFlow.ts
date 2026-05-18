@@ -785,6 +785,9 @@ export function useReserveFlow({
 
       onOptimisticCreate?.(nextReservation);
       setPendingConfirm(null);
+      if (view === "room" && allRooms) {
+        openRoomDay(roomId, date);
+      }
 
       if (checkExternalAvailability) {
         const external = await checkExternalAvailability({ date, roomId, startMinutes, durationMinutes });
@@ -806,6 +809,7 @@ export function useReserveFlow({
       return nextReservation;
     },
     [
+      allRooms,
       addReservation,
       config.endHour,
       config.startHour,
@@ -821,10 +825,12 @@ export function useReserveFlow({
       onOptimisticCreate,
       onOptimisticPendingClear,
       onOptimisticRemove,
+      openRoomDay,
       reservationMap,
       roomMeta,
       setAuthError,
-      showToast
+      showToast,
+      view
     ]
   );
 
