@@ -8481,7 +8481,9 @@ select,
   display: grid;
   place-items: center;
   z-index: 70;
-  padding: 24px;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 24px max(12px, env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   backdrop-filter: blur(2px);
   animation: overlayFadeIn 160ms ease both;
 }
@@ -8496,6 +8498,10 @@ select,
   display: flex;
   flex-direction: column;
   gap: 16px;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 24px - max(12px, env(safe-area-inset-top, 0px)) - max(12px, env(safe-area-inset-bottom, 0px)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: overlayPopIn 220ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
 }
 
