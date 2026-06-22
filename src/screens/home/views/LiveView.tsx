@@ -1,10 +1,15 @@
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { defaultWeekDayKeys } from "../../../config";
+import {
+  buildReservationPolicyWindowsForDays,
+  getReservationPolicyWindowForSlot
+} from "../../../lib/reservationPolicyWindows";
 import type { Lesson, Room } from "../../../types/schedule";
 import type { ReservationMap } from "../../../types/reservations";
 import type { DayKey } from "../../../types/schedule";
 import Legend from "./Legend";
 import type { RoomMeta } from "../../../types/admin";
+import type { ReservationPolicyWindow } from "../../../lib/reservationPolicyWindows";
 
 export type LiveViewProps = {
   rooms: Room[];
@@ -17,6 +22,7 @@ export type LiveViewProps = {
   endHour: number;
   roomMeta?: Record<string, RoomMeta>;
   policyDayKeys?: DayKey[];
+  policyWindows?: ReservationPolicyWindow[];
   onRoomSelect: (roomId: string) => void;
 };
 
@@ -31,19 +37,32 @@ export default function LiveView({
   endHour,
   roomMeta,
   policyDayKeys = defaultWeekDayKeys,
+  policyWindows = [],
   onRoomSelect
 }: LiveViewProps) {
   const todayReservations = reservationMap[dateKey] || [];
   const openDayKeys = policyDayKeys.length ? policyDayKeys : defaultWeekDayKeys;
+  const effectivePolicyWindows = policyWindows.length
+    ? policyWindows
+    : buildReservationPolicyWindowsForDays(openDayKeys, startHour * 60, endHour * 60);
   const isClosedDay = !openDayKeys.includes(dayKey);
-  const isClosedNow = isClosedDay || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60;
+  const isClosedByDayOrTime = isClosedDay || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60;
+  const isRoomClosedNow = (roomId: string) =>
+    isClosedByDayOrTime ||
+    !getReservationPolicyWindowForSlot(effectivePolicyWindows, {
+      dateKey,
+      dayKey,
+      roomId,
+      startMinutes: nowMinutes,
+      endMinutes: nowMinutes + 1
+    });
   const reservationDuration = (durationMinutes: number | undefined) => {
     const numeric = Number(durationMinutes);
     return Number.isFinite(numeric) && numeric > 0 ? numeric : 60;
   };
 
   const getRoomStatus = (roomId: string) => {
-    if (isClosedNow || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60) {
+    if (isRoomClosedNow(roomId)) {
       return {
         status: "closed" as const,
         label: "סגור",
@@ -117,7 +136,7 @@ export default function LiveView({
   };
 
   const getBusyUntil = (roomId: string) => {
-    if (isClosedNow || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60) return null;
+    if (isRoomClosedNow(roomId)) return null;
     const intervals = [
       ...lessons
         .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
@@ -150,7 +169,7 @@ export default function LiveView({
   };
 
   const getNextEvent = (roomId: string) => {
-    if (isClosedNow || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60) return null;
+    if (isRoomClosedNow(roomId)) return null;
     const lessonStarts = lessons
       .filter((lesson) => lesson.day === dayKey && lesson.roomId === roomId)
       .map((lesson) => ({

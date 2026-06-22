@@ -12,6 +12,8 @@ import type { MySchedulePin } from "../../types/mySchedule";
 import type { DirectoryUser, RoomMeta } from "../../types/admin";
 import type { ViewMode } from "../../types/ui";
 import type { ReactNode } from "react";
+import { isReservationPolicySlotAllowed } from "../../lib/reservationPolicyWindows";
+import type { ReservationPolicyWindow } from "../../lib/reservationPolicyWindows";
 import type {
   AvailabilityDateOffs,
   CollaborationGroup,
@@ -145,6 +147,7 @@ export type HomeViewRouterProps = {
     excludeReservationId?: string;
   }) => { id: string; name: string }[];
   policyDayKeys: DayKey[];
+  policyWindows: ReservationPolicyWindow[];
   onGroupsTopBarChange?: (context: { title: string; subtitle?: ReactNode | string | null; key: string }) => void;
   finderResetToken?: number;
   groupsResetToken?: number;
@@ -228,6 +231,7 @@ export default function HomeViewRouter({
   onRespondToGroupRehearsal,
   getAvailableRoomsForSlot,
   policyDayKeys,
+  policyWindows,
   onOpenFinderForGroup,
   onGroupsTopBarChange,
   finderResetToken,
@@ -256,6 +260,7 @@ export default function HomeViewRouter({
       policyMaxDurationMinutes={finderPolicyMaxDurationMinutes}
       policyMaxDaysForward={finderPolicyMaxDaysForward}
       policyDayKeys={policyDayKeys}
+      policyWindows={policyWindows}
       prefilledGroupId={finderPrefilledGroupId}
       isActive={isFinderView}
       resetToken={finderResetToken}
@@ -306,6 +311,7 @@ export default function HomeViewRouter({
         endHour={endHour}
         roomMeta={roomMeta}
         policyDayKeys={policyDayKeys}
+        policyWindows={policyWindows}
         onRoomSelect={(roomId) => onRoomSelect(roomId, todayDateKey)}
       />
     );
@@ -383,6 +389,15 @@ export default function HomeViewRouter({
         onRoomSelect={allRooms ? onRoomSelect : undefined}
         onDateSelect={roomMode === "week" ? onDateSelect : undefined}
         showHeaders={allRooms || roomMode === "week"}
+        isSlotReservable={(request) =>
+          isReservationPolicySlotAllowed(policyWindows, {
+            dateKey: request.date,
+            dayKey: request.day,
+            roomId: request.roomId,
+            startMinutes: request.time,
+            endMinutes: request.time + (request.durationMinutes || 30)
+          })
+        }
         footer={<Legend />}
         nowMinutes={nowMinutes}
         todayDateKey={todayDateKey}

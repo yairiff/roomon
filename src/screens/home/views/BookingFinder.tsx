@@ -3,10 +3,16 @@ import { gradeLabelFromCohort } from "../../../lib/academics";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, parseDateKey } from "../../../lib/date";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { getAvailabilityWindowForDate } from "../../../lib/collaboration";
+import {
+  buildReservationPolicyWindowsForDays,
+  getReservationPolicyDayKeys,
+  getReservationPolicyWindowsForDay
+} from "../../../lib/reservationPolicyWindows";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { AddIcon, ChevronLeftIcon, CloseIcon, GroupsIcon, MicIcon, RemoveIcon, RoomIcon, ScheduleIcon, TuneIcon, UserIcon } from "../../../components/Icons";
 import GroupCreateOverlay from "../components/GroupCreateOverlay";
 import { allWeekDays, defaultWeekDayKeys } from "../../../config";
+import type { ReservationPolicyWindow } from "../../../lib/reservationPolicyWindows";
 import type { DirectoryUser, RoomMeta } from "../../../types/admin";
 import type { AvailabilityDateOffs, CollaborationGroup, CollaboratorEvent, UserAvailability } from "../../../types/collaboration";
 import type { ReservationMap } from "../../../types/reservations";
@@ -37,6 +43,7 @@ export type BookingFinderProps = {
   policyMaxDurationMinutes?: number;
   policyMaxDaysForward?: number;
   policyDayKeys?: DayKey[];
+  policyWindows?: ReservationPolicyWindow[];
   prefilledGroupId?: string;
   isActive?: boolean;
   resetToken?: number;
@@ -138,6 +145,18 @@ const memberYearSubtitle = (user: DirectoryUser) => {
 const intervalCovers = (intervals: TimeInterval[], start: number, end: number) =>
   intervals.some((interval) => interval.start <= start && interval.end >= end);
 
+const intersectSearchWindows = (
+  windows: ReservationPolicyWindow[],
+  filterStartMinutes: number,
+  filterEndMinutes: number
+): TimeInterval[] =>
+  windows
+    .map((window) => ({
+      start: Math.max(filterStartMinutes, window.startMinutes),
+      end: Math.min(filterEndMinutes, window.endMinutes)
+    }))
+    .filter((window) => window.end > window.start);
+
 const collectGroupCandidateWindows = (
   baseWindow: TimeInterval,
   participantFreeWindows: Array<{ email: string; free: TimeInterval[] }>,
@@ -214,6 +233,7 @@ export default function BookingFinder({
   policyMaxDurationMinutes,
   policyMaxDaysForward,
   policyDayKeys = defaultWeekDayKeys,
+  policyWindows = [],
   prefilledGroupId,
   isActive = true,
   resetToken,
@@ -354,10 +374,18 @@ export default function BookingFinder({
   const effectiveEndDate = formatDateKey(addDays(new Date(), 30));
   const safeFromHour = Math.max(startHour, Math.min(fromHour, endHour));
   const safeToHour = Math.max(safeFromHour, Math.min(toHour, endHour));
+  const effectivePolicyWindows = useMemo(
+    () =>
+      policyWindows.length
+        ? policyWindows
+        : buildReservationPolicyWindowsForDays(policyDayKeys, startHour * 60, endHour * 60),
+    [endHour, policyDayKeys, policyWindows, startHour]
+  );
   const allowedPolicyDays = useMemo(() => {
-    const allowed = new Set(policyDayKeys.length ? policyDayKeys : defaultWeekDayKeys);
+    const windowDayKeys = getReservationPolicyDayKeys(effectivePolicyWindows);
+    const allowed = new Set(windowDayKeys.length ? windowDayKeys : defaultWeekDayKeys);
     return allWeekDays.filter((day) => allowed.has(day.key));
-  }, [policyDayKeys]);
+  }, [effectivePolicyWindows]);
   const allowedCalendarDays = useMemo(
     () => new Set(allowedPolicyDays.map((day) => DAY_KEY_TO_CALENDAR_DAY[day.key])),
     [allowedPolicyDays]
@@ -575,11 +603,17 @@ export default function BookingFinder({
 
       const filterStartMinutes = useHoursFilter ? safeFromHour * 60 : startHour * 60;
       const filterEndMinutes = useHoursFilter ? safeToHour * 60 : endHour * 60;
+      const dayBaseWindows = intersectSearchWindows(
+        getReservationPolicyWindowsForDay(effectivePolicyWindows, dayKey, dateKey, { includeRoomScoped: true }),
+        filterStartMinutes,
+        filterEndMinutes
+      );
+      if (!dayBaseWindows.length) return;
       const resolveProfileFreeWindows = (profile: {
         availability: UserAvailability;
         dateOffs?: AvailabilityDateOffs;
         events: CollaboratorEvent[];
-      }): TimeInterval[] => {
+      }, baseWindows: TimeInterval[]): TimeInterval[] => {
         const availabilityWindow = getAvailabilityWindowForDate(
           profile.availability || availability,
           dayKey,
@@ -587,33 +621,41 @@ export default function BookingFinder({
           profile.dateOffs || {}
         );
         if (!availabilityWindow) return [];
-        const baseWindow = {
-          start: Math.max(filterStartMinutes, availabilityWindow.startMinutes),
-          end: Math.min(filterEndMinutes, availabilityWindow.endMinutes)
-        };
-        if (baseWindow.end <= baseWindow.start) return [];
+        const availableBaseWindows = baseWindows
+          .map((baseWindow) => ({
+            start: Math.max(baseWindow.start, availabilityWindow.startMinutes),
+            end: Math.min(baseWindow.end, availabilityWindow.endMinutes)
+          }))
+          .filter((baseWindow) => baseWindow.end > baseWindow.start);
+        if (!availableBaseWindows.length) return [];
         const busy = profile.events
           .filter((entry) => entry.dateKey === dateKey)
           .map((entry) => ({ start: entry.startMinutes, end: entry.endMinutes }))
           .sort((a, b) => a.start - b.start);
-        return subtractBusyFromWindow(baseWindow, busy);
+        return availableBaseWindows
+          .flatMap((baseWindow) => subtractBusyFromWindow(baseWindow, busy))
+          .sort((a, b) => a.start - b.start);
       };
 
-      const groupFreeByEmail = findCommonTime
-        ? participantProfiles.map((profile) => ({
+      const buildGroupFreeByEmail = (baseWindows: TimeInterval[]) =>
+        findCommonTime
+          ? participantProfiles.map((profile) => ({
             email: profile.email.toLowerCase(),
-            free: resolveProfileFreeWindows(profile)
+            free: resolveProfileFreeWindows(profile, baseWindows)
           }))
-        : [];
-      if (findCommonTime && !groupFreeByEmail.length) return;
+          : [];
+      if (findCommonTime && !participantProfiles.length) return;
 
-      const selfFree = targetType === "self" ? resolveProfileFreeWindows(ownProfile) : [];
+      const selfFree = targetType === "self" ? resolveProfileFreeWindows(ownProfile, dayBaseWindows) : [];
 
       if (findRoom) {
         availableRooms.forEach((room) => {
-          const roomOpen = filterStartMinutes;
-          const roomClose = filterEndMinutes;
-          if (roomOpen >= roomClose) return;
+          const roomBaseWindows = intersectSearchWindows(
+            getReservationPolicyWindowsForDay(effectivePolicyWindows, dayKey, dateKey, { roomId: room.id }),
+            filterStartMinutes,
+            filterEndMinutes
+          );
+          if (!roomBaseWindows.length) return;
           const roomBusy = [
             ...dayLessons
               .filter((lesson) => lesson.roomId === room.id)
@@ -622,8 +664,10 @@ export default function BookingFinder({
               .filter((entry) => entry.roomId === room.id)
               .map((entry) => ({ start: entry.time, end: entry.time + entry.durationMinutes }))
           ].sort((a, b) => a.start - b.start);
-          const roomFree = subtractBusyFromWindow({ start: roomOpen, end: roomClose }, roomBusy);
+          const roomFree = roomBaseWindows.flatMap((baseWindow) => subtractBusyFromWindow(baseWindow, roomBusy));
           if (findCommonTime) {
+            const groupFreeByEmail = buildGroupFreeByEmail(roomBaseWindows);
+            if (!groupFreeByEmail.length) return;
             roomFree.forEach((roomWindow) => {
               collectGroupCandidateWindows(roomWindow, groupFreeByEmail, minGap, requiredGroupEmail).forEach(
                 (candidate) => {
@@ -664,20 +708,23 @@ export default function BookingFinder({
       }
 
       if (findCommonTime) {
-        const fullDayWindow = { start: filterStartMinutes, end: filterEndMinutes };
-        collectGroupCandidateWindows(fullDayWindow, groupFreeByEmail, minGap, requiredGroupEmail).forEach(
-          (candidate) => {
-            items.push({
-              date: dateKey,
-              day: dayKey,
-              ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
-              start: candidate.start,
-              end: candidate.end,
-              participantsCount: candidate.participantEmails.length,
-              participantEmails: candidate.participantEmails
-            });
-          }
-        );
+        const groupFreeByEmail = buildGroupFreeByEmail(dayBaseWindows);
+        if (!groupFreeByEmail.length) return;
+        dayBaseWindows.forEach((baseWindow) => {
+          collectGroupCandidateWindows(baseWindow, groupFreeByEmail, minGap, requiredGroupEmail).forEach(
+            (candidate) => {
+              items.push({
+                date: dateKey,
+                day: dayKey,
+                ...(findCommonTime && selectedGroupId ? { groupId: selectedGroupId } : {}),
+                start: candidate.start,
+                end: candidate.end,
+                participantsCount: candidate.participantEmails.length,
+                participantEmails: candidate.participantEmails
+              });
+            }
+          );
+        });
         return;
       }
 
@@ -822,6 +869,7 @@ export default function BookingFinder({
     durationFilterMinutes,
     effectiveEndDate,
     effectiveStartDate,
+    effectivePolicyWindows,
     endHour,
     findCommonTime,
     findRoom,

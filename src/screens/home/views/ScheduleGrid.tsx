@@ -48,6 +48,7 @@ export type ScheduleGridProps = {
   onRoomSelect?: (roomId: string, dateKey: string) => void;
   onDateSelect?: (dateKey: string) => void;
   showHeaders?: boolean;
+  isSlotReservable?: (request: ReserveRequest) => boolean;
   footer?: ReactNode;
   nowMinutes?: number;
   todayDateKey?: string;
@@ -226,6 +227,7 @@ export default function ScheduleGrid({
   onRoomSelect,
   onDateSelect,
   showHeaders = true,
+  isSlotReservable,
   footer,
   nowMinutes,
   todayDateKey,
@@ -751,6 +753,13 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
           ? Array.from({ length: totalHours }, (_, index) => baseStartMinutes + index * 60).flatMap((hourStart) => {
               const hourEnd = hourStart + 60;
               const hourBusy = isSlotBusy(hourStart, hourEnd);
+              const hourReservable = adminMode || !isSlotReservable || isSlotReservable({
+                date: dateKey,
+                day: dayKey,
+                time: hourStart,
+                roomId,
+                durationMinutes: 60
+              });
               const hourTop = ((hourStart - baseStartMinutes) / 60) * rowHeight;
               const hourHeight = rowHeight;
 
@@ -758,6 +767,13 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                 const top = ((slotStart - baseStartMinutes) / 60) * rowHeight;
                 const height = ((slotEnd - slotStart) / 60) * rowHeight;
                 const busy = isSlotBusy(slotStart, slotEnd);
+                const reservable = adminMode || !isSlotReservable || isSlotReservable({
+                  date: dateKey,
+                  day: dayKey,
+                  time: slotStart,
+                  roomId,
+                  durationMinutes: slotEnd - slotStart
+                });
                 return (
                   <button
                     key={`${roomId}-${dateKey}-${slotStart}-${slotEnd}`}
@@ -779,19 +795,19 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                         onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId });
                         return;
                       }
-                      if (busy) return;
+                      if (busy || !reservable) return;
                       // Default action is a 1 hour reservation; user can adjust duration in the confirmation overlay.
                       onReserve({ date: dateKey, day: dayKey, time: slotStart, roomId, durationMinutes: 60 });
                     }}
-                    disabled={busy}
+                    disabled={busy || !reservable}
                   >
-                    <span className="slot-label">{showPlus && !busy ? <AddIcon /> : null}</span>
+                    <span className="slot-label">{showPlus && !busy && reservable ? <AddIcon /> : null}</span>
                   </button>
                 );
               };
 
               // Prefer a full 1 hour hit area when the entire hour is free.
-              if (!hourBusy) {
+              if (!hourBusy && hourReservable) {
                 return [
                   <button
                     key={`${roomId}-${dateKey}-${hourStart}-hour`}

@@ -1,12 +1,12 @@
 import { useMemo } from "react";
-import { allDayKeys, allWeekDays, defaultWeekDayKeys, timeSlots, weekDays, rimonScheduleConfig } from "../config";
+import { allWeekDays, defaultWeekDayKeys, timeSlots, weekDays, rimonScheduleConfig } from "../config";
 import { parseDateKey } from "../lib/date";
+import { buildReservationPolicyWindows, getReservationPolicyDayKeys } from "../lib/reservationPolicyWindows";
 import { buildLessonIndex, buildRoomsFromLessons } from "../lib/scheduleBuilder";
 import { buildYearlySemesterId } from "../lib/semesterScope";
 import { useLessons } from "./useLessons";
 import { useRooms } from "./useRooms";
 import { useScheduleSettings } from "./useScheduleSettings";
-import type { DayKey } from "../types/schedule";
 
 const weekDayByDate = (dateKey: string) => {
   const day = parseDateKey(dateKey).getDay();
@@ -19,27 +19,21 @@ const isPrimarySemesterLetter = (letter: string) => {
   return normalized === "א" || normalized === "ב" || normalized.toUpperCase() === "A" || normalized.toUpperCase() === "B";
 };
 
-const DEFAULT_POLICY_DAY_KEYS: DayKey[] = [...defaultWeekDayKeys];
-const validPolicyDayKeySet = new Set<DayKey>(allDayKeys);
-const isPolicyDayKey = (key: unknown): key is DayKey =>
-  typeof key === "string" && validPolicyDayKeySet.has(key as DayKey);
-
 export function useSchedule(dateKey: string) {
   const { semesters, reservationPolicy, reservationPolicies, apiSync } = useScheduleSettings();
+  const policyWindows = useMemo(
+    () =>
+      buildReservationPolicyWindows(
+        reservationPolicies,
+        rimonScheduleConfig.startHour * 60,
+        rimonScheduleConfig.endHour * 60
+      ),
+    [reservationPolicies]
+  );
   const policyDayKeys = useMemo(() => {
-    const defaultPolicy = reservationPolicies.find((policy) => policy.isDefault && policy.enabled);
-    const next = new Set<DayKey>();
-    const defaultDays = (defaultPolicy?.scope.dayKeys || []).filter(isPolicyDayKey);
-    (defaultDays.length ? defaultDays : DEFAULT_POLICY_DAY_KEYS).forEach((dayKey) => next.add(dayKey));
-
-    reservationPolicies.forEach((policy) => {
-      if (!policy.enabled || policy.isDefault) return;
-      if (policy.rules.blockReservations === true) return;
-      policy.scope.dayKeys.filter(isPolicyDayKey).forEach((dayKey) => next.add(dayKey));
-    });
-
-    return next.size ? Array.from(next) : DEFAULT_POLICY_DAY_KEYS;
-  }, [reservationPolicies]);
+    const next = getReservationPolicyDayKeys(policyWindows);
+    return next.length ? next : defaultWeekDayKeys;
+  }, [policyWindows]);
   const activeSemester = useMemo(() => {
     const selectedDate = parseDateKey(dateKey);
     return semesters.find((semester) => {
@@ -97,6 +91,7 @@ export function useSchedule(dateKey: string) {
     apiSync,
     roomMeta,
     reservationPolicy,
-    reservationPolicies
+    reservationPolicies,
+    policyWindows
   };
 }

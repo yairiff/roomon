@@ -10,6 +10,12 @@ import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
 import { getReservationUsageShareForEmail } from "../../../lib/quotaUsage";
 import { defaultWeekDayKeys } from "../../../config";
+import {
+  buildReservationPolicyWindowsForDays,
+  getReservationPolicyDayKeys,
+  getReservationPolicyWindowForSlot
+} from "../../../lib/reservationPolicyWindows";
+import type { ReservationPolicyWindow } from "../../../lib/reservationPolicyWindows";
 
 const STEP = 30;
 const MIN_DURATION = 30;
@@ -57,6 +63,7 @@ type UseReserveFlowArgs = {
   reservationPolicy: ReservationPolicy;
   reservationPolicies: ReservationScopedPolicy[];
   allowedPolicyDayKeys?: DayKey[];
+  allowedPolicyWindows?: ReservationPolicyWindow[];
   config: { startHour: number; endHour: number };
   getLessonsForDate: (dateKey: string, dayKey: DayKey) => Lesson[];
   addReservation: (reservation: Reservation) => Promise<boolean>;
@@ -125,6 +132,7 @@ export function useReserveFlow({
   reservationPolicy,
   reservationPolicies,
   allowedPolicyDayKeys = [],
+  allowedPolicyWindows,
   config,
   getLessonsForDate,
   addReservation,
@@ -136,8 +144,15 @@ export function useReserveFlow({
 }: UseReserveFlowArgs) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const currentUserEmail = useMemo(() => (currentUser?.email || "").trim().toLowerCase(), [currentUser?.email]);
+  const policyWindows = useMemo(() => {
+    if (allowedPolicyWindows?.length) return allowedPolicyWindows;
+    const fallbackDays = allowedPolicyDayKeys.length ? allowedPolicyDayKeys : defaultWeekDayKeys;
+    return buildReservationPolicyWindowsForDays(fallbackDays, config.startHour * 60, config.endHour * 60);
+  }, [allowedPolicyDayKeys, allowedPolicyWindows, config.endHour, config.startHour]);
   const policyDayKeySet = useMemo(() => {
-    const valid = allowedPolicyDayKeys.filter(
+    const windowDayKeys = getReservationPolicyDayKeys(policyWindows);
+    if (windowDayKeys.length) return new Set<DayKey>(windowDayKeys);
+    const validFallbackDayKeys = allowedPolicyDayKeys.filter(
       (dayKey): dayKey is DayKey =>
         dayKey === "sun" ||
         dayKey === "mon" ||
@@ -148,8 +163,8 @@ export function useReserveFlow({
         dayKey === "sat"
     );
     const fallback: DayKey[] = [...defaultWeekDayKeys];
-    return new Set<DayKey>(valid.length ? valid : fallback);
-  }, [allowedPolicyDayKeys]);
+    return new Set<DayKey>(validFallbackDayKeys.length ? validFallbackDayKeys : fallback);
+  }, [allowedPolicyDayKeys, policyWindows]);
   const usageIndex = useMemo(() => {
     const dayTotals = new Map<string, number>();
     const weekTotals = new Map<string, number>();
@@ -361,6 +376,30 @@ export function useReserveFlow({
     [policyDayKeySet]
   );
 
+  const getPolicyWindowViolationMessage = useCallback(
+    (
+      dateKey: string,
+      dayKey: DayKey,
+      roomId: string,
+      startMinutes: number,
+      durationMinutes: number
+    ) => {
+      const dayMessage = getPolicyDayViolationMessage(dateKey, dayKey);
+      if (dayMessage) return dayMessage;
+      const endMinutes = startMinutes + Math.max(MIN_DURATION, durationMinutes);
+      const matchingWindow = getReservationPolicyWindowForSlot(policyWindows, {
+        dateKey,
+        dayKey,
+        roomId,
+        startMinutes,
+        endMinutes
+      });
+      if (matchingWindow) return null;
+      return "השעה מחוץ לשעות הפעילות לפי מדיניות המערכת.";
+    },
+    [getPolicyDayViolationMessage, policyWindows]
+  );
+
   const getBlockReservationMessage = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
       const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
@@ -506,11 +545,23 @@ export function useReserveFlow({
     (request: ReserveRequest, excludeReservationId?: string) => {
       const intervals = buildIntervals(request.day, request.date, request.roomId, excludeReservationId);
       const minStart = config.startHour * 60;
-      const maxEnd = config.endHour * 60;
+      const scheduleMaxEnd = config.endHour * 60;
       const requestStart = Math.max(request.time, minStart);
-      if (requestStart >= maxEnd) return null;
+      if (requestStart >= scheduleMaxEnd) return null;
 
       const alignedStart = Math.ceil(requestStart / STEP) * STEP;
+      const matchingWindow = getReservationPolicyWindowForSlot(policyWindows, {
+        dateKey: request.date,
+        dayKey: request.day,
+        roomId: request.roomId,
+        startMinutes: alignedStart,
+        endMinutes: alignedStart + MIN_DURATION
+      });
+      if (!matchingWindow) return null;
+      const windowStart = Math.max(minStart, matchingWindow.startMinutes);
+      const maxEnd = Math.min(scheduleMaxEnd, matchingWindow.endMinutes);
+      if (alignedStart < windowStart || alignedStart + MIN_DURATION > maxEnd) return null;
+
       const { effectivePolicy } = getPolicyContext(request.date, request.roomId, alignedStart);
       if (effectivePolicy.blockReservations) return null;
       const overlaps = intervals.some((interval) => interval.start < alignedStart + 0.1 && interval.end > alignedStart);
@@ -532,13 +583,13 @@ export function useReserveFlow({
       const currentWeekUsed = getUserReservedMinutesForWeek(request.date, excludeReservationId);
       const globalQuotaPolicy = getGlobalQuotaPolicyForSlot(request.date, alignedStart);
 
-      let windowStart = minStart;
+      let availableWindowStart = windowStart;
       for (const interval of intervals) {
-        if (interval.end <= alignedStart && interval.end > windowStart) {
-          windowStart = interval.end;
+        if (interval.end <= alignedStart && interval.end > availableWindowStart) {
+          availableWindowStart = interval.end;
         }
       }
-      const alignedWindowStart = Math.ceil(windowStart / STEP) * STEP;
+      const alignedWindowStart = Math.ceil(availableWindowStart / STEP) * STEP;
       if (alignedWindowStart >= alignedLimitEnd) return null;
 
       return {
@@ -568,7 +619,8 @@ export function useReserveFlow({
       getPolicyContext,
       getRemainingMinutes,
       getUserReservedMinutesForDate,
-      getUserReservedMinutesForWeek
+      getUserReservedMinutesForWeek,
+      policyWindows
     ]
   );
 
@@ -590,9 +642,19 @@ export function useReserveFlow({
         return;
       }
 
-      const policyDayMessage = getPolicyDayViolationMessage(request.date, request.day);
-      if (policyDayMessage) {
-        showToast(policyDayMessage);
+      const requestedDuration = Math.max(
+        MIN_DURATION,
+        Math.floor((request.durationMinutes || MIN_DURATION) / STEP) * STEP || MIN_DURATION
+      );
+      const policyWindowMessage = getPolicyWindowViolationMessage(
+        request.date,
+        request.day,
+        request.roomId,
+        request.time,
+        requestedDuration
+      );
+      if (policyWindowMessage) {
+        showToast(policyWindowMessage);
         return;
       }
 
@@ -614,10 +676,6 @@ export function useReserveFlow({
         return;
       }
 
-      const requestedDuration = Math.max(
-        MIN_DURATION,
-        Math.floor((request.durationMinutes || MIN_DURATION) / STEP) * STEP || MIN_DURATION
-      );
       const requestedLimitMessage = getLimitViolationMessage(
         request.date,
         request.roomId,
@@ -680,7 +738,7 @@ export function useReserveFlow({
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
       getLimitViolationMessage,
-      getPolicyDayViolationMessage,
+      getPolicyWindowViolationMessage,
       openRoomDay,
       setAuthError,
       showToast,
@@ -703,9 +761,9 @@ export function useReserveFlow({
         return null;
       }
 
-      const policyDayMessage = getPolicyDayViolationMessage(date, day);
-      if (policyDayMessage) {
-        showToast(policyDayMessage);
+      const policyWindowMessage = getPolicyWindowViolationMessage(date, day, roomId, startMinutes, durationMinutes);
+      if (policyWindowMessage) {
+        showToast(policyWindowMessage);
         return null;
       }
 
@@ -825,7 +883,7 @@ export function useReserveFlow({
       getForwardLimitViolationMessage,
       getLessonsForDate,
       getLimitViolationMessage,
-      getPolicyDayViolationMessage,
+      getPolicyWindowViolationMessage,
       checkExternalAvailability,
       onOptimisticCreate,
       onOptimisticPendingClear,
@@ -848,9 +906,16 @@ export function useReserveFlow({
 
       const dayKey = getDayKeyFromDateKey(dateKey);
       const roomId = entry.roomId;
-      const policyDayMessage = getPolicyDayViolationMessage(dateKey, dayKey);
-      if (policyDayMessage) {
-        showToast(policyDayMessage);
+      const entryDurationMinutes = Math.max(MIN_DURATION, entry.durationMinutes || MIN_DURATION);
+      const policyWindowMessage = getPolicyWindowViolationMessage(
+        dateKey,
+        dayKey,
+        roomId,
+        entry.time,
+        entryDurationMinutes
+      );
+      if (policyWindowMessage) {
+        showToast(policyWindowMessage);
         return;
       }
 
@@ -872,8 +937,17 @@ export function useReserveFlow({
         return;
       }
 
-      const minStart = config.startHour * 60;
-      const maxEnd = config.endHour * 60;
+      const matchingWindow = getReservationPolicyWindowForSlot(policyWindows, {
+        dateKey,
+        dayKey,
+        roomId,
+        startMinutes: entry.time,
+        endMinutes: entry.time + entryDurationMinutes
+      });
+      if (!matchingWindow) return;
+
+      const minStart = Math.max(config.startHour * 60, matchingWindow.startMinutes);
+      const maxEnd = Math.min(config.endHour * 60, matchingWindow.endMinutes);
 
       const intervals = buildIntervals(dayKey, dateKey, roomId, reservationId);
       const alignedStart = Math.ceil(Math.max(entry.time, minStart) / STEP) * STEP;
@@ -953,10 +1027,11 @@ export function useReserveFlow({
       getForwardLimitViolationMessage,
       getGlobalQuotaPolicyForSlot,
       getLimitViolationMessage,
-      getPolicyDayViolationMessage,
+      getPolicyWindowViolationMessage,
       getRemainingMinutes,
       getUserReservedMinutesForDate,
       getUserReservedMinutesForWeek,
+      policyWindows,
       reservationMap,
       showToast
     ]
@@ -978,9 +1053,9 @@ export function useReserveFlow({
         return false;
       }
 
-      const policyDayMessage = getPolicyDayViolationMessage(date, day);
-      if (policyDayMessage) {
-        showToast(policyDayMessage);
+      const policyWindowMessage = getPolicyWindowViolationMessage(date, day, roomId, startMinutes, durationMinutes);
+      if (policyWindowMessage) {
+        showToast(policyWindowMessage);
         return false;
       }
 
@@ -1093,7 +1168,7 @@ export function useReserveFlow({
       getForwardLimitViolationMessage,
       getLessonsForDate,
       getLimitViolationMessage,
-      getPolicyDayViolationMessage,
+      getPolicyWindowViolationMessage,
       reservationMap,
       roomMeta,
       checkExternalAvailability,

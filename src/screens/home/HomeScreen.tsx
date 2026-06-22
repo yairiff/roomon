@@ -28,12 +28,16 @@ import { formatMinutes } from "../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../lib/formatDurationHe";
 import { applyLessonOverrides } from "../../lib/lessonOverrides";
 import { buildApprovedQuotaParticipantEmails, getReservationUsageShareForEmail, normalizeEmailList } from "../../lib/quotaUsage";
+import {
+  deriveActiveHoursFromReservationPolicyWindows,
+  isReservationPolicySlotAllowed
+} from "../../lib/reservationPolicyWindows";
 import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
 import type { DayKey, Lesson, TimeSlot } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
 import type { MySchedulePin } from "../../types/mySchedule";
-import type { ReservationPolicy, ReservationScopedPolicy } from "../../types/settings";
+import type { ReservationPolicy } from "../../types/settings";
 import { useMySchedulePins } from "./hooks/useMySchedulePins";
 import { useReserveFlow } from "./hooks/useReserveFlow";
 import { useAdminDraftFlow } from "./hooks/useAdminDraftFlow";
@@ -181,52 +185,6 @@ const extractLinkedIdsFromReservation = (reservation: Reservation): { groupId: s
   const rehearsalId = (reservation.linkedRehearsalId || "").trim();
   if (groupId && rehearsalId) return { groupId, rehearsalId };
   return null;
-};
-
-const deriveActiveHoursFromPolicies = (
-  reservationPolicies: ReservationScopedPolicy[],
-  fallbackStartHour: number,
-  fallbackEndHour: number
-) => {
-  const fallbackStart = Math.max(0, fallbackStartHour * 60);
-  const fallbackEnd = Math.min(24 * 60, Math.max(fallbackStart + 60, fallbackEndHour * 60));
-  const enabled = reservationPolicies.filter((policy) => policy.enabled && policy.rules.blockReservations !== true);
-  if (!enabled.length) {
-    return {
-      startMinutes: fallbackStart,
-      endMinutes: fallbackEnd,
-      startHour: Math.floor(fallbackStart / 60),
-      endHour: Math.ceil(fallbackEnd / 60)
-    };
-  }
-
-  const ranges = enabled
-    .map((policy) => {
-      const scopeStart = typeof policy.scope.startMinutes === "number" ? policy.scope.startMinutes : fallbackStart;
-      const scopeEnd = typeof policy.scope.endMinutes === "number" ? policy.scope.endMinutes : fallbackEnd;
-      const start = Math.max(0, Math.min(24 * 60, scopeStart));
-      const end = Math.max(0, Math.min(24 * 60, scopeEnd));
-      if (end <= start) return null;
-      return { start, end };
-    })
-    .filter((entry): entry is { start: number; end: number } => Boolean(entry));
-
-  if (!ranges.length) {
-    return {
-      startMinutes: fallbackStart,
-      endMinutes: fallbackEnd,
-      startHour: Math.floor(fallbackStart / 60),
-      endHour: Math.ceil(fallbackEnd / 60)
-    };
-  }
-  const startMinutes = Math.max(0, Math.min(...ranges.map((entry) => entry.start)));
-  const endMinutes = Math.min(24 * 60, Math.max(...ranges.map((entry) => entry.end)));
-  return {
-    startMinutes,
-    endMinutes: Math.max(startMinutes + 60, endMinutes),
-    startHour: Math.floor(startMinutes / 60),
-    endHour: Math.max(Math.floor(startMinutes / 60) + 1, Math.ceil(endMinutes / 60))
-  };
 };
 
 const toPolicyLimitMinutes = (hours: number) => {
@@ -660,7 +618,18 @@ export default function HomeScreen({
     [createGroup, currentUser?.email, inviteToGroup]
   );
 
-  const { rooms, weekDays, lessons, config, roomMeta, reservationPolicy, reservationPolicies, semesters, apiSync } = useSchedule(scheduleDateKey);
+  const {
+    rooms,
+    weekDays,
+    lessons,
+    config,
+    roomMeta,
+    reservationPolicy,
+    reservationPolicies,
+    policyWindows,
+    semesters,
+    apiSync
+  } = useSchedule(scheduleDateKey);
   const policyDayKeys = useMemo(() => {
     const next = weekDays.map((day) => day.key);
     if (!next.length) return DEFAULT_POLICY_DAY_KEYS;
@@ -668,8 +637,8 @@ export default function HomeScreen({
   }, [weekDays]);
   const policyDayKeySet = useMemo(() => new Set<DayKey>(policyDayKeys), [policyDayKeys]);
   const activeHours = useMemo(
-    () => deriveActiveHoursFromPolicies(reservationPolicies, config.startHour, config.endHour),
-    [config.endHour, config.startHour, reservationPolicies]
+    () => deriveActiveHoursFromReservationPolicyWindows(policyWindows, config.startHour, config.endHour),
+    [config.endHour, config.startHour, policyWindows]
   );
   const policyTimeSlots = useMemo(
     () => buildTimeSlotsRange(activeHours.startMinutes, activeHours.endMinutes, config.slotMinutes),
@@ -1482,6 +1451,7 @@ export default function HomeScreen({
     reservationPolicy,
     reservationPolicies,
     allowedPolicyDayKeys: policyDayKeys,
+    allowedPolicyWindows: policyWindows,
     config: { startHour: activeHours.startHour, endHour: activeHours.endHour },
     getLessonsForDate,
     addReservation,
@@ -2330,6 +2300,18 @@ export default function HomeScreen({
         showToast("טווח זמן לא תקין.", "error");
         return false;
       }
+      if (
+        !isReservationPolicySlotAllowed(policyWindows, {
+          dateKey,
+          dayKey: input.dayKey,
+          roomId,
+          startMinutes,
+          endMinutes
+        })
+      ) {
+        showToast("השעה מחוץ לשעות הפעילות לפי מדיניות המערכת.", "error");
+        return false;
+      }
 
       let effectivePolicy = { ...reservationPolicy };
       const scopedPolicies = reservationPolicies.filter((policy) => policy.enabled);
@@ -2530,6 +2512,7 @@ export default function HomeScreen({
       reservationPolicies,
       reservationPolicy,
       policyDayKeySet,
+      policyWindows,
       setAuthError,
       showToast
     ]
@@ -3327,6 +3310,7 @@ export default function HomeScreen({
       onRespondToGroupRehearsal={(groupId, rehearsalId, status) => { void handleRespondToGroupRehearsal(groupId, rehearsalId, status); }}
       getAvailableRoomsForSlot={getAvailableRoomsForSlot}
       policyDayKeys={policyDayKeys}
+      policyWindows={policyWindows}
       roomZoomResetToken={roomZoomResetToken}
       myScheduleZoomResetToken={myScheduleZoomResetToken}
       onOpenFinderForGroup={(groupId) => {
