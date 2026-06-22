@@ -9,6 +9,7 @@ import { addDays, formatDateKey, getDayKeyFromDateKey, getWeekStart, parseDateKe
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
 import { getReservationUsageShareForEmail } from "../../../lib/quotaUsage";
+import { defaultWeekDayKeys } from "../../../config";
 
 const STEP = 30;
 const MIN_DURATION = 30;
@@ -146,7 +147,7 @@ export function useReserveFlow({
         dayKey === "fri" ||
         dayKey === "sat"
     );
-    const fallback: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+    const fallback: DayKey[] = [...defaultWeekDayKeys];
     return new Set<DayKey>(valid.length ? valid : fallback);
   }, [allowedPolicyDayKeys]);
   const usageIndex = useMemo(() => {

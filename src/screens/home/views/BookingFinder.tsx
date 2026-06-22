@@ -6,6 +6,7 @@ import { getAvailabilityWindowForDate } from "../../../lib/collaboration";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { AddIcon, ChevronLeftIcon, CloseIcon, GroupsIcon, MicIcon, RemoveIcon, RoomIcon, ScheduleIcon, TuneIcon, UserIcon } from "../../../components/Icons";
 import GroupCreateOverlay from "../components/GroupCreateOverlay";
+import { allWeekDays, defaultWeekDayKeys } from "../../../config";
 import type { DirectoryUser, RoomMeta } from "../../../types/admin";
 import type { AvailabilityDateOffs, CollaborationGroup, CollaboratorEvent, UserAvailability } from "../../../types/collaboration";
 import type { ReservationMap } from "../../../types/reservations";
@@ -35,6 +36,7 @@ export type BookingFinderProps = {
   collaborationEnabled?: boolean;
   policyMaxDurationMinutes?: number;
   policyMaxDaysForward?: number;
+  policyDayKeys?: DayKey[];
   prefilledGroupId?: string;
   isActive?: boolean;
   resetToken?: number;
@@ -83,6 +85,15 @@ const DURATION_STEP_MINUTES = 30;
 const DEFAULT_SELF_DURATION_MINUTES = 60;
 const DEFAULT_GROUP_DURATION_MINUTES = 120;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DAY_KEY_TO_CALENDAR_DAY: Record<DayKey, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6
+};
 
 const subtractBusyFromWindow = (
   window: { start: number; end: number },
@@ -202,6 +213,7 @@ export default function BookingFinder({
   collaborationEnabled = true,
   policyMaxDurationMinutes,
   policyMaxDaysForward,
+  policyDayKeys = defaultWeekDayKeys,
   prefilledGroupId,
   isActive = true,
   resetToken,
@@ -342,13 +354,22 @@ export default function BookingFinder({
   const effectiveEndDate = formatDateKey(addDays(new Date(), 30));
   const safeFromHour = Math.max(startHour, Math.min(fromHour, endHour));
   const safeToHour = Math.max(safeFromHour, Math.min(toHour, endHour));
-  const weekdayLabels = [
-    { value: 0, label: "א׳" },
-    { value: 1, label: "ב׳" },
-    { value: 2, label: "ג׳" },
-    { value: 3, label: "ד׳" },
-    { value: 4, label: "ה׳" }
-  ];
+  const allowedPolicyDays = useMemo(() => {
+    const allowed = new Set(policyDayKeys.length ? policyDayKeys : defaultWeekDayKeys);
+    return allWeekDays.filter((day) => allowed.has(day.key));
+  }, [policyDayKeys]);
+  const allowedCalendarDays = useMemo(
+    () => new Set(allowedPolicyDays.map((day) => DAY_KEY_TO_CALENDAR_DAY[day.key])),
+    [allowedPolicyDays]
+  );
+  const weekdayLabels = useMemo(
+    () =>
+      allowedPolicyDays.map((day) => ({
+        value: DAY_KEY_TO_CALENDAR_DAY[day.key],
+        label: `${day.short || day.label}׳`
+      })),
+    [allowedPolicyDays]
+  );
   const weekDayNames = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
   const weekDayShortNames = ["א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳"];
   const attendeePreviewLimit = 4;
@@ -536,7 +557,7 @@ export default function BookingFinder({
     const dates: string[] = [];
     for (let date = start; date <= end; date = addDays(date, 1)) {
       const day = date.getDay();
-      if (day === 5 || day === 6) continue;
+      if (!allowedCalendarDays.has(day)) continue;
       if (useWeekdaysFilter && selectedWeekdays.length && !selectedWeekdays.includes(day)) continue;
       dates.push(formatDateKey(date));
     }
@@ -795,6 +816,7 @@ export default function BookingFinder({
     });
   }, [
     availability,
+    allowedCalendarDays,
     availableRooms,
     currentEmailNormalized,
     durationFilterMinutes,

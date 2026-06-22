@@ -4759,7 +4759,7 @@ select,
 
 .finder-weekdays-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
   gap: 8px;
   width: 100%;
 }
@@ -4811,7 +4811,7 @@ select,
 
 .finder-weekdays-inline {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(38px, 1fr));
   gap: 4px;
   overflow: hidden;
   padding-bottom: 0;
@@ -5713,7 +5713,7 @@ select,
 
 .availability-days {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
   gap: 8px;
 }
 

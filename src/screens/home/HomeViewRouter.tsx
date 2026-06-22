@@ -255,6 +255,7 @@ export default function HomeViewRouter({
       collaborationEnabled={collaborationEnabled}
       policyMaxDurationMinutes={finderPolicyMaxDurationMinutes}
       policyMaxDaysForward={finderPolicyMaxDaysForward}
+      policyDayKeys={policyDayKeys}
       prefilledGroupId={finderPrefilledGroupId}
       isActive={isFinderView}
       resetToken={finderResetToken}
@@ -304,6 +305,7 @@ export default function HomeViewRouter({
         startHour={startHour}
         endHour={endHour}
         roomMeta={roomMeta}
+        policyDayKeys={policyDayKeys}
         onRoomSelect={(roomId) => onRoomSelect(roomId, todayDateKey)}
       />
     );

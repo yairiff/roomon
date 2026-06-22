@@ -49,6 +49,7 @@ import type {
   UserAvailability
 } from "../../types/collaboration";
 import type { GroupRehearsal } from "../../types/collaboration";
+import { allDayKeys, defaultWeekDayKeys } from "../../config";
 
 export type HomeScreenProps = {
   currentUser: User | null;
@@ -79,8 +80,8 @@ type CollaboratorProfile = {
   events: CollaboratorEvent[];
 };
 
-const DEFAULT_POLICY_DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
-const ALL_DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const DEFAULT_POLICY_DAY_KEYS: DayKey[] = [...defaultWeekDayKeys];
+const ALL_DAY_KEYS: DayKey[] = [...allDayKeys];
 
 const cloneAvailability = (source: UserAvailability): UserAvailability =>
   ALL_DAY_KEYS.reduce((acc, dayKey) => {

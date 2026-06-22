@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { httpsCallable } from "firebase/functions";
 import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { rimonScheduleConfig } from "../../config";
+import { allWeekDays, defaultWeekDayKeys, rimonScheduleConfig } from "../../config";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
 import { useLessons } from "../../hooks/useLessons";
 import { useReservations } from "../../hooks/useReservations";
@@ -106,16 +106,9 @@ type ApiSyncInvocationResult = {
   entities?: Partial<Record<ApiSyncEntityKey, ApiSyncInvocationEntityResult>>;
 };
 
-const DAY_KEYS_DEFAULT: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
-const POLICY_DAY_OPTIONS: Array<{ key: DayKey; label: string; short: string }> = [
-  { key: "sun", label: "ראשון", short: "א" },
-  { key: "mon", label: "שני", short: "ב" },
-  { key: "tue", label: "שלישי", short: "ג" },
-  { key: "wed", label: "רביעי", short: "ד" },
-  { key: "thu", label: "חמישי", short: "ה" },
-  { key: "fri", label: "שישי", short: "ו" },
-  { key: "sat", label: "שבת", short: "ז" }
-];
+const DAY_KEYS_DEFAULT: DayKey[] = [...defaultWeekDayKeys];
+const POLICY_DAY_OPTIONS = allWeekDays;
+const POLICY_DAY_KEYS = POLICY_DAY_OPTIONS.map((day) => day.key);
 
 const createSemesterId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
@@ -329,7 +322,7 @@ const toScopedPolicyDraft = (policy: ReservationScopedPolicy): ScopedPolicyDraft
   useConditionTimeRange:
     policy.isDefault ? true : policy.scope.startMinutes !== undefined || policy.scope.endMinutes !== undefined,
   roomIds: policy.isDefault ? [] : policy.scope.roomIds || [],
-  dayKeys: policy.scope.dayKeys || [...DAY_KEYS_DEFAULT],
+  dayKeys: policy.scope.dayKeys.length ? policy.scope.dayKeys : [...DAY_KEYS_DEFAULT],
   semesterIds: policy.isDefault ? [] : policy.scope.semesterIds || [],
   dateStart: policy.isDefault ? "" : policy.scope.dateStart || "",
   dateEnd: policy.isDefault ? "" : policy.scope.dateEnd || "",
@@ -376,7 +369,7 @@ const parseOptionalNumber = (value: string) => {
 const parseLimitNumber = (value: string) => Math.max(0, parseOptionalNumber(value) || 0);
 
 const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
-  const defaultDayKeys = Array.from(new Set(draft.dayKeys.filter((dayKey) => DAY_KEYS_DEFAULT.includes(dayKey))));
+  const defaultDayKeys = Array.from(new Set(draft.dayKeys.filter((dayKey) => POLICY_DAY_KEYS.includes(dayKey))));
   const scope = draft.isDefault
     ? {
         roomIds: [],

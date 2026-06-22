@@ -1,5 +1,5 @@
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import { parseDateKey } from "../../../lib/date";
+import { defaultWeekDayKeys } from "../../../config";
 import type { Lesson, Room } from "../../../types/schedule";
 import type { ReservationMap } from "../../../types/reservations";
 import type { DayKey } from "../../../types/schedule";
@@ -16,6 +16,7 @@ export type LiveViewProps = {
   startHour: number;
   endHour: number;
   roomMeta?: Record<string, RoomMeta>;
+  policyDayKeys?: DayKey[];
   onRoomSelect: (roomId: string) => void;
 };
 
@@ -29,12 +30,13 @@ export default function LiveView({
   startHour,
   endHour,
   roomMeta,
+  policyDayKeys = defaultWeekDayKeys,
   onRoomSelect
 }: LiveViewProps) {
   const todayReservations = reservationMap[dateKey] || [];
-  const todayDate = parseDateKey(dateKey);
-  const isWeekend = todayDate.getDay() === 5 || todayDate.getDay() === 6;
-  const isClosedNow = isWeekend || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60;
+  const openDayKeys = policyDayKeys.length ? policyDayKeys : defaultWeekDayKeys;
+  const isClosedDay = !openDayKeys.includes(dayKey);
+  const isClosedNow = isClosedDay || nowMinutes < startHour * 60 || nowMinutes >= endHour * 60;
   const reservationDuration = (durationMinutes: number | undefined) => {
     const numeric = Number(durationMinutes);
     return Number.isFinite(numeric) && numeric > 0 ? numeric : 60;

@@ -8,7 +8,7 @@ import {
   saveUserAvailabilityDateOffs
 } from "../../../lib/storage";
 import { defaultUserAvailability, normalizeUserAvailability } from "../../../lib/collaboration";
-import { collaborationWeekdays } from "../../../types/collaboration";
+import { allDayKeys } from "../../../config";
 import type { DayKey } from "../../../types/schedule";
 import type { AvailabilityDateOffs, UserAvailability } from "../../../types/collaboration";
 
@@ -17,7 +17,6 @@ type UseUserAvailabilityArgs = {
 };
 
 export function useUserAvailability({ email }: UseUserAvailabilityArgs) {
-  const nonUiDays: DayKey[] = ["fri", "sat"].filter((dayKey) => !collaborationWeekdays.includes(dayKey as DayKey)) as DayKey[];
   const normalizedEmail = useMemo(() => (email || "").trim().toLowerCase(), [email]);
   const [availability, setAvailability] = useState<UserAvailability>(defaultUserAvailability);
   const [dateOffs, setDateOffs] = useState<AvailabilityDateOffs>({});
@@ -88,7 +87,7 @@ export function useUserAvailability({ email }: UseUserAvailabilityArgs) {
       if (!db) return;
       try {
         const userRef = doc(db, "users", normalizedEmail);
-        const persistedAvailability = collaborationWeekdays.reduce<Record<string, unknown>>((acc, dayKey) => {
+        const persistedAvailability = allDayKeys.reduce<Record<string, unknown>>((acc, dayKey) => {
           acc[dayKey] = normalized[dayKey];
           return acc;
         }, {});
@@ -102,9 +101,6 @@ export function useUserAvailability({ email }: UseUserAvailabilityArgs) {
           { merge: true }
         );
         const dateOffUpdates: Record<string, unknown> = {};
-        nonUiDays.forEach((dayKey) => {
-          dateOffUpdates[`availability.${dayKey}`] = deleteField();
-        });
         const nextDateKeys = Object.keys(normalizedDateOffs);
         if (!nextDateKeys.length) {
           dateOffUpdates.availabilityDateOffs = {};

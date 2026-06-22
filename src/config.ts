@@ -1,5 +1,5 @@
 import type { ScheduleConfig } from "./types/schedule";
-import type { WeekDay, TimeSlot } from "./types/schedule";
+import type { DayKey, WeekDay, TimeSlot } from "./types/schedule";
 import type { SemesterKey } from "./types/ui";
 import { buildTimeSlots } from "./lib/scheduleBuilder";
 import { parseDateKey } from "./lib/date";
@@ -35,13 +35,20 @@ export const rimonScheduleConfig: ScheduleConfig = {
   }
 };
 
-export const weekDays: WeekDay[] = [
+export const defaultWeekDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+export const allDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+export const allWeekDays: WeekDay[] = [
   { key: "sun", label: "ראשון", short: "א" },
   { key: "mon", label: "שני", short: "ב" },
   { key: "tue", label: "שלישי", short: "ג" },
   { key: "wed", label: "רביעי", short: "ד" },
-  { key: "thu", label: "חמישי", short: "ה" }
+  { key: "thu", label: "חמישי", short: "ה" },
+  { key: "fri", label: "שישי", short: "ו" },
+  { key: "sat", label: "שבת", short: "ש" }
 ];
+
+export const weekDays: WeekDay[] = allWeekDays.filter((day) => defaultWeekDayKeys.includes(day.key));
 
 export const timeSlots: TimeSlot[] = buildTimeSlots(rimonScheduleConfig);
 

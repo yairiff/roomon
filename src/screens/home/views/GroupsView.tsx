@@ -12,7 +12,7 @@ import {
   SearchIcon
 } from "../../../components/Icons";
 import GroupCreateOverlay from "../components/GroupCreateOverlay";
-import { weekDays } from "../../../config";
+import { allWeekDays, defaultWeekDayKeys } from "../../../config";
 import { gradeLabelFromCohort } from "../../../lib/academics";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey } from "../../../lib/date";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
@@ -61,7 +61,7 @@ type GroupsViewProps = {
   resetToken?: number;
 };
 
-const DEFAULT_POLICY_DAY_KEYS: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
+const DEFAULT_POLICY_DAY_KEYS: DayKey[] = [...defaultWeekDayKeys];
 
 const displayName = (email: string, usersByEmail: Map<string, DirectoryUser>) => {
   const user = usersByEmail.get(email.toLowerCase());
@@ -466,7 +466,7 @@ export default function GroupsView({
               const subtitle = (() => {
                 if (!upcoming) return "אין חזרות מתוזמנות";
                 const dayKey = upcoming.dayKey || getDayKeyFromDateKey(upcoming.dateKey);
-                const weekdayShort = weekDays.find((day) => day.key === dayKey)?.short || "";
+                const weekdayShort = allWeekDays.find((day) => day.key === dayKey)?.short || "";
                 const weekdayToken = weekdayShort ? `יום ${weekdayShort}׳` : "יום";
                 const endMinutes = upcoming.startMinutes + upcoming.durationMinutes;
                 return `הבא: ${weekdayToken} ${formatShortDate(upcoming.dateKey)} · ` +
@@ -620,7 +620,7 @@ export default function GroupsView({
               const currentParticipantStatus = rehearsal.participants.find(
                 (participant) => participant.email === currentEmailNormalized
               )?.status;
-              const dayLabel = weekDays.find(
+              const dayLabel = allWeekDays.find(
                 (day) => day.key === (rehearsal.dayKey || getDayKeyFromDateKey(rehearsal.dateKey))
               )?.label || "";
               const previewVisible = approvedParticipants.slice(0, 4);
@@ -849,7 +849,7 @@ export default function GroupsView({
             <div className="groups-rehearsal-details-head">
               <p className="groups-overlay-title">{detailsRehearsal.title || "חזרה"}</p>
               <p className="groups-rehearsal-meta">
-                יום {weekDays.find((day) => day.key === (detailsRehearsal.dayKey || getDayKeyFromDateKey(detailsRehearsal.dateKey)))?.label || ""} ·
+                יום {allWeekDays.find((day) => day.key === (detailsRehearsal.dayKey || getDayKeyFromDateKey(detailsRehearsal.dateKey)))?.label || ""} ·
                 {" "}{formatShortDate(detailsRehearsal.dateKey)} · {formatMinutes(detailsRehearsal.startMinutes)}–
                 {formatMinutes(detailsRehearsal.startMinutes + detailsRehearsal.durationMinutes)}
               </p>

@@ -8,7 +8,7 @@ import type { MySchedulePin } from "../../../types/mySchedule";
 import ScheduleGrid from "./ScheduleGrid";
 import Legend from "./Legend";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import { weekDays } from "../../../config";
+import { allWeekDays } from "../../../config";
 import type { DirectoryUser } from "../../../types/admin";
 import type { AvailabilityDateOffs, CollaborationGroup, RehearsalParticipant, UserAvailability } from "../../../types/collaboration";
 
@@ -434,7 +434,7 @@ export default function MyScheduleView({
           {nonEmptyDates.map((dateKey) => {
             const entries = agendaEntriesByDate.get(dateKey) || [];
             const weekday =
-              weekDays.find((d) => d.key === getDayKeyFromDateKey(dateKey))?.label || "";
+              allWeekDays.find((d) => d.key === getDayKeyFromDateKey(dateKey))?.label || "";
           return (
             <li key={dateKey} className="my-schedule-day">
               <div

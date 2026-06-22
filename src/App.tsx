@@ -12,7 +12,6 @@ import type { ViewMode } from "./types/ui";
 import AdminScreen from "./screens/admin/AdminScreen";
 import SignupOverlay from "./components/SignupOverlay";
 import { addDays, formatDateKey, getWeekStart } from "./lib/date";
-import { weekDays } from "./config";
 import { db } from "./lib/firebase";
 import { useScheduleSettings } from "./hooks/useScheduleSettings";
 
@@ -50,7 +49,7 @@ export default function App() {
     const todayKey = formatDateKey(new Date());
     const weekStart = getWeekStart(todayKey);
     const startKey = formatDateKey(weekStart);
-    const endKey = formatDateKey(addDays(weekStart, weekDays.length - 1));
+    const endKey = formatDateKey(addDays(weekStart, 6));
     return { startDate: startKey, endDate: endKey };
   });
   const [quotaReferenceDate, setQuotaReferenceDate] = useState(() => formatDateKey(new Date()));

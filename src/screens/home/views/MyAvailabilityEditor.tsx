@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { collaborationWeekdays, type UserAvailability } from "../../../types/collaboration";
+import type { UserAvailability } from "../../../types/collaboration";
 import type { DayKey, WeekDay } from "../../../types/schedule";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 
@@ -94,6 +94,7 @@ export default function MyAvailabilityEditor({
     weekDays.forEach((day) => map.set(day.key, day.short || day.label));
     return map;
   }, [weekDays]);
+  const visibleDayKeys = useMemo(() => weekDays.map((day) => day.key), [weekDays]);
 
   return (
     <div className="availability-editor schedule-like">
@@ -105,7 +106,7 @@ export default function MyAvailabilityEditor({
           ))}
         </div>
         <div className="availability-days">
-          {collaborationWeekdays.map((dayKey) => {
+          {visibleDayKeys.map((dayKey) => {
             const day = draft[dayKey];
             if (!day) return null;
             const start = ((day.startMinutes - topMinutes) / visibleDuration) * 100;

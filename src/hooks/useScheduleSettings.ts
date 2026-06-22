@@ -1,7 +1,7 @@
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db } from "../lib/firebase";
-import { rimonScheduleConfig } from "../config";
+import { allDayKeys, defaultWeekDayKeys, rimonScheduleConfig } from "../config";
 import type {
   ApiSyncEntityConfig,
   ApiSyncEntityKey,
@@ -16,8 +16,8 @@ import type {
 import type { DayKey } from "../types/schedule";
 import { DEFAULT_API_SYNC_SETTINGS, DEFAULT_RESERVATION_POLICY } from "../types/settings";
 
-const validStudyDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu"];
-const validPolicyDayKeys: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const validStudyDayKeys: DayKey[] = [...defaultWeekDayKeys];
+const validPolicyDayKeys: DayKey[] = [...allDayKeys];
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_POLICY_ID = "default-policy";
 

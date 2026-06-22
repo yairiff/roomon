@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { rimonScheduleConfig } from "../../../config";
-import { weekDays } from "../../../config";
+import { allWeekDays, rimonScheduleConfig } from "../../../config";
 import type { LessonRecord, RoomRecord } from "../../../types/admin";
 import type { Reservation } from "../../../types/reservations";
 import type { BulkState } from "../bulk";
@@ -115,7 +114,7 @@ export default function ScheduleSection({
   }, [roomsRaw]);
 
   const dayLabel = useCallback((day: LessonRecord["day"]) => {
-    return weekDays.find((d) => d.key === day)?.label || day;
+    return allWeekDays.find((d) => d.key === day)?.label || day;
   }, []);
 
   const includesLessons = scheduleFilter === "all" || scheduleFilter === "lessons";
@@ -168,7 +167,7 @@ export default function ScheduleSection({
         return haystack.includes(q);
       });
     }
-    const dayIndex = (dayKey: LessonRecord["day"]) => weekDays.findIndex((day) => day.key === dayKey);
+    const dayIndex = (dayKey: LessonRecord["day"]) => allWeekDays.findIndex((day) => day.key === dayKey);
     const roomName = (lesson: LessonRecord) => (roomLookup[lesson.roomId] || lesson.roomId).trim();
     const byTime = (a: LessonRecord, b: LessonRecord) =>
       dayIndex(a.day) - dayIndex(b.day) || a.startMinutes - b.startMinutes;
@@ -521,7 +520,7 @@ export default function ScheduleSection({
                   >
                     כל הימים
                   </button>
-                  {weekDays.map((day) => (
+                  {allWeekDays.map((day) => (
                     <button
                       key={day.key}
                       type="button"

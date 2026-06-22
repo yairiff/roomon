@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { LessonRecord, RoomRecord } from "../../../types/admin";
 import type { SemesterKey } from "../../../types/ui";
-import { weekDays } from "../../../config";
+import { allWeekDays } from "../../../config";
 import { AddIcon, ApproveIcon, DuplicateIcon, EditIcon, ReleaseIcon } from "../../../components/Icons";
 import ConfirmDialog from "../components/ConfirmDialog";
 
@@ -69,13 +69,13 @@ export default function LessonsSection({
     if (q) {
       list = list.filter((lesson) => {
         const roomName = roomLookup[lesson.roomId] || lesson.roomId;
-        const dayLabel = weekDays.find((day) => day.key === lesson.day)?.label || lesson.day;
+        const dayLabel = allWeekDays.find((day) => day.key === lesson.day)?.label || lesson.day;
         const haystack = [lesson.title, lesson.teacher || "", roomName, dayLabel].join(" ").toLowerCase();
         return haystack.includes(q);
       });
     }
 
-    const dayIndex = (dayKey: LessonRecord["day"]) => weekDays.findIndex((day) => day.key === dayKey);
+    const dayIndex = (dayKey: LessonRecord["day"]) => allWeekDays.findIndex((day) => day.key === dayKey);
 
     return [...list].sort((a, b) => {
       if (sortBy === "title") return a.title.localeCompare(b.title, "he");
@@ -265,7 +265,7 @@ export default function LessonsSection({
               יום
               <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value as typeof dayFilter)}>
                 <option value="all">כל הימים</option>
-                {weekDays.map((day) => (
+                {allWeekDays.map((day) => (
                   <option key={day.key} value={day.key}>{day.label}</option>
                 ))}
               </select>
@@ -344,7 +344,7 @@ export default function LessonsSection({
                       setLessonDraft((prev) => ({ ...prev, day: event.target.value as LessonRecord["day"] }))
                     }
                   >
-                    {weekDays.map((day) => (
+                    {allWeekDays.map((day) => (
                       <option key={day.key} value={day.key}>{day.label}</option>
                     ))}
                   </select>
@@ -482,7 +482,7 @@ export default function LessonsSection({
                     <div className="admin-row-main">
                       <p className="admin-row-title">{lesson.title}</p>
                       <p className="admin-row-meta">
-                        {lesson.teacher || "ללא מרצה"} · {weekDays.find((day) => day.key === lesson.day)?.label} · {toTimeInput(lesson.startMinutes)}
+                        {lesson.teacher || "ללא מרצה"} · {allWeekDays.find((day) => day.key === lesson.day)?.label} · {toTimeInput(lesson.startMinutes)}
                       </p>
                     </div>
                     <div className="admin-row-actions">

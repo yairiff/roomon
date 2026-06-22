@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { rimonScheduleConfig, weekDays as weekDayOptions } from "../../../../config";
+import { allWeekDays as weekDayOptions, rimonScheduleConfig } from "../../../../config";
 import type { LessonOverride, LessonRecord, RoomRecord } from "../../../../types/admin";
 import type { Reservation } from "../../../../types/reservations";
 import { useLessonOverrides } from "../../../../hooks/useLessonOverrides";
