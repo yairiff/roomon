@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { allWeekDays, defaultWeekDayKeys, timeSlots, weekDays, rimonScheduleConfig } from "../config";
+import { allDayKeys, allWeekDays, defaultWeekDayKeys, timeSlots, weekDays, rimonScheduleConfig } from "../config";
 import { parseDateKey } from "../lib/date";
 import { buildLessonIndex, buildRoomsFromLessons } from "../lib/scheduleBuilder";
 import { buildYearlySemesterId } from "../lib/semesterScope";
@@ -20,17 +20,25 @@ const isPrimarySemesterLetter = (letter: string) => {
 };
 
 const DEFAULT_POLICY_DAY_KEYS: DayKey[] = [...defaultWeekDayKeys];
+const validPolicyDayKeySet = new Set<DayKey>(allDayKeys);
+const isPolicyDayKey = (key: unknown): key is DayKey =>
+  typeof key === "string" && validPolicyDayKeySet.has(key as DayKey);
 
 export function useSchedule(dateKey: string) {
   const { semesters, reservationPolicy, reservationPolicies, apiSync } = useScheduleSettings();
   const policyDayKeys = useMemo(() => {
     const defaultPolicy = reservationPolicies.find((policy) => policy.isDefault && policy.enabled);
-    const next = (defaultPolicy?.scope.dayKeys || []).filter(
-      (key): key is DayKey =>
-        key === "sun" || key === "mon" || key === "tue" || key === "wed" || key === "thu" || key === "fri" || key === "sat"
-    );
-    if (!next.length) return DEFAULT_POLICY_DAY_KEYS;
-    return Array.from(new Set(next));
+    const next = new Set<DayKey>();
+    const defaultDays = (defaultPolicy?.scope.dayKeys || []).filter(isPolicyDayKey);
+    (defaultDays.length ? defaultDays : DEFAULT_POLICY_DAY_KEYS).forEach((dayKey) => next.add(dayKey));
+
+    reservationPolicies.forEach((policy) => {
+      if (!policy.enabled || policy.isDefault) return;
+      if (policy.rules.blockReservations === true) return;
+      policy.scope.dayKeys.filter(isPolicyDayKey).forEach((dayKey) => next.add(dayKey));
+    });
+
+    return next.size ? Array.from(next) : DEFAULT_POLICY_DAY_KEYS;
   }, [reservationPolicies]);
   const activeSemester = useMemo(() => {
     const selectedDate = parseDateKey(dateKey);
