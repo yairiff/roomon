@@ -169,6 +169,17 @@ const parseTimeToMinutes = (value: string): number | null => {
   return hours * 60 + minutes;
 };
 
+const isExternalSemesterBoundaryResponse = (payload: { message?: string; reason?: string | null }) => {
+  const text = `${payload.reason || ""} ${payload.message || ""}`
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  return (
+    text.includes("outside configured semester dates") ||
+    text.includes("outside semester") ||
+    (text.includes("semester") && text.includes("outside"))
+  );
+};
+
 const normalizeSeriesText = (value: string) => value.trim().replace(/\s+/g, " ");
 
 const lessonSeriesToken = (lesson: Pick<Lesson, "title" | "teacher" | "roomId" | "startMinutes" | "durationMinutes">) =>
@@ -851,6 +862,10 @@ export default function HomeScreen({
             available: true,
             message: ""
           });
+          return { ok: true };
+        }
+
+        if (isExternalSemesterBoundaryResponse(payload)) {
           return { ok: true };
         }
 
