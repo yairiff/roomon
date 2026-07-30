@@ -8,7 +8,7 @@ import type { ReservationPolicy, ReservationScopedPolicy } from "../../../types/
 import { addDays, formatDateKey, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
-import { getReservationUsageShareForEmail } from "../../../lib/quotaUsage";
+import { getReservationUsageShareForEmail, normalizeEmailList } from "../../../lib/quotaUsage";
 import { defaultWeekDayKeys } from "../../../config";
 import {
   buildReservationPolicyWindowsForDays,
@@ -144,6 +144,23 @@ export function useReserveFlow({
 }: UseReserveFlowArgs) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const currentUserEmail = useMemo(() => (currentUser?.email || "").trim().toLowerCase(), [currentUser?.email]);
+  const getDraftParticipantEmails = useCallback(
+    (participantEmails?: string[]) => {
+      const normalized = normalizeEmailList([
+        currentUserEmail,
+        ...(participantEmails || [])
+      ]);
+      return normalized.length ? normalized : currentUserEmail ? [currentUserEmail] : [];
+    },
+    [currentUserEmail]
+  );
+  const getQuotaRequiredMinutes = useCallback(
+    (durationMinutes: number, participantEmails?: string[]) => {
+      const participantCount = Math.max(1, getDraftParticipantEmails(participantEmails).length);
+      return durationMinutes / participantCount;
+    },
+    [getDraftParticipantEmails]
+  );
   const policyWindows = useMemo(() => {
     if (allowedPolicyWindows?.length) return allowedPolicyWindows;
     const fallbackDays = allowedPolicyDayKeys.length ? allowedPolicyDayKeys : defaultWeekDayKeys;
@@ -458,23 +475,31 @@ export function useReserveFlow({
   );
 
   const getLimitViolationMessage = useCallback(
-    (dateKey: string, roomId: string, startMinutes: number, requiredMinutes: number, excludeReservationId?: string) => {
+    (
+      dateKey: string,
+      roomId: string,
+      startMinutes: number,
+      requiredMinutes: number,
+      excludeReservationId?: string,
+      participantEmails?: string[]
+    ) => {
       const remaining = getRemainingMinutes(dateKey, roomId, startMinutes, excludeReservationId);
-      if (remaining.roomRemaining < requiredMinutes) {
+      const quotaRequiredMinutes = getQuotaRequiredMinutes(requiredMinutes, participantEmails);
+      if (remaining.roomRemaining < quotaRequiredMinutes) {
         return `מקסימום ${formatHoursLabel(remaining.effectivePolicy.maxHoursPerRoomPerDay)} שעות לחדר ביום.\nלהחרגה יש לפנות למנהל מורשה.`;
       }
-      if (remaining.roomWeekRemaining < requiredMinutes) {
+      if (remaining.roomWeekRemaining < quotaRequiredMinutes) {
         return `מקסימום ${formatHoursLabel(remaining.effectivePolicy.maxHoursPerRoomPerWeek)} שעות לחדר בשבוע.\nלהחרגה יש לפנות למנהל מורשה.`;
       }
-      if (remaining.dayRemaining < requiredMinutes) {
+      if (remaining.dayRemaining < quotaRequiredMinutes) {
         return `מקסימום ${formatHoursLabel(remaining.globalQuotaPolicy.maxHoursPerDayTotal)} שעות ליום לכל הסטודנט.\nלהחרגה יש לפנות למנהל מורשה.`;
       }
-      if (remaining.weekRemaining < requiredMinutes) {
+      if (remaining.weekRemaining < quotaRequiredMinutes) {
         return `מקסימום ${formatHoursLabel(remaining.globalQuotaPolicy.maxHoursPerWeekTotal)} שעות לשבוע לכל הסטודנט.\nלהחרגה יש לפנות למנהל מורשה.`;
       }
       return null;
     },
-    [getRemainingMinutes]
+    [getQuotaRequiredMinutes, getRemainingMinutes]
   );
 
   const getConcurrentReservationCount = useCallback(
@@ -578,7 +603,9 @@ export function useReserveFlow({
 
       const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
       const remaining = getRemainingMinutes(request.date, request.roomId, alignedStart, excludeReservationId);
-      if (windowDuration < MIN_DURATION || remaining.effectiveRemaining < MIN_DURATION) return null;
+      const participantCount = Math.max(1, getDraftParticipantEmails(request.participantEmails).length);
+      const effectiveRemainingDuration = remaining.effectiveRemaining * participantCount;
+      if (windowDuration < MIN_DURATION || effectiveRemainingDuration < MIN_DURATION) return null;
       const currentDayUsed = getUserReservedMinutesForDate(request.date, excludeReservationId);
       const currentWeekUsed = getUserReservedMinutesForWeek(request.date, excludeReservationId);
       const globalQuotaPolicy = getGlobalQuotaPolicyForSlot(request.date, alignedStart);
@@ -596,7 +623,7 @@ export function useReserveFlow({
         limitEnd: alignedLimitEnd,
         startMinutes: alignedStart,
         windowStart: alignedWindowStart,
-        userRemainingMinutes: remaining.effectiveRemaining,
+        userRemainingMinutes: effectiveRemainingDuration,
         effectivePolicy: remaining.effectivePolicy,
         globalQuotaPolicy,
         quotaUsage: {
@@ -617,6 +644,7 @@ export function useReserveFlow({
       config.startHour,
       getGlobalQuotaPolicyForSlot,
       getPolicyContext,
+      getDraftParticipantEmails,
       getRemainingMinutes,
       getUserReservedMinutesForDate,
       getUserReservedMinutesForWeek,
@@ -680,7 +708,9 @@ export function useReserveFlow({
         request.date,
         request.roomId,
         request.time,
-        requestedDuration
+        requestedDuration,
+        undefined,
+        request.participantEmails
       );
       if (requestedLimitMessage) {
         showToast(requestedLimitMessage);
@@ -692,7 +722,9 @@ export function useReserveFlow({
           request.date,
           request.roomId,
           request.time,
-          MIN_DURATION
+          MIN_DURATION,
+          undefined,
+          request.participantEmails
         );
         if (minimumLimitMessage) {
           showToast(minimumLimitMessage);
@@ -813,7 +845,16 @@ export function useReserveFlow({
         return null;
       }
 
-      const limitMessage = getLimitViolationMessage(date, roomId, startMinutes, durationMinutes);
+      const participantEmails = getDraftParticipantEmails(draft.participantEmails);
+      const quotaParticipantEmails = participantEmails.length > 1 ? participantEmails : undefined;
+      const limitMessage = getLimitViolationMessage(
+        date,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        undefined,
+        quotaParticipantEmails
+      );
       if (limitMessage) {
         showToast(limitMessage);
         return null;
@@ -843,7 +884,8 @@ export function useReserveFlow({
         reservedEmail: currentUser.email,
         reservedPhone: currentUser.phone || undefined,
         reservedPicture: nextReservedPicture,
-        privateDescription: normalizedDescription
+        privateDescription: normalizedDescription,
+        quotaParticipantEmails
       };
 
       onOptimisticCreate?.(nextReservation);
@@ -881,6 +923,7 @@ export function useReserveFlow({
       getConcurrencyViolationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getDraftParticipantEmails,
       getLessonsForDate,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,
@@ -971,8 +1014,17 @@ export function useReserveFlow({
       const alignedWindowStart = Math.ceil(windowStart / STEP) * STEP;
 
       const remaining = getRemainingMinutes(dateKey, roomId, alignedStart, reservationId);
-      if (remaining.effectiveRemaining < MIN_DURATION) {
-        const limitMessage = getLimitViolationMessage(dateKey, roomId, alignedStart, MIN_DURATION, reservationId);
+      const participantCount = Math.max(1, getDraftParticipantEmails(entry.quotaParticipantEmails).length);
+      const effectiveRemainingDuration = remaining.effectiveRemaining * participantCount;
+      if (effectiveRemainingDuration < MIN_DURATION) {
+        const limitMessage = getLimitViolationMessage(
+          dateKey,
+          roomId,
+          alignedStart,
+          MIN_DURATION,
+          reservationId,
+          entry.quotaParticipantEmails
+        );
         if (limitMessage) showToast(limitMessage);
         return;
       }
@@ -986,18 +1038,19 @@ export function useReserveFlow({
         time: alignedStart,
         roomId,
         durationMinutes: entry.durationMinutes,
-        privateDescription: entry.privateDescription || ""
+        privateDescription: entry.privateDescription || "",
+        participantEmails: entry.quotaParticipantEmails || []
       };
 
       setPendingConfirm({
         mode: "edit",
         reservationId,
         request,
-        durationMinutes: Math.max(MIN_DURATION, Math.min(entry.durationMinutes, remaining.effectiveRemaining)),
+        durationMinutes: Math.max(MIN_DURATION, Math.min(entry.durationMinutes, effectiveRemainingDuration)),
         limitEnd: alignedLimitEnd,
         startMinutes: alignedStart,
         windowStart: alignedWindowStart,
-        userRemainingMinutes: remaining.effectiveRemaining,
+        userRemainingMinutes: effectiveRemainingDuration,
         privateDescription: entry.privateDescription || "",
         limitHoursPerRoomPerDay: remaining.effectivePolicy.maxHoursPerRoomPerDay,
         limitHoursPerRoomPerWeek: remaining.effectivePolicy.maxHoursPerRoomPerWeek,
@@ -1025,6 +1078,7 @@ export function useReserveFlow({
       getBlockReservationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getDraftParticipantEmails,
       getGlobalQuotaPolicyForSlot,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,
@@ -1110,7 +1164,16 @@ export function useReserveFlow({
         return false;
       }
 
-      const limitMessage = getLimitViolationMessage(date, roomId, startMinutes, durationMinutes, reservationId);
+      const participantEmails = getDraftParticipantEmails(pending.request.participantEmails);
+      const quotaParticipantEmails = participantEmails.length > 1 ? participantEmails : [] as string[];
+      const limitMessage = getLimitViolationMessage(
+        date,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        reservationId,
+        quotaParticipantEmails
+      );
       if (limitMessage) {
         showToast(limitMessage);
         return false;
@@ -1149,7 +1212,8 @@ export function useReserveFlow({
           const existing = (currentEntry.reservedPicture || "").trim();
           return isFirebaseStorageDownloadUrl(existing) ? existing : undefined;
         })(),
-        privateDescription: normalizedDescription
+        privateDescription: normalizedDescription,
+        quotaParticipantEmails
       });
       if (!ok) {
         showToast("שמירה נכשלה (בדוק הגדרות Firestore).", "error");
@@ -1166,6 +1230,7 @@ export function useReserveFlow({
       getConcurrencyViolationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getDraftParticipantEmails,
       getLessonsForDate,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,

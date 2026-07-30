@@ -13,6 +13,7 @@ export type ReservationDetailsOverlayProps = {
   email: string;
   phone: string;
   pictureUrl?: string;
+  participants?: Array<{ email: string; name: string; phone?: string; pictureUrl?: string }>;
   privateDescription?: string;
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -29,6 +30,7 @@ export default function ReservationDetailsOverlay({
   email,
   phone,
   pictureUrl,
+  participants = [],
   privateDescription,
   pinned = false,
   onTogglePin,
@@ -57,6 +59,13 @@ export default function ReservationDetailsOverlay({
     if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
     return source.slice(0, 2).toUpperCase();
   })();
+  const contactLinks = (rawPhone?: string) => {
+    const normalized = rawPhone ? rawPhone.replace(/[^\d+]/g, "") : "";
+    const tel = normalized ? `tel:${normalized}` : "";
+    const digits = normalized.replace(/[^\d]/g, "");
+    const wa = digits.startsWith("0") && digits.length === 10 ? `972${digits.slice(1)}` : digits;
+    return { tel, wa: wa ? `https://wa.me/${wa}` : "" };
+  };
 
   const handleBackdropClick = () => {
     if (zoomOpen) {
@@ -93,6 +102,60 @@ export default function ReservationDetailsOverlay({
           <p className="reserve-time">{timeLine}</p>
           {!name ? <p className="reserve-detail">{title}</p> : null}
           {privateDescription ? <p className="reserve-detail">תיאור אישי: {privateDescription}</p> : null}
+          {participants.length > 1 ? (
+            <div className="reservation-participants">
+              {participants.map((participant) => {
+                const label = (participant.name || "").trim() || participant.email;
+                const participantInitials = (() => {
+                  const parts = label.trim().split(/\s+/).filter(Boolean);
+                  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+                  return label.slice(0, 2).toUpperCase();
+                })();
+                const links = contactLinks(participant.phone);
+                return (
+                  <div key={`reservation-participant-${participant.email}`} className="reservation-participant-row">
+                    <span className="groups-chat-avatar reservation-participant-avatar" aria-hidden="true">
+                      {participant.pictureUrl ? (
+                        <img src={participant.pictureUrl} alt="" loading="lazy" />
+                      ) : (
+                        participantInitials
+                      )}
+                    </span>
+                    <span className="reservation-participant-text">
+                      <span className="groups-chat-title">{label}</span>
+                      <span className="groups-chat-subtitle">{participant.phone || participant.email}</span>
+                    </span>
+                    <span className="reserve-contact-actions reservation-participant-actions" aria-label="יצירת קשר">
+                      {links.tel ? (
+                        <a className="icon-button contact" href={links.tel} aria-label={`התקשר אל ${label}`}>
+                          <PhoneInTalkRoundedIcon fontSize="small" />
+                        </a>
+                      ) : (
+                        <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
+                          <PhoneInTalkRoundedIcon fontSize="small" />
+                        </button>
+                      )}
+                      {links.wa ? (
+                        <a
+                          className="icon-button contact whatsapp"
+                          href={links.wa}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`WhatsApp ${label}`}
+                        >
+                          <WhatsAppIcon fontSize="small" />
+                        </a>
+                      ) : (
+                        <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
+                          <WhatsAppIcon fontSize="small" />
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
         <div className="reserve-actions reserve-actions-details">
           {onTogglePin ? (

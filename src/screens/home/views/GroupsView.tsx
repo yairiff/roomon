@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
+import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import {
   AddIcon,
   ApproveIcon,
@@ -55,6 +57,8 @@ type GroupsViewProps = {
     excludeReservationId?: string;
   }) => { id: string; name: string }[];
   onOpenFinderForGroup: (groupId: string) => void;
+  peopleToolEnabled?: boolean;
+  onOpenFinderForPeople?: (participantEmails: string[]) => void;
   onTopBarChange?: (context: { title: string; subtitle?: ReactNode | string | null; key: string }) => void;
   policyDayKeys?: DayKey[];
   isActive?: boolean;
@@ -103,6 +107,27 @@ const nextRehearsal = (group: CollaborationGroup) => {
 const canManageRehearsal = (rehearsal: GroupRehearsal, group: CollaborationGroup, currentEmail: string) =>
   group.ownerEmail === currentEmail || rehearsal.createdBy === currentEmail;
 
+const normalizeEmailList = (values: string[]) => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
+  });
+  return result;
+};
+
+const phoneLinks = (phone: string) => {
+  const normalizedPhone = phone ? phone.replace(/[^\d+]/g, "") : "";
+  const telHref = normalizedPhone ? `tel:${normalizedPhone}` : "";
+  const digits = normalizedPhone.replace(/[^\d]/g, "");
+  const waPhone = digits.startsWith("0") && digits.length === 10 ? `972${digits.slice(1)}` : digits;
+  const waHref = waPhone ? `https://wa.me/${waPhone}` : "";
+  return { telHref, waHref };
+};
+
 export default function GroupsView({
   currentEmail,
   users,
@@ -123,6 +148,8 @@ export default function GroupsView({
   onRespondToRehearsal,
   getAvailableRoomsForSlot,
   onOpenFinderForGroup,
+  peopleToolEnabled = false,
+  onOpenFinderForPeople,
   onTopBarChange,
   policyDayKeys = DEFAULT_POLICY_DAY_KEYS,
   isActive = true,
@@ -130,7 +157,11 @@ export default function GroupsView({
 }: GroupsViewProps) {
   const currentEmailNormalized = (currentEmail || "").trim().toLowerCase();
   const [selectedGroupId, setSelectedGroupId] = useState(prefilledGroupId || "");
+  const [activeTool, setActiveTool] = useState<"groups" | "people">("groups");
   const [createOverlayOpen, setCreateOverlayOpen] = useState(false);
+  const [peopleGroupOverlayOpen, setPeopleGroupOverlayOpen] = useState(false);
+  const [peopleSearch, setPeopleSearch] = useState("");
+  const [selectedPeopleEmails, setSelectedPeopleEmails] = useState<string[]>([]);
 
   const [rehearsalOverlayOpen, setRehearsalOverlayOpen] = useState(false);
   const [editingRehearsalId, setEditingRehearsalId] = useState<string>("");
@@ -155,9 +186,18 @@ export default function GroupsView({
 
   useEffect(() => {
     if (prefilledGroupId) {
+      setActiveTool("groups");
       setSelectedGroupId(prefilledGroupId);
     }
   }, [prefilledGroupId]);
+
+  useEffect(() => {
+    if (peopleToolEnabled) return;
+    setActiveTool("groups");
+    setPeopleSearch("");
+    setSelectedPeopleEmails([]);
+    setPeopleGroupOverlayOpen(false);
+  }, [peopleToolEnabled]);
 
   useEffect(() => {
     if (!resetToken) return;
@@ -170,6 +210,10 @@ export default function GroupsView({
     setDeleteGroupOverlayOpen(false);
     setRehearsalOverlayOpen(false);
     setCreateOverlayOpen(false);
+    setPeopleGroupOverlayOpen(false);
+    setPeopleSearch("");
+    setSelectedPeopleEmails([]);
+    setActiveTool("groups");
     setRehearsalName("");
   }, [resetToken]);
 
@@ -282,14 +326,45 @@ export default function GroupsView({
       .join(", ");
   }, [currentEmailNormalized, groupMembersSorted, usersByEmail]);
 
+  const peopleList = useMemo(() => {
+    const q = peopleSearch.trim().toLowerCase();
+    return users
+      .filter((user) => user.email.toLowerCase() !== currentEmailNormalized)
+      .filter((user) => {
+        if (!q) return true;
+        const name = (user.name || "").trim().toLowerCase();
+        const email = user.email.toLowerCase();
+        const phone = (user.phone || "").trim().toLowerCase();
+        return name.includes(q) || email.includes(q) || phone.includes(q);
+      })
+      .sort((a, b) => {
+        const aSelected = selectedPeopleEmails.includes(a.email.toLowerCase());
+        const bSelected = selectedPeopleEmails.includes(b.email.toLowerCase());
+        if (aSelected !== bSelected) return aSelected ? -1 : 1;
+        return ((a.name || a.email).trim()).localeCompare((b.name || b.email).trim(), "he");
+      });
+  }, [currentEmailNormalized, peopleSearch, selectedPeopleEmails, users]);
+
+  const selectedPeopleSet = useMemo(() => new Set(selectedPeopleEmails), [selectedPeopleEmails]);
+
+  const togglePerson = (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || normalized === currentEmailNormalized) return;
+    setSelectedPeopleEmails((prev) =>
+      prev.includes(normalized)
+        ? prev.filter((entry) => entry !== normalized)
+        : normalizeEmailList([...prev, normalized])
+    );
+  };
+
   useEffect(() => {
     if (!isActive) return;
     if (!onTopBarChange) return;
     if (!selectedGroup) {
       onTopBarChange({
-        title: "הרכבים",
-        subtitle: "ניהול הרכבים ומעקב אחרי חזרות",
-        key: "groups:list"
+        title: activeTool === "people" ? "אנשים" : "הרכבים",
+        subtitle: activeTool === "people" ? "חיפוש אנשי קשר ושריונים משותפים" : "ניהול הרכבים ומעקב אחרי חזרות",
+        key: activeTool === "people" ? "groups:people" : "groups:list"
       });
       return;
     }
@@ -327,7 +402,7 @@ export default function GroupsView({
       subtitle,
       key: `groups:${selectedGroup.id}:${selectedGroup.name}:${groupMembersLine}`
     });
-  }, [groupMembersLine, isActive, isGroupOwner, onTopBarChange, selectedGroup]);
+  }, [activeTool, groupMembersLine, isActive, isGroupOwner, onTopBarChange, selectedGroup]);
 
   const openRehearsalOverlay = (rehearsal?: GroupRehearsal) => {
     if (!selectedGroup) return;
@@ -435,6 +510,146 @@ export default function GroupsView({
   if (!selectedGroup) {
     return (
       <section className="finder groups-view groups-whatsapp">
+        {peopleToolEnabled ? (
+          <div className="groups-tool-switch" role="tablist" aria-label="כלי שיתוף">
+            <button
+              type="button"
+              className={activeTool === "groups" ? "active" : ""}
+              onClick={() => setActiveTool("groups")}
+              role="tab"
+              aria-selected={activeTool === "groups"}
+            >
+              הרכבים
+            </button>
+            <button
+              type="button"
+              className={activeTool === "people" ? "active" : ""}
+              onClick={() => {
+                setSelectedGroupId("");
+                setActiveTool("people");
+              }}
+              role="tab"
+              aria-selected={activeTool === "people"}
+            >
+              אנשים
+            </button>
+          </div>
+        ) : null}
+
+        {peopleToolEnabled && activeTool === "people" ? (
+          <>
+            <div className="finder-results groups-list-panel people-panel">
+              <label className="finder-group-search-field people-search-field">
+                <input
+                  type="search"
+                  value={peopleSearch}
+                  placeholder="חיפוש אנשים"
+                  onChange={(event) => setPeopleSearch(event.target.value)}
+                />
+              </label>
+              <ul className="groups-chat-list people-list">
+                {peopleList.map((user) => {
+                  const email = user.email.toLowerCase();
+                  const selected = selectedPeopleSet.has(email);
+                  const label = (user.name || "").trim() || user.email;
+                  const pictureUrl = (user.pictureUrl || "").trim();
+                  const { telHref, waHref } = phoneLinks(user.phone || "");
+                  return (
+                    <li key={`person-${email}`}>
+                      <div className={`groups-chat-item people-row ${selected ? "active" : ""}`}>
+                        <button
+                          type="button"
+                          className="people-row-main"
+                          onClick={() => togglePerson(email)}
+                          aria-pressed={selected}
+                        >
+                          <span className="groups-chat-avatar">
+                            {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : initialsFromLabel(label)}
+                          </span>
+                          <span className="groups-chat-text">
+                            <span className="groups-chat-title">{label}</span>
+                            <span className="groups-chat-subtitle">
+                              {user.phone ? user.phone : user.email}
+                            </span>
+                          </span>
+                          <span className={`finder-member-check ${selected ? "active" : ""}`} aria-hidden="true">
+                            {selected ? "✓" : ""}
+                          </span>
+                        </button>
+                        <span className="reserve-contact-actions people-contact-actions" aria-label="יצירת קשר">
+                          {telHref ? (
+                            <a className="icon-button contact" href={telHref} aria-label={`התקשר אל ${label}`}>
+                              <PhoneInTalkRoundedIcon fontSize="small" />
+                            </a>
+                          ) : (
+                            <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
+                              <PhoneInTalkRoundedIcon fontSize="small" />
+                            </button>
+                          )}
+                          {waHref ? (
+                            <a
+                              className="icon-button contact whatsapp"
+                              href={waHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={`WhatsApp ${label}`}
+                            >
+                              <WhatsAppIcon fontSize="small" />
+                            </a>
+                          ) : (
+                            <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
+                              <WhatsAppIcon fontSize="small" />
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {!peopleList.length ? <p className="finder-inline-note">לא נמצאו משתמשים.</p> : null}
+            </div>
+
+            {selectedPeopleEmails.length ? (
+              <div className="people-action-bar">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setPeopleGroupOverlayOpen(true)}
+                >
+                  <GroupsIcon />
+                  <span>הרכב חדש</span>
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => onOpenFinderForPeople?.(selectedPeopleEmails)}
+                >
+                  <SearchIcon />
+                  <span>שריון משותף</span>
+                </button>
+              </div>
+            ) : null}
+
+            <GroupCreateOverlay
+              open={peopleGroupOverlayOpen}
+              users={users}
+              currentEmail={currentEmail}
+              initialMemberEmails={selectedPeopleEmails}
+              onClose={() => setPeopleGroupOverlayOpen(false)}
+              onCreateGroup={onCreateGroup}
+              memberSubtitle={memberYearSubtitle}
+              onCreated={(groupId) => {
+                setPeopleGroupOverlayOpen(false);
+                if (groupId) {
+                  setActiveTool("groups");
+                  setSelectedGroupId(groupId);
+                }
+              }}
+            />
+          </>
+        ) : (
+          <>
         {pendingInvites.length ? (
           <div className="finder-results groups-panel">
             <p className="field-label">הזמנות ממתינות</p>
@@ -592,6 +807,8 @@ export default function GroupsView({
             closeCreateOverlay();
           }}
         />
+          </>
+        )}
       </section>
     );
   }

@@ -1565,6 +1565,36 @@ body,
   flex: 0 0 auto;
 }
 
+.reservation-participants {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.reservation-participant-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 54%, transparent);
+}
+
+.reservation-participant-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.72rem;
+}
+
+.reservation-participant-text {
+  min-width: 0;
+  display: grid;
+}
+
+.reservation-participant-actions {
+  gap: 6px;
+}
+
 .icon-button.contact {
   width: 36px;
   height: 36px;
@@ -1896,6 +1926,20 @@ body,
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--muted);
+}
+
+.reserve-people-selector {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border-radius: 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  justify-content: space-between;
+  text-align: right;
 }
 
 .reserve-group-picker-layer {
@@ -5811,6 +5855,31 @@ select,
   position: relative;
 }
 
+.groups-tool-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-solid) 86%, transparent);
+}
+
+.groups-tool-switch button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.groups-tool-switch button.active {
+  background: var(--surface-solid);
+  color: var(--ink);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
 .groups-chat-list {
   list-style: none;
   margin: 0;
@@ -5899,6 +5968,81 @@ select,
   margin: 2px 0 0;
   font-size: 0.7rem;
   color: var(--muted);
+}
+
+.people-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.people-search-field {
+  margin: 8px;
+}
+
+.people-list {
+  max-height: min(58vh, 520px);
+  overflow: auto;
+}
+
+.people-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0 6px;
+}
+
+.people-row.active {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.people-row-main {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  text-align: right;
+}
+
+.people-row-main .groups-chat-text {
+  min-width: 0;
+  display: grid;
+}
+
+.people-contact-actions {
+  padding-inline-start: 6px;
+}
+
+.people-action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px 2px 0;
+  background: linear-gradient(
+    to top,
+    var(--app-bg) 0%,
+    color-mix(in srgb, var(--app-bg) 88%, transparent) 72%,
+    transparent 100%
+  );
+}
+
+.people-action-bar button {
+  min-width: 0;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.people-action-bar svg {
+  width: 18px;
+  height: 18px;
 }
 
 .groups-members-stack {

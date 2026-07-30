@@ -26,6 +26,7 @@ import type {
 export type HomeViewRouterProps = {
   view: ViewMode;
   collaborationEnabled?: boolean;
+  peopleToolEnabled?: boolean;
   rooms: Room[];
   lessons: Lesson[];
   reservationMap: ReservationMap;
@@ -63,6 +64,7 @@ export type HomeViewRouterProps = {
   onCreateGroup: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
   finderPolicyMaxDurationMinutes?: number;
   finderPolicyMaxDaysForward?: number;
+  finderPrefilledPeopleEmails?: string[];
 
   // My schedule
   myScheduleMode: "day" | "week" | "agenda";
@@ -139,6 +141,7 @@ export type HomeViewRouterProps = {
     status: RehearsalParticipant["status"]
   ) => void;
   onOpenFinderForGroup: (groupId: string) => void;
+  onOpenFinderForPeople?: (participantEmails: string[]) => void;
   getAvailableRoomsForSlot: (input: {
     dateKey: string;
     dayKey: DayKey;
@@ -156,6 +159,7 @@ export type HomeViewRouterProps = {
 export default function HomeViewRouter({
   view,
   collaborationEnabled = false,
+  peopleToolEnabled = false,
   rooms,
   lessons,
   reservationMap,
@@ -175,6 +179,7 @@ export default function HomeViewRouter({
   onCreateGroup,
   finderPolicyMaxDurationMinutes,
   finderPolicyMaxDaysForward,
+  finderPrefilledPeopleEmails = [],
   myScheduleMode,
   onMyScheduleModeChange,
   myScheduleAgendaDays,
@@ -233,6 +238,7 @@ export default function HomeViewRouter({
   policyDayKeys,
   policyWindows,
   onOpenFinderForGroup,
+  onOpenFinderForPeople,
   onGroupsTopBarChange,
   finderResetToken,
   groupsResetToken
@@ -262,6 +268,7 @@ export default function HomeViewRouter({
       policyDayKeys={policyDayKeys}
       policyWindows={policyWindows}
       prefilledGroupId={finderPrefilledGroupId}
+      prefilledPeopleEmails={peopleToolEnabled ? finderPrefilledPeopleEmails : []}
       isActive={isFinderView}
       resetToken={finderResetToken}
       onCreateGroup={onCreateGroup}
@@ -291,6 +298,8 @@ export default function HomeViewRouter({
       getAvailableRoomsForSlot={getAvailableRoomsForSlot}
       policyDayKeys={policyDayKeys}
       onOpenFinderForGroup={onOpenFinderForGroup}
+      peopleToolEnabled={peopleToolEnabled}
+      onOpenFinderForPeople={onOpenFinderForPeople}
       onTopBarChange={onGroupsTopBarChange}
       isActive={isGroupsView}
       resetToken={groupsResetToken}

@@ -69,7 +69,8 @@ export default function App() {
   const [adminMode, setAdminMode] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
-  const collaborationEnabled = user?.betaUser === true;
+  const peopleToolEnabled = user?.peopleToolEnabled === true;
+  const collaborationEnabled = user?.betaUser === true || peopleToolEnabled;
   const { reservationPolicy, reservationPolicies } = useScheduleSettings();
 
   const reservationsCount = useMemo(() => {
@@ -278,6 +279,7 @@ export default function App() {
           navReselectToken={navReselect.token}
           adminMode={adminMode}
           collaborationEnabled={collaborationEnabled}
+          peopleToolEnabled={peopleToolEnabled}
           onGroupsPendingCountChange={setGroupsPendingCount}
         />
       </main>

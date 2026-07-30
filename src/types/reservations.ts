@@ -27,4 +27,5 @@ export type ReserveRequest = {
   roomId: string;
   durationMinutes?: number;
   privateDescription?: string;
+  participantEmails?: string[];
 };

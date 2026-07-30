@@ -3,6 +3,7 @@ import { gradeLabelFromCohort } from "../../../lib/academics";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, parseDateKey } from "../../../lib/date";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { getAvailabilityWindowForDate } from "../../../lib/collaboration";
+import { normalizeEmailList } from "../../../lib/quotaUsage";
 import {
   buildReservationPolicyWindowsForDays,
   getReservationPolicyDayKeys,
@@ -45,6 +46,7 @@ export type BookingFinderProps = {
   policyDayKeys?: DayKey[];
   policyWindows?: ReservationPolicyWindow[];
   prefilledGroupId?: string;
+  prefilledPeopleEmails?: string[];
   isActive?: boolean;
   resetToken?: number;
   onCreateGroup?: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
@@ -88,6 +90,7 @@ type FinderRoomOption = {
 };
 
 type TimeInterval = { start: number; end: number };
+type FinderTargetType = "group" | "people" | "self" | "";
 const DURATION_STEP_MINUTES = 30;
 const DEFAULT_SELF_DURATION_MINUTES = 60;
 const DEFAULT_GROUP_DURATION_MINUTES = 120;
@@ -235,13 +238,24 @@ export default function BookingFinder({
   policyDayKeys = defaultWeekDayKeys,
   policyWindows = [],
   prefilledGroupId,
+  prefilledPeopleEmails = [],
   isActive = true,
   resetToken,
   onCreateGroup,
   onSchedule
 }: BookingFinderProps) {
-  const [targetType, setTargetType] = useState<"group" | "self" | "">(
-    collaborationEnabled ? (prefilledGroupId ? "group" : "") : "self"
+  const normalizedPrefilledPeopleEmails = useMemo(
+    () => normalizeEmailList(prefilledPeopleEmails),
+    [prefilledPeopleEmails]
+  );
+  const [targetType, setTargetType] = useState<FinderTargetType>(
+    collaborationEnabled
+      ? prefilledGroupId
+        ? "group"
+        : normalizedPrefilledPeopleEmails.length
+          ? "people"
+          : ""
+      : "self"
   );
   const [placeType, setPlaceType] = useState<"room" | "noRoom" | "">(collaborationEnabled ? "" : "room");
   const [useWeekdaysFilter, setUseWeekdaysFilter] = useState(false);
@@ -260,6 +274,7 @@ export default function BookingFinder({
   const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(20);
   const [selectedGroupId, setSelectedGroupId] = useState(prefilledGroupId || "");
+  const [selectedPeopleEmails, setSelectedPeopleEmails] = useState<string[]>(normalizedPrefilledPeopleEmails);
   const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const [groupPickerSearch, setGroupPickerSearch] = useState("");
   const [roomChoiceResult, setRoomChoiceResult] = useState<FinderResult | null>(null);
@@ -267,14 +282,16 @@ export default function BookingFinder({
   const [createGroupPendingName, setCreateGroupPendingName] = useState("");
   const [minParticipantsFilterOn, setMinParticipantsFilterOn] = useState(false);
   const [minParticipants, setMinParticipants] = useState(1);
-  const findCommonTime = collaborationEnabled && targetType === "group";
+  const findCommonTime = collaborationEnabled && (targetType === "group" || targetType === "people");
+  const findPeopleTime = collaborationEnabled && targetType === "people";
   const findRoom = placeType === "room";
 
   useEffect(() => {
     if (!resetToken) return;
     const hasPrefilledGroup = collaborationEnabled && Boolean(prefilledGroupId);
-    setTargetType(hasPrefilledGroup ? "group" : collaborationEnabled ? "" : "self");
-    setPlaceType(hasPrefilledGroup ? "room" : collaborationEnabled ? "" : "room");
+    const hasPrefilledPeople = collaborationEnabled && !hasPrefilledGroup && normalizedPrefilledPeopleEmails.length > 0;
+    setTargetType(hasPrefilledGroup ? "group" : hasPrefilledPeople ? "people" : collaborationEnabled ? "" : "self");
+    setPlaceType(hasPrefilledGroup || hasPrefilledPeople ? "room" : collaborationEnabled ? "" : "room");
     setUseWeekdaysFilter(false);
     setUseHoursFilter(false);
     setAdvancedFiltersOpen(false);
@@ -289,6 +306,7 @@ export default function BookingFinder({
     setPlacePickerOpen(false);
     setVisibleCount(20);
     setSelectedGroupId(prefilledGroupId || "");
+    setSelectedPeopleEmails(hasPrefilledPeople ? normalizedPrefilledPeopleEmails : []);
     setGroupPickerOpen(false);
     setGroupPickerSearch("");
     setRoomChoiceResult(null);
@@ -296,13 +314,14 @@ export default function BookingFinder({
     setCreateGroupPendingName("");
     setMinParticipantsFilterOn(false);
     setMinParticipants(1);
-  }, [collaborationEnabled, endHour, prefilledGroupId, resetToken, startHour]);
+  }, [collaborationEnabled, endHour, normalizedPrefilledPeopleEmails, prefilledGroupId, resetToken, startHour]);
 
   useEffect(() => {
     if (!collaborationEnabled) return;
     if (!prefilledGroupId) return;
     setTargetType("group");
     setSelectedGroupId(prefilledGroupId);
+    setSelectedPeopleEmails([]);
     setPlaceType("room");
     setRoomSelectionTouched(false);
     setShowSpecificRoomsList(false);
@@ -310,10 +329,24 @@ export default function BookingFinder({
   }, [collaborationEnabled, prefilledGroupId]);
 
   useEffect(() => {
+    if (!collaborationEnabled) return;
+    if (!normalizedPrefilledPeopleEmails.length) return;
+    if (prefilledGroupId) return;
+    setTargetType("people");
+    setSelectedGroupId("");
+    setSelectedPeopleEmails(normalizedPrefilledPeopleEmails);
+    setPlaceType("room");
+    setRoomSelectionTouched(false);
+    setShowSpecificRoomsList(false);
+    setPlacePickerOpen(false);
+  }, [collaborationEnabled, normalizedPrefilledPeopleEmails, prefilledGroupId]);
+
+  useEffect(() => {
     if (collaborationEnabled) return;
     setTargetType("self");
     setPlaceType("room");
     setSelectedGroupId("");
+    setSelectedPeopleEmails([]);
     setGroupPickerOpen(false);
     setCreateGroupOverlayOpen(false);
     setCreateGroupPendingName("");
@@ -334,6 +367,7 @@ export default function BookingFinder({
       .sort((a, b) => b.createdAt - a.createdAt)[0];
     if (!matched) return;
     setSelectedGroupId(matched.id);
+    setSelectedPeopleEmails([]);
     setTargetType("group");
     setPlaceType("room");
     setRoomSelectionTouched(false);
@@ -343,7 +377,7 @@ export default function BookingFinder({
 
   useEffect(() => {
     if (durationTouched) return;
-    if (targetType === "group") {
+    if (targetType === "group" || targetType === "people") {
       setDurationMinutes(DEFAULT_GROUP_DURATION_MINUTES);
       return;
     }
@@ -362,7 +396,7 @@ export default function BookingFinder({
   );
 
   useEffect(() => {
-    if (targetType !== "group") return;
+    if (targetType !== "group" && targetType !== "people") return;
     if (!collaborationEnabled) return;
     if (roomSelectionTouched) return;
     setSelectedRooms(rehearsalSuitableRoomIds.length ? rehearsalSuitableRoomIds : []);
@@ -426,6 +460,11 @@ export default function BookingFinder({
     if (count === 2) return "2 משתתפים";
     return `${count} משתתפים`;
   };
+  const selectedPeopleSummary = useMemo(() => {
+    const count = normalizeEmailList([currentEmailNormalized, ...selectedPeopleEmails]).length;
+    if (count <= 1) return "בחר אנשים";
+    return formatMembersCount(count);
+  }, [currentEmailNormalized, selectedPeopleEmails]);
   const filteredGroups = useMemo(() => {
     const q = groupPickerSearch.trim().toLowerCase();
     if (!q) return groups;
@@ -478,9 +517,15 @@ export default function BookingFinder({
 
   const participantEmails = useMemo(() => {
     if (!findCommonTime) return [];
-    if (!selectedGroup) return [];
-    return selectedGroup.memberEmails.map((email) => email.toLowerCase()).filter(Boolean);
-  }, [findCommonTime, selectedGroup]);
+    if (targetType === "group") {
+      if (!selectedGroup) return [];
+      return normalizeEmailList(selectedGroup.memberEmails);
+    }
+    if (targetType === "people") {
+      return normalizeEmailList([currentEmailNormalized, ...selectedPeopleEmails]);
+    }
+    return [];
+  }, [currentEmailNormalized, findCommonTime, selectedGroup, selectedPeopleEmails, targetType]);
   const totalGroupParticipants = useMemo(
     () => Array.from(new Set(participantEmails.map((email) => email.trim().toLowerCase()).filter(Boolean))).length,
     [participantEmails]
@@ -507,7 +552,8 @@ export default function BookingFinder({
 
   const participantProfiles = useMemo(() => {
     if (!findCommonTime) return [];
-    if (!selectedGroup) return [];
+    if (targetType === "group" && !selectedGroup) return [];
+    if (targetType === "people" && participantEmails.length <= 1) return [];
     return participantEmails
       .map((email) => profileByEmail.get(email) || (email === ownProfile.email ? ownProfile : undefined))
       .filter(
@@ -516,7 +562,7 @@ export default function BookingFinder({
         ): entry is { email: string; availability: UserAvailability; dateOffs?: AvailabilityDateOffs; events: CollaboratorEvent[] } =>
           Boolean(entry)
       );
-  }, [findCommonTime, ownProfile, participantEmails, profileByEmail, selectedGroup]);
+  }, [findCommonTime, ownProfile, participantEmails, profileByEmail, selectedGroup, targetType]);
 
   const hours = useMemo(
     () => Array.from({ length: endHour - startHour + 1 }, (_, i) => i + startHour),
@@ -555,7 +601,16 @@ export default function BookingFinder({
     )
   );
   const hasFinderModeSelection = Boolean(targetType && placeType);
-  const canComputeResults = Boolean(hasFinderModeSelection && (!findCommonTime || selectedGroup));
+  const hasCompleteCommonProfiles = participantEmails.length > 0 && participantProfiles.length === participantEmails.length;
+  const canComputeResults = Boolean(
+    hasFinderModeSelection &&
+    (
+      !findCommonTime ||
+      (targetType === "group"
+        ? selectedGroup && hasCompleteCommonProfiles
+        : participantEmails.length > 1 && hasCompleteCommonProfiles)
+    )
+  );
   const durationOptionIndex = durationOptions.indexOf(durationFilterMinutes);
   const canDecreaseDuration = durationOptionIndex > 0;
   const canIncreaseDuration = durationOptionIndex >= 0 && durationOptionIndex < durationOptions.length - 1;
@@ -905,6 +960,7 @@ export default function BookingFinder({
     findCommonTime,
     findRoom,
     selectedGroupId,
+    selectedPeopleEmails,
     useWeekdaysFilter,
     useHoursFilter,
     targetType,
@@ -968,7 +1024,7 @@ export default function BookingFinder({
       endMinutes: roomOption?.end ?? item.end,
       preferredDurationMinutes: durationFilterMinutes,
       ...(roomOption?.roomId ? { roomId: roomOption.roomId } : item.roomId ? { roomId: item.roomId } : {}),
-      ...(findCommonTime ? { groupId: roomOption?.groupId || item.groupId || selectedGroupId } : {}),
+      ...(findCommonTime && targetType === "group" ? { groupId: roomOption?.groupId || item.groupId || selectedGroupId } : {}),
       mode: { findCommonTime, findRoom },
       participantEmails: roomOption?.participantEmails || item.participantEmails
     });
@@ -991,6 +1047,7 @@ export default function BookingFinder({
   const chooseGroupTarget = () => {
     if (!collaborationEnabled) return;
     setTargetType("group");
+    setSelectedPeopleEmails([]);
     setPlaceType("room");
     setRoomSelectionTouched(false);
     setShowSpecificRoomsList(false);
@@ -999,8 +1056,21 @@ export default function BookingFinder({
     setRoomChoiceResult(null);
   };
 
+  const choosePeopleTarget = () => {
+    if (!collaborationEnabled || !selectedPeopleEmails.length) return;
+    setTargetType("people");
+    setSelectedGroupId("");
+    setPlaceType("room");
+    setRoomSelectionTouched(false);
+    setShowSpecificRoomsList(false);
+    setPlacePickerOpen(false);
+    setGroupPickerOpen(false);
+    setRoomChoiceResult(null);
+  };
+
   const chooseSelfTarget = () => {
     setTargetType("self");
+    setSelectedPeopleEmails([]);
     setPlaceType("room");
     setRoomSelectionTouched(false);
     setSelectedRooms([]);
@@ -1067,6 +1137,33 @@ export default function BookingFinder({
                   </div>
                 </div>
               </div>
+              {selectedPeopleEmails.length ? (
+                <div
+                  className={`finder-intent-card finder-intent-card-secondary ${targetType === "people" ? "active" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={targetType === "people"}
+                  onClick={choosePeopleTarget}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      choosePeopleTarget();
+                    }
+                  }}
+                >
+                  <div className="finder-intent-card-main">
+                    <span className="finder-intent-card-icon" aria-hidden="true">
+                      <UserIcon />
+                    </span>
+                    <div className="finder-intent-card-text">
+                      <span className="finder-intent-card-title">עם אנשים</span>
+                      <span className="finder-intent-card-selector-value finder-intent-static-value">
+                        {selectedPeopleSummary}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </>
         ) : null}
@@ -1303,7 +1400,9 @@ export default function BookingFinder({
 
             <div className="finder-results finder-results-inline">
               {!canComputeResults && findCommonTime ? (
-                <p className="finder-inline-note">בחר הרכב כדי להציג תוצאות.</p>
+                <p className="finder-inline-note">
+                  {targetType === "people" ? "בחר אנשים כדי להציג תוצאות." : "בחר הרכב כדי להציג תוצאות."}
+                </p>
               ) : visibleResults.length ? (
                 <ul className="finder-result-list">
                   {visibleResults.map((item, index) => (

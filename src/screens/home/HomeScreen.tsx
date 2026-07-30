@@ -73,6 +73,7 @@ export type HomeScreenProps = {
   navReselectToken?: number;
   adminMode?: boolean;
   collaborationEnabled?: boolean;
+  peopleToolEnabled?: boolean;
   onGroupsPendingCountChange?: (count: number) => void;
 };
 
@@ -233,6 +234,7 @@ export default function HomeScreen({
   navReselectToken,
   adminMode = false,
   collaborationEnabled = false,
+  peopleToolEnabled = false,
   onGroupsPendingCountChange
 }: HomeScreenProps) {
   const [selectedDate, setSelectedDate] = useState(() => formatDateKey(new Date()));
@@ -295,6 +297,7 @@ export default function HomeScreen({
     return { startDate: start, endDate: end };
   });
   const [finderPrefilledGroupId, setFinderPrefilledGroupId] = useState<string>("");
+  const [finderPrefilledPeopleEmails, setFinderPrefilledPeopleEmails] = useState<string[]>([]);
   const [pendingFinderAutoLink, setPendingFinderAutoLink] = useState<{ groupId?: string } | null>(null);
   const pendingFinderAutoLinkRef = useRef<{ groupId?: string } | null>(null);
   const setPendingFinderAutoLinkSynced = useCallback((value: { groupId?: string } | null) => {
@@ -1067,11 +1070,11 @@ export default function HomeScreen({
   }, [getLessonsForDate, myPins, pinIdFor]);
 
   const usersByEmail = useMemo(() => {
-    const map = new Map<string, { name: string }>();
+    const map = new Map<string, typeof users[number]>();
     users.forEach((user) => {
       const email = user.email.toLowerCase();
       if (!email) return;
-      map.set(email, { name: user.name || "" });
+      map.set(email, user);
     });
     return map;
   }, [users]);
@@ -1141,12 +1144,13 @@ export default function HomeScreen({
   useEffect(() => {
     const currentEmail = (currentUser?.email || "").trim().toLowerCase();
     const groupMembers = groups.flatMap((group) => group.memberEmails || []);
-    if (!currentEmail && !groupMembers.length) {
+    const peopleMembers = peopleToolEnabled ? finderPrefilledPeopleEmails : [];
+    if (!currentEmail && !groupMembers.length && !peopleMembers.length) {
       setCollaboratorProfiles((prev) => (prev.length ? [] : prev));
       return;
     }
 
-    const targetEmails = Array.from(new Set([currentEmail, ...groupMembers].filter(Boolean)));
+    const targetEmails = Array.from(new Set([currentEmail, ...groupMembers, ...peopleMembers].filter(Boolean)));
     const membersWithoutCurrent = targetEmails.filter((email) => email !== currentEmail);
     const fallbackName = (email: string) => usersByEmail.get(email)?.name || email;
 
@@ -1210,7 +1214,9 @@ export default function HomeScreen({
     availabilityDateOffs,
     buildCollaboratorEvents,
     currentUser?.email,
+    finderPrefilledPeopleEmails,
     myPins,
+    peopleToolEnabled,
     usersByEmail
   ]);
 
@@ -1943,6 +1949,7 @@ export default function HomeScreen({
       startMinutes: number;
       durationMinutes: number;
       excludeReservationId?: string;
+      participantEmails?: string[];
     }) => {
       const alignedDuration = Math.max(30, Math.floor((input.durationMinutes || 0) / 30) * 30 || 30);
       const targetEnd = input.startMinutes + alignedDuration;
@@ -2307,6 +2314,9 @@ export default function HomeScreen({
 
       const { dateKey, roomId, startMinutes, durationMinutes, excludeReservationId } = input;
       const endMinutes = startMinutes + durationMinutes;
+      const currentEmail = (currentUser.email || "").trim().toLowerCase();
+      const participantCount = Math.max(1, normalizeEmailList([currentEmail, ...(input.participantEmails || [])]).length);
+      const quotaRequiredMinutes = durationMinutes / participantCount;
       if (!policyDayKeySet.has(input.dayKey)) {
         showToast("לא ניתן לשריין ביום הזה לפי מדיניות המערכת.", "error");
         return false;
@@ -2437,7 +2447,6 @@ export default function HomeScreen({
         return false;
       }
 
-      const currentEmail = (currentUser.email || "").trim().toLowerCase();
       const maxConcurrentReservations = Math.max(1, Math.round(Number(effectivePolicy.maxConcurrentReservations) || 1));
       const overlappingUserReservationCount = dayReservations.filter((entry) => {
         if (entry.id === excludeReservationId) return false;
@@ -2486,28 +2495,28 @@ export default function HomeScreen({
       const totalDayRemaining = Math.max(0, toPolicyLimitMinutes(effectivePolicy.maxHoursPerDayTotal) - totalDayUsed);
       const totalWeekRemaining = Math.max(0, toPolicyLimitMinutes(effectivePolicy.maxHoursPerWeekTotal) - totalWeekUsed);
 
-      if (roomDayRemaining < durationMinutes) {
+      if (roomDayRemaining < quotaRequiredMinutes) {
         showToast(
           `מקסימום ${formatHoursLabel(effectivePolicy.maxHoursPerRoomPerDay)} שעות לחדר ביום.\nלהחרגה יש לפנות למנהל מורשה.`,
           "error"
         );
         return false;
       }
-      if (roomWeekRemaining < durationMinutes) {
+      if (roomWeekRemaining < quotaRequiredMinutes) {
         showToast(
           `מקסימום ${formatHoursLabel(effectivePolicy.maxHoursPerRoomPerWeek)} שעות לחדר בשבוע.\nלהחרגה יש לפנות למנהל מורשה.`,
           "error"
         );
         return false;
       }
-      if (totalDayRemaining < durationMinutes) {
+      if (totalDayRemaining < quotaRequiredMinutes) {
         showToast(
           `מקסימום ${formatHoursLabel(effectivePolicy.maxHoursPerDayTotal)} שעות ליום לכל הסטודנט.\nלהחרגה יש לפנות למנהל מורשה.`,
           "error"
         );
         return false;
       }
-      if (totalWeekRemaining < durationMinutes) {
+      if (totalWeekRemaining < quotaRequiredMinutes) {
         showToast(
           `מקסימום ${formatHoursLabel(effectivePolicy.maxHoursPerWeekTotal)} שעות לשבוע לכל הסטודנט.\nלהחרגה יש לפנות למנהל מורשה.`,
           "error"
@@ -2579,12 +2588,14 @@ export default function HomeScreen({
       if (selection.mode.findRoom && selection.roomId) {
         const autoLinkGroupId = selection.mode.findCommonTime ? selectedGroupId : "";
         setPendingFinderAutoLinkSynced(autoLinkGroupId ? { groupId: autoLinkGroupId } : null);
+        const participantEmails = normalizeEmailList([organizerEmail, ...(selection.participantEmails || [])]);
         handleReserve({
           date: selection.dateKey,
           day: selection.dayKey,
           time: selection.startMinutes,
           roomId: selection.roomId,
-          durationMinutes
+          durationMinutes,
+          ...(!autoLinkGroupId && participantEmails.length > 1 ? { participantEmails } : {})
         }, { keepCurrentView: true });
         return;
       }
@@ -2812,12 +2823,17 @@ export default function HomeScreen({
 
       if (nextRehearsal.roomId) {
         const reservationId = linkedReservation?.id || nextRehearsal.reservationId || `group-${group.id}-${nextRehearsal.id}`;
+        const quotaParticipantEmails = buildApprovedQuotaParticipantEmails(
+          nextRehearsal.participants,
+          linkedReservation?.reservedEmail || nextRehearsal.createdBy || group.ownerEmail
+        );
         const allowed = validateDirectReservationByPolicy({
           dateKey: nextRehearsal.dateKey,
           dayKey: getDayKeyFromDateKey(nextRehearsal.dateKey),
           roomId: nextRehearsal.roomId,
           startMinutes: nextRehearsal.startMinutes,
           durationMinutes: nextRehearsal.durationMinutes,
+          participantEmails: quotaParticipantEmails,
           ...(linkedReservation?.id ? { excludeReservationId: linkedReservation.id } : {})
         });
         if (!allowed) {
@@ -2832,10 +2848,7 @@ export default function HomeScreen({
           reservedBy: linkedReservation?.reservedBy || `חזרת הרכב · ${group.name}`,
           reservedEmail:
             linkedReservation?.reservedEmail || nextRehearsal.createdBy || group.ownerEmail,
-          quotaParticipantEmails: buildApprovedQuotaParticipantEmails(
-            nextRehearsal.participants,
-            linkedReservation?.reservedEmail || nextRehearsal.createdBy || group.ownerEmail
-          ),
+          quotaParticipantEmails,
           linkedGroupId: group.id,
           linkedRehearsalId: nextRehearsal.id
         };
@@ -3032,7 +3045,8 @@ export default function HomeScreen({
         ...currentEntry,
         time: startMinutes,
         durationMinutes,
-        privateDescription: (privateDescription || "").trim()
+        privateDescription: (privateDescription || "").trim(),
+        quotaParticipantEmails: pending.request.participantEmails || currentEntry.quotaParticipantEmails || []
       };
       if (extractLinkedIdsFromReservation(currentEntry)) {
         await updateLinkedRehearsalFromReservation(updatedReservation);
@@ -3252,6 +3266,7 @@ export default function HomeScreen({
     <HomeViewRouter
       view={effectiveView}
       collaborationEnabled={collaborationAvailable}
+      peopleToolEnabled={peopleToolEnabled}
       rooms={rooms}
       lessons={lessons}
       reservationMap={displayReservationMap}
@@ -3269,6 +3284,7 @@ export default function HomeScreen({
       finderPolicyMaxDurationMinutes={finderPolicyMaxDurationMinutes}
       finderPolicyMaxDaysForward={finderPolicyMaxDaysForward}
       finderPrefilledGroupId={collaborationAvailable ? finderPrefilledGroupId : ""}
+      finderPrefilledPeopleEmails={peopleToolEnabled ? finderPrefilledPeopleEmails : []}
       onFinderSchedule={handleFinderSchedule}
       onCreateGroup={handleCreateGroup}
       myScheduleMode={myScheduleMode}
@@ -3330,7 +3346,14 @@ export default function HomeScreen({
       myScheduleZoomResetToken={myScheduleZoomResetToken}
       onOpenFinderForGroup={(groupId) => {
         if (!collaborationAvailable) return;
+        setFinderPrefilledPeopleEmails([]);
         setFinderPrefilledGroupId(groupId);
+        onViewChange("finder");
+      }}
+      onOpenFinderForPeople={(participantEmails) => {
+        if (!peopleToolEnabled) return;
+        setFinderPrefilledGroupId("");
+        setFinderPrefilledPeopleEmails(normalizeEmailList(participantEmails));
         onViewChange("finder");
       }}
 	      onGroupsTopBarChange={setGroupsTopBarContext}
@@ -3512,6 +3535,26 @@ export default function HomeScreen({
         : "")
     );
   })();
+  const detailsParticipants = useMemo(() => {
+    if (!detailsReservation) return [];
+    const ownerEmail = (detailsReservation.reservedEmail || "").trim().toLowerCase();
+    const participantEmails = normalizeEmailList([ownerEmail, ...(detailsReservation.quotaParticipantEmails || [])]);
+    if (participantEmails.length <= 1) return [];
+    return participantEmails.map((email) => {
+      const directoryUser = usersByEmail.get(email);
+      const isOwner = ownerEmail && email === ownerEmail;
+      const name = isOwner
+        ? detailsName || (directoryUser?.name || "").trim() || email
+        : (directoryUser?.name || "").trim() || email;
+      const phone = isOwner
+        ? detailsPhone || (directoryUser?.phone || "").trim()
+        : (directoryUser?.phone || "").trim();
+      const pictureUrl = isOwner
+        ? detailsPictureUrl || (directoryUser?.pictureUrl || "").trim()
+        : (directoryUser?.pictureUrl || "").trim();
+      return { email, name, phone, pictureUrl };
+    });
+  }, [detailsName, detailsPhone, detailsPictureUrl, detailsReservation, usersByEmail]);
   const reservationPinned = detailsReservation
     ? isPinned({
         kind: "reservation",
@@ -3604,6 +3647,7 @@ export default function HomeScreen({
           groupOptions={reservationGroupOptions}
           directoryUsers={users}
           currentEmail={currentUser?.email}
+          peopleSelectionEnabled={peopleToolEnabled}
           onCreateGroup={handleCreateGroup}
           linkedGroupName={pendingConfirmLinkedGroupName}
           initialLinkToGroup={collaborationAvailable && Boolean(effectivePendingFinderAutoLink?.groupId)}
@@ -3617,11 +3661,26 @@ export default function HomeScreen({
                 }
               : undefined
           }
-          onConfirm={(startMinutes, durationMinutes, privateDescription, linkedGroupId, rehearsalName) => {
+          onConfirm={(startMinutes, durationMinutes, privateDescription, linkedGroupId, rehearsalName, participantEmails) => {
             void (async () => {
+              const normalizedParticipants = normalizeEmailList(participantEmails || []);
+              const linkedReservationTarget = Boolean(
+                linkedGroupId ||
+                effectivePendingFinderAutoLink?.groupId ||
+                pendingConfirmLinkedIds
+              );
+              const shouldUseSharedParticipants = peopleToolEnabled && !linkedReservationTarget;
+              const requestWithParticipants: ReserveRequest = {
+                ...pendingConfirm.request,
+                participantEmails: shouldUseSharedParticipants
+                  ? normalizedParticipants
+                  : pendingConfirm.mode === "edit"
+                    ? pendingConfirm.request.participantEmails || []
+                    : []
+              };
               if (pendingConfirm.mode === "edit") {
                 const updatedReservation = await handleConfirmEdit(
-                  pendingConfirm,
+                  { ...pendingConfirm, request: requestWithParticipants },
                   startMinutes,
                   durationMinutes,
                   privateDescription
@@ -3638,7 +3697,7 @@ export default function HomeScreen({
               }
               const autoLinkedGroupId = effectivePendingFinderAutoLink?.groupId;
               const createdReservation = await handleConfirmReserve(
-                pendingConfirm.request,
+                requestWithParticipants,
                 startMinutes,
                 durationMinutes,
                 privateDescription
@@ -3708,6 +3767,7 @@ export default function HomeScreen({
         email={detailsEmail}
         phone={detailsPhone}
         pictureUrl={detailsPictureUrl || undefined}
+        participants={detailsParticipants}
         privateDescription={detailsPrivateDescription || undefined}
         pinned={reservationPinned}
         onTogglePin={

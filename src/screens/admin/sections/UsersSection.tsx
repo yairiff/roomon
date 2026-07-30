@@ -181,6 +181,7 @@ export default function UsersSection({
       ...user,
       role: user.role === "pending" ? "student" : user.role,
       betaUser: user.betaUser === true,
+      peopleToolEnabled: user.peopleToolEnabled === true,
       phone: user.phone || "",
       cohortStartYear: user.cohortStartYear ?? (user.role === "moderator" ? undefined : currentAcademicYear)
     });
@@ -211,6 +212,7 @@ export default function UsersSection({
       name: user.name ? `${user.name} (עותק)` : "",
       role: user.role === "pending" ? "student" : user.role,
       betaUser: user.betaUser === true,
+      peopleToolEnabled: user.peopleToolEnabled === true,
       phone: user.phone || "",
       cohortStartYear: user.cohortStartYear
     });
@@ -392,6 +394,16 @@ export default function UsersSection({
                   }
                 />
                 משתמש בטא
+              </label>
+              <label className="admin-policy-toggle">
+                <input
+                  type="checkbox"
+                  checked={userDraft.peopleToolEnabled === true}
+                  onChange={(event) =>
+                    setUserDraft((prev) => ({ ...prev, peopleToolEnabled: event.target.checked }))
+                  }
+                />
+                כלי אנשים
               </label>
               <label>
                 אימייל
@@ -578,6 +590,7 @@ export default function UsersSection({
                       {" · "}
                       {roleLabel(user.role)}
                       {user.betaUser ? " · בטא" : ""}
+                      {user.peopleToolEnabled ? " · אנשים" : ""}
                     </p>
                     <p className="admin-row-meta">{user.email}</p>
                   </div>

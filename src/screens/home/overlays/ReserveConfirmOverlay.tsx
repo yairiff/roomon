@@ -49,6 +49,7 @@ export type ReserveConfirmOverlayProps = {
   }>;
   directoryUsers?: DirectoryUser[];
   currentEmail?: string;
+  peopleSelectionEnabled?: boolean;
   onCreateGroup?: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
   linkedGroupName?: string;
   initialLinkToGroup?: boolean;
@@ -60,7 +61,8 @@ export type ReserveConfirmOverlayProps = {
     durationMinutes: number,
     privateDescription?: string,
     linkedGroupId?: string,
-    rehearsalName?: string
+    rehearsalName?: string,
+    participantEmails?: string[]
   ) => void;
   onClose: () => void;
 };
@@ -86,6 +88,7 @@ export default function ReserveConfirmOverlay({
   groupOptions = [],
   directoryUsers = [],
   currentEmail,
+  peopleSelectionEnabled = false,
   onCreateGroup,
   linkedGroupName,
   initialLinkToGroup = false,
@@ -196,6 +199,21 @@ export default function ReserveConfirmOverlay({
   const [createGroupOverlayOpen, setCreateGroupOverlayOpen] = useState(false);
   const [createGroupPendingName, setCreateGroupPendingName] = useState("");
   const [rehearsalName, setRehearsalName] = useState("");
+  const [participantPickerOpen, setParticipantPickerOpen] = useState(false);
+  const [participantSearch, setParticipantSearch] = useState("");
+  const [selectedParticipantEmails, setSelectedParticipantEmails] = useState<string[]>([]);
+  const currentEmailNormalized = (currentEmail || "").trim().toLowerCase();
+  const normalizeEmails = (values: string[]) => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    values.forEach((value) => {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized || normalized === currentEmailNormalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      result.push(normalized);
+    });
+    return result;
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -210,7 +228,20 @@ export default function ReserveConfirmOverlay({
     setCreateGroupOverlayOpen(false);
     setCreateGroupPendingName("");
     setRehearsalName("");
-  }, [groupOptions, initialDuration, initialGroupId, initialLinkToGroup, initialPrivateDescription, initialStart, open]);
+    setParticipantPickerOpen(false);
+    setParticipantSearch("");
+    setSelectedParticipantEmails(normalizeEmails(request.participantEmails || []));
+  }, [
+    currentEmailNormalized,
+    groupOptions,
+    initialDuration,
+    initialGroupId,
+    initialLinkToGroup,
+    initialPrivateDescription,
+    initialStart,
+    open,
+    request.participantEmails
+  ]);
 
   useEffect(() => {
     if (!groupOptions.length) {
@@ -246,6 +277,49 @@ export default function ReserveConfirmOverlay({
       .filter((member) => Boolean(member.email));
   }, [selectedGroup?.members]);
 
+  const participantOptions = useMemo(() => {
+    const q = participantSearch.trim().toLowerCase();
+    const selected = new Set(selectedParticipantEmails);
+    return directoryUsers
+      .filter((user) => user.email.toLowerCase() !== currentEmailNormalized)
+      .filter((user) => {
+        if (!q) return true;
+        const name = (user.name || "").trim().toLowerCase();
+        const email = user.email.toLowerCase();
+        const phone = (user.phone || "").trim().toLowerCase();
+        return name.includes(q) || email.includes(q) || phone.includes(q);
+      })
+      .sort((a, b) => {
+        const aSelected = selected.has(a.email.toLowerCase());
+        const bSelected = selected.has(b.email.toLowerCase());
+        if (aSelected !== bSelected) return aSelected ? -1 : 1;
+        return ((a.name || a.email).trim()).localeCompare((b.name || b.email).trim(), "he");
+      });
+  }, [currentEmailNormalized, directoryUsers, participantSearch, selectedParticipantEmails]);
+
+  const selectedParticipantPreview = useMemo(() => {
+    const byEmail = new Map(directoryUsers.map((user) => [user.email.toLowerCase(), user]));
+    return selectedParticipantEmails.map((email) => {
+      const user = byEmail.get(email);
+      const name = (user?.name || "").trim() || email;
+      return {
+        email,
+        name,
+        pictureUrl: (user?.pictureUrl || "").trim()
+      };
+    });
+  }, [directoryUsers, selectedParticipantEmails]);
+
+  const initialParticipantCount = useMemo(() => {
+    const normalized = new Set<string>();
+    if (currentEmailNormalized) normalized.add(currentEmailNormalized);
+    (request.participantEmails || []).forEach((email) => {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (normalizedEmail) normalized.add(normalizedEmail);
+    });
+    return Math.max(1, normalized.size);
+  }, [currentEmailNormalized, request.participantEmails]);
+
   useEffect(() => {
     if (!createGroupPendingName) return;
     const normalized = createGroupPendingName.trim().toLowerCase();
@@ -274,7 +348,9 @@ export default function ReserveConfirmOverlay({
 
   const STEP = 30;
   const MIN_DURATION = 30;
-  const maxDurationForStart = Math.floor(Math.min(limitEnd - startMinutes, userRemainingMinutes) / STEP) * STEP;
+  const currentParticipantCount = Math.max(1, selectedParticipantEmails.length + 1);
+  const participantAdjustedRemainingMinutes = (userRemainingMinutes / initialParticipantCount) * currentParticipantCount;
+  const maxDurationForStart = Math.floor(Math.min(limitEnd - startMinutes, participantAdjustedRemainingMinutes) / STEP) * STEP;
   const endOptions = useMemo(() => {
     const options: { end: number; duration: number; label: string }[] = [];
     for (let duration = MIN_DURATION; duration <= maxDurationForStart; duration += STEP) {
@@ -305,9 +381,25 @@ export default function ReserveConfirmOverlay({
   const linkSelectionInvalid = !linkedGroupName && linkToGroup && !selectedGroupId;
   const linkedToRehearsal = Boolean(linkedGroupName || linkToGroup);
   const privateDescriptionForSubmit = linkedToRehearsal ? undefined : privateDescription.trim();
+  const participantEmailsForSubmit = linkedToRehearsal || !peopleSelectionEnabled ? [] : selectedParticipantEmails;
   const membersCountLabel = selectedGroup
     ? `${selectedGroup.memberCount || 0} משתתפים`
     : "בחר הרכב";
+  const participantSummary = selectedParticipantEmails.length
+    ? selectedParticipantEmails.length === 1
+      ? "עוד משתתף 1"
+      : `${selectedParticipantEmails.length + 1} משתתפים`
+    : "רק אני";
+
+  const toggleParticipant = (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || normalized === currentEmailNormalized) return;
+    setSelectedParticipantEmails((prev) =>
+      prev.includes(normalized)
+        ? prev.filter((entry) => entry !== normalized)
+        : normalizeEmails([...prev, normalized])
+    );
+  };
 
   const openCreateGroupOverlay = () => {
     setGroupPickerOpen(false);
@@ -340,7 +432,7 @@ export default function ReserveConfirmOverlay({
                 const nextStart = Number(event.target.value);
                 const previousDuration = Math.max(MIN_DURATION, endMinutes - startMinutes);
                 setStartMinutes(nextStart);
-                const nextMaxRaw = Math.min(limitEnd - nextStart, userRemainingMinutes);
+                const nextMaxRaw = Math.min(limitEnd - nextStart, participantAdjustedRemainingMinutes);
                 const nextMax = Math.floor(nextMaxRaw / STEP) * STEP;
                 const nextDurationRaw = Math.max(MIN_DURATION, Math.min(previousDuration, nextMax));
                 const nextDuration = Math.max(MIN_DURATION, Math.floor(nextDurationRaw / STEP) * STEP);
@@ -425,6 +517,39 @@ export default function ReserveConfirmOverlay({
               onChange={(event) => setPrivateDescription(event.target.value)}
             />
           </div>
+        ) : null}
+        {!linkedToRehearsal && peopleSelectionEnabled && directoryUsers.length ? (
+          <button
+            type="button"
+            className="secondary reserve-people-selector"
+            onClick={() => setParticipantPickerOpen(true)}
+          >
+            <span className="reserve-group-selector-text">
+              <strong>משתתפים</strong>
+              <span>{participantSummary}</span>
+            </span>
+            {selectedParticipantPreview.length ? (
+              <span className="groups-members-stack reserve-group-selector-stack" aria-hidden="true">
+                {selectedParticipantPreview.slice(0, 4).map((member, index) => (
+                  <span
+                    key={`reserve-selected-participant-${member.email}`}
+                    className="groups-members-stack-item"
+                    style={{ zIndex: index + 1 }}
+                    title={member.name}
+                  >
+                    {member.pictureUrl ? (
+                      <img src={member.pictureUrl} alt="" loading="lazy" />
+                    ) : (
+                      <span>{initialsFromLabel(member.name)}</span>
+                    )}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <span className="reserve-group-selector-stack-spacer" aria-hidden="true" />
+            )}
+            <ChevronLeftIcon />
+          </button>
         ) : null}
 
           {linkedGroupName ? (
@@ -511,7 +636,8 @@ export default function ReserveConfirmOverlay({
                       durationMinutes,
                       privateDescriptionForSubmit,
                       !linkedGroupName && linkToGroup ? selectedGroupId : undefined,
-                      !linkedGroupName && linkToGroup ? rehearsalName.trim() : undefined
+                      !linkedGroupName && linkToGroup ? rehearsalName.trim() : undefined,
+                      participantEmailsForSubmit
                     )
                   }
                 >
@@ -533,7 +659,8 @@ export default function ReserveConfirmOverlay({
                       durationMinutes,
                       privateDescriptionForSubmit,
                       !linkedGroupName && linkToGroup ? selectedGroupId : undefined,
-                      !linkedGroupName && linkToGroup ? rehearsalName.trim() : undefined
+                      !linkedGroupName && linkToGroup ? rehearsalName.trim() : undefined,
+                      participantEmailsForSubmit
                     )
                   }
                 >
@@ -613,6 +740,61 @@ export default function ReserveConfirmOverlay({
             <div className="groups-overlay-actions">
               <button type="button" className="chip ghost" onClick={() => setGroupPickerOpen(false)}>
                 סגור
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {participantPickerOpen ? (
+        <div className="groups-overlay-backdrop reserve-group-picker-layer" role="presentation" onClick={() => setParticipantPickerOpen(false)}>
+          <div className="groups-overlay finder-group-picker-overlay" role="dialog" onClick={(event) => event.stopPropagation()}>
+            <p className="groups-overlay-title">משתתפים בשריון</p>
+            <label className="finder-group-search-field">
+              <input
+                type="search"
+                value={participantSearch}
+                placeholder="חיפוש אנשים"
+                onChange={(event) => setParticipantSearch(event.target.value)}
+              />
+            </label>
+            <ul className="groups-chat-list finder-group-picker-list">
+              {participantOptions.map((user) => {
+                const email = user.email.toLowerCase();
+                const selected = selectedParticipantEmails.includes(email);
+                const label = (user.name || "").trim() || user.email;
+                return (
+                  <li key={`reserve-participant-${email}`}>
+                    <button
+                      type="button"
+                      className={`groups-chat-item finder-group-picker-item ${selected ? "active" : ""}`}
+                      onClick={() => toggleParticipant(email)}
+                    >
+                      <div className="groups-chat-avatar">
+                        {(user.pictureUrl || "").trim() ? (
+                          <img src={String(user.pictureUrl)} alt="" loading="lazy" />
+                        ) : (
+                          label.slice(0, 1)
+                        )}
+                      </div>
+                      <div className="groups-chat-text">
+                        <p className="groups-chat-title">{label}</p>
+                        <p className="groups-chat-subtitle">{user.phone || user.email}</p>
+                      </div>
+                      <span className={`finder-member-check ${selected ? "active" : ""}`} aria-hidden="true">
+                        {selected ? "✓" : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {!participantOptions.length ? <p className="finder-inline-note">לא נמצאו משתמשים.</p> : null}
+            <div className="groups-overlay-actions">
+              <button type="button" className="chip ghost" onClick={() => setSelectedParticipantEmails([])}>
+                רק אני
+              </button>
+              <button type="button" className="chip active" onClick={() => setParticipantPickerOpen(false)}>
+                שמירה
               </button>
             </div>
           </div>
