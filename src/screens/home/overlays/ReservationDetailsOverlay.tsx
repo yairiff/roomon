@@ -117,19 +117,19 @@ export default function ReservationDetailsOverlay({
         {showFooterActions ? <div className={`reserve-actions reserve-actions-details${hasMultipleParticipants ? " multi-participant" : ""}`}>
           {canRespondParticipation ? (
             <div className="reservation-response-actions">
-              <button className="secondary danger" type="button" onClick={() => onRespondParticipation?.("declined")}>דחיית השתתפות</button>
+              <button className="secondary danger" type="button" onClick={() => onRespondParticipation?.("declined")}>ביטול השתתפות</button>
             </div>
           ) : null}
           {onJoinRequest && joinRequestState ? (
             <button
               type="button"
               className={`secondary reserve-pin-action${joinRequestState === "pending" ? " danger" : ""}`}
-              aria-label={joinRequestState === "pending" ? "ביטול בקשת הצטרפות" : "בקשת הצטרפות לשריון"}
+              aria-label={joinRequestState === "pending" ? "ביטול השתתפות" : "בקש להצטרף"}
               onClick={joinRequestState === "pending" ? onCancelJoinRequest : onJoinRequest}
               disabled={joinRequestState === "pending" && !onCancelJoinRequest}
             >
               {joinRequestState === "pending" ? <PersonRemoveRoundedIcon fontSize="small" /> : <PersonAddAltRoundedIcon fontSize="small" />}
-              <span>{joinRequestState === "pending" ? "ביטול בקשת הצטרפות" : "הצטרף"}</span>
+              <span>{joinRequestState === "pending" ? "ביטול השתתפות" : "בקש להצטרף"}</span>
             </button>
           ) : null}
 
@@ -148,7 +148,7 @@ export default function ReservationDetailsOverlay({
               <ParticipantAvatarStack
                 participants={visibleParticipants}
                 compact
-                maxVisible={3}
+                maxVisible={6}
               />
               <ExpandMoreRoundedIcon className="reservation-participant-chevron" fontSize="small" />
             </button>

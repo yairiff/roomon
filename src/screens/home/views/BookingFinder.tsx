@@ -41,6 +41,7 @@ export type BookingFinderProps = {
   }>;
   currentEmail?: string;
   collaborationEnabled?: boolean;
+  groupsEnabled?: boolean;
   policyMaxDurationMinutes?: number;
   policyMaxDaysForward?: number;
   policyDayKeys?: DayKey[];
@@ -233,6 +234,7 @@ export default function BookingFinder({
   collaborators,
   currentEmail,
   collaborationEnabled = true,
+  groupsEnabled = false,
   policyMaxDurationMinutes,
   policyMaxDaysForward,
   policyDayKeys = defaultWeekDayKeys,
@@ -248,9 +250,10 @@ export default function BookingFinder({
     () => normalizeEmailList(prefilledPeopleEmails),
     [prefilledPeopleEmails]
   );
+  const hasInitialGroup = collaborationEnabled && groupsEnabled && Boolean(prefilledGroupId);
   const [targetType, setTargetType] = useState<FinderTargetType>(
     collaborationEnabled
-      ? prefilledGroupId
+      ? hasInitialGroup
         ? "group"
         : normalizedPrefilledPeopleEmails.length
           ? "people"
@@ -265,7 +268,7 @@ export default function BookingFinder({
   const [fromHour, setFromHour] = useState(startHour);
   const [toHour, setToHour] = useState(endHour);
   const [durationMinutes, setDurationMinutes] = useState<number>(
-    prefilledGroupId ? DEFAULT_GROUP_DURATION_MINUTES : DEFAULT_SELF_DURATION_MINUTES
+    hasInitialGroup ? DEFAULT_GROUP_DURATION_MINUTES : DEFAULT_SELF_DURATION_MINUTES
   );
   const [durationTouched, setDurationTouched] = useState(false);
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
@@ -273,7 +276,7 @@ export default function BookingFinder({
   const [showSpecificRoomsList, setShowSpecificRoomsList] = useState(false);
   const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(20);
-  const [selectedGroupId, setSelectedGroupId] = useState(prefilledGroupId || "");
+  const [selectedGroupId, setSelectedGroupId] = useState(hasInitialGroup ? prefilledGroupId || "" : "");
   const [selectedPeopleEmails, setSelectedPeopleEmails] = useState<string[]>(normalizedPrefilledPeopleEmails);
   const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const [groupPickerSearch, setGroupPickerSearch] = useState("");
@@ -288,7 +291,7 @@ export default function BookingFinder({
 
   useEffect(() => {
     if (!resetToken) return;
-    const hasPrefilledGroup = collaborationEnabled && Boolean(prefilledGroupId);
+    const hasPrefilledGroup = collaborationEnabled && groupsEnabled && Boolean(prefilledGroupId);
     const hasPrefilledPeople = collaborationEnabled && !hasPrefilledGroup && normalizedPrefilledPeopleEmails.length > 0;
     setTargetType(hasPrefilledGroup ? "group" : hasPrefilledPeople ? "people" : collaborationEnabled ? "" : "self");
     setPlaceType(hasPrefilledGroup || hasPrefilledPeople ? "room" : collaborationEnabled ? "" : "room");
@@ -305,7 +308,7 @@ export default function BookingFinder({
     setShowSpecificRoomsList(false);
     setPlacePickerOpen(false);
     setVisibleCount(20);
-    setSelectedGroupId(prefilledGroupId || "");
+    setSelectedGroupId(hasPrefilledGroup ? prefilledGroupId || "" : "");
     setSelectedPeopleEmails(hasPrefilledPeople ? normalizedPrefilledPeopleEmails : []);
     setGroupPickerOpen(false);
     setGroupPickerSearch("");
@@ -314,10 +317,10 @@ export default function BookingFinder({
     setCreateGroupPendingName("");
     setMinParticipantsFilterOn(false);
     setMinParticipants(1);
-  }, [collaborationEnabled, endHour, normalizedPrefilledPeopleEmails, prefilledGroupId, resetToken, startHour]);
+  }, [collaborationEnabled, endHour, groupsEnabled, normalizedPrefilledPeopleEmails, prefilledGroupId, resetToken, startHour]);
 
   useEffect(() => {
-    if (!collaborationEnabled) return;
+    if (!collaborationEnabled || !groupsEnabled) return;
     if (!prefilledGroupId) return;
     setTargetType("group");
     setSelectedGroupId(prefilledGroupId);
@@ -326,12 +329,12 @@ export default function BookingFinder({
     setRoomSelectionTouched(false);
     setShowSpecificRoomsList(false);
     setPlacePickerOpen(false);
-  }, [collaborationEnabled, prefilledGroupId]);
+  }, [collaborationEnabled, groupsEnabled, prefilledGroupId]);
 
   useEffect(() => {
     if (!collaborationEnabled) return;
     if (!normalizedPrefilledPeopleEmails.length) return;
-    if (prefilledGroupId) return;
+    if (groupsEnabled && prefilledGroupId) return;
     setTargetType("people");
     setSelectedGroupId("");
     setSelectedPeopleEmails(normalizedPrefilledPeopleEmails);
@@ -339,7 +342,7 @@ export default function BookingFinder({
     setRoomSelectionTouched(false);
     setShowSpecificRoomsList(false);
     setPlacePickerOpen(false);
-  }, [collaborationEnabled, normalizedPrefilledPeopleEmails, prefilledGroupId]);
+  }, [collaborationEnabled, groupsEnabled, normalizedPrefilledPeopleEmails, prefilledGroupId]);
 
   useEffect(() => {
     if (collaborationEnabled) return;
@@ -355,7 +358,16 @@ export default function BookingFinder({
   }, [collaborationEnabled]);
 
   useEffect(() => {
-    if (!collaborationEnabled) return;
+    if (groupsEnabled) return;
+    if (targetType === "group") setTargetType(selectedPeopleEmails.length ? "people" : "");
+    setSelectedGroupId("");
+    setGroupPickerOpen(false);
+    setCreateGroupOverlayOpen(false);
+    setCreateGroupPendingName("");
+  }, [groupsEnabled, selectedPeopleEmails.length, targetType]);
+
+  useEffect(() => {
+    if (!collaborationEnabled || !groupsEnabled) return;
     if (!createGroupPendingName) return;
     const normalized = createGroupPendingName.trim().toLowerCase();
     if (!normalized) {
@@ -373,7 +385,7 @@ export default function BookingFinder({
     setRoomSelectionTouched(false);
     setShowSpecificRoomsList(false);
     setCreateGroupPendingName("");
-  }, [collaborationEnabled, createGroupPendingName, groups]);
+  }, [collaborationEnabled, createGroupPendingName, groups, groupsEnabled]);
 
   useEffect(() => {
     if (durationTouched) return;
@@ -1041,6 +1053,7 @@ export default function BookingFinder({
   };
 
   const openCreateGroupOverlay = () => {
+    if (!groupsEnabled) return;
     setCreateGroupOverlayOpen(true);
     setCreateGroupPendingName("");
   };
@@ -1048,7 +1061,7 @@ export default function BookingFinder({
   const closeCreateGroupOverlay = () => setCreateGroupOverlayOpen(false);
 
   const chooseGroupTarget = () => {
-    if (!collaborationEnabled) return;
+    if (!collaborationEnabled || !groupsEnabled) return;
     setTargetType("group");
     setSelectedPeopleEmails([]);
     setPlaceType("room");
@@ -1090,7 +1103,7 @@ export default function BookingFinder({
           <>
             <p className="field-label finder-section-label">בשביל מי?</p>
             <div className="finder-intents-grid">
-              <div
+              {groupsEnabled ? <div
                 className={`finder-intent-card ${targetType === "group" ? "active" : ""}`}
                 role="button"
                 tabIndex={0}
@@ -1116,7 +1129,7 @@ export default function BookingFinder({
                   <span className="finder-intent-card-selection-label">עבור</span>
                   <span className="finder-intent-card-selection-value">{groupSelectionSummary}</span>
                 </span>
-              </div>
+              </div> : null}
               <div
                 className={`finder-intent-card finder-intent-card-secondary ${targetType === "self" ? "active" : ""}`}
                 role="button"
@@ -1537,7 +1550,7 @@ export default function BookingFinder({
         </div>
       ) : null}
 
-      {collaborationEnabled && groupPickerOpen ? (
+      {collaborationEnabled && groupsEnabled && groupPickerOpen ? (
         <div className="groups-overlay-backdrop" role="presentation" onClick={() => setGroupPickerOpen(false)}>
           <div className="groups-overlay finder-group-picker-overlay" role="dialog" onClick={(event) => event.stopPropagation()}>
             <p className="groups-overlay-title">בחירת הרכב</p>
@@ -1654,7 +1667,7 @@ export default function BookingFinder({
                   </div>
                 </button>
               </li>
-              {collaborationEnabled ? (
+              {groupsEnabled ? (
                 <li key="finder-room-rehearsal-suitable">
                   <button
                     type="button"
@@ -1780,7 +1793,7 @@ export default function BookingFinder({
         </div>
       ) : null}
 
-      {collaborationEnabled ? (
+      {collaborationEnabled && groupsEnabled ? (
         <GroupCreateOverlay
           open={createGroupOverlayOpen}
           users={directoryUsers}

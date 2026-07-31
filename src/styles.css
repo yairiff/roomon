@@ -283,16 +283,16 @@ button.participant-avatar-stack {
 .reservation-participant-summary {
   width: auto;
   min-width: 0;
-  min-height: 46px;
+  min-height: 38px;
   margin: 0;
-  padding: 5px 8px;
+  padding: 4px 2px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-solid) 92%, var(--accent) 8%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 700;
@@ -301,7 +301,7 @@ button.participant-avatar-stack {
 }
 
 .reservation-participant-summary:hover {
-  border-color: color-mix(in srgb, var(--accent-strong) 48%, var(--line));
+  color: var(--ink);
 }
 
 .reservation-participant-count {
@@ -736,7 +736,8 @@ button.participant-avatar-stack {
   max-height: calc(100dvh - 112px);
   padding: 12px;
   gap: 10px;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  position: relative;
   overflow-x: hidden;
   overflow-y: hidden;
 }
@@ -762,7 +763,7 @@ button.participant-avatar-stack {
   min-width: 0;
   max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--surface-solid);
 }
@@ -773,9 +774,18 @@ button.participant-avatar-stack {
   padding: 10px 12px;
   display: flex;
   align-items: center;
+  gap: 7px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
   font-size: 0.86rem;
   line-height: 1.2;
+}
+
+.auth-section-title > svg,
+.auth-notifications-title svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  color: var(--accent-strong);
 }
 
 .auth-section-rows {
@@ -826,10 +836,6 @@ button.participant-avatar-stack {
   align-items: center;
   gap: 7px;
   font-size: 0.84rem;
-}
-
-.auth-notifications-title svg {
-  color: var(--accent-strong);
 }
 
 .auth-notifications-count {
@@ -931,7 +937,7 @@ button.participant-avatar-stack {
 .auth-menu-section.auth-quotas {
   padding: 0;
   display: block;
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--surface-solid);
 }
 
@@ -995,18 +1001,20 @@ button.participant-avatar-stack {
     border-radius: 0;
     box-shadow: none;
     padding: calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
-    grid-template-rows: 44px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
   }
 
   .auth-menu.authenticated > .auth-menu-close {
-    position: relative;
+    position: absolute;
+    top: calc(10px + env(safe-area-inset-top));
+    left: 12px;
     z-index: 3;
     display: grid;
     place-items: center;
     width: 44px;
     height: 44px;
-    margin-right: auto;
+    margin: 0;
     border-radius: 50%;
     background: color-mix(in srgb, var(--surface-solid) 92%, var(--line));
   }
@@ -2512,15 +2520,15 @@ body,
 .reserve-actions.reserve-actions-details.multi-participant .reserve-pin-action,
 .reserve-actions.reserve-actions-details.multi-participant .reservation-response-actions {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
 }
 
+.reserve-actions.reserve-actions-details.multi-participant .reserve-pin-action,
 .reserve-actions.reserve-actions-details.multi-participant .reservation-response-actions button {
-  width: 100%;
-}
-
-.reserve-actions.reserve-actions-details.multi-participant .reserve-pin-action {
-  padding-inline: 10px;
+  width: auto;
+  min-height: 38px;
+  padding: 7px 12px;
+  font-size: 0.78rem;
 }
 
 .reserve-actions.reserve-actions-details.single {
@@ -2621,7 +2629,7 @@ body,
 }
 
 .reserve-pin-action span {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
 }
 
 .reserve-header {
@@ -7055,6 +7063,10 @@ select,
     color-mix(in srgb, var(--app-bg) 88%, transparent) 72%,
     transparent 100%
   );
+}
+
+.people-action-bar.single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .people-action-bar button {

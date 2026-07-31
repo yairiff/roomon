@@ -76,8 +76,8 @@ export default function App() {
   const [adminMode, setAdminMode] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
-  const peopleToolEnabled = user?.peopleToolEnabled === true;
-  const collaborationEnabled = user?.betaUser === true || peopleToolEnabled;
+  const collaborationEnabled = user?.allowed === true;
+  const groupsEnabled = user?.betaUser === true;
   const { reservationPolicy, reservationPolicies } = useScheduleSettings();
 
   const reservationsCount = useMemo(() => {
@@ -303,7 +303,7 @@ export default function App() {
           navReselectToken={navReselect.token}
           adminMode={adminMode}
           collaborationEnabled={collaborationEnabled}
-          peopleToolEnabled={peopleToolEnabled}
+          groupsEnabled={groupsEnabled}
           onGroupsPendingCountChange={setGroupsPendingCount}
           resolveNotification={notificationInbox.resolve}
           onNotificationActionsChange={handleNotificationActionsChange}
@@ -316,8 +316,7 @@ export default function App() {
           onReselect={handleBottomNavReselect}
           locked={!user.allowed}
           showCollaborationTabs={collaborationEnabled}
-          peopleToolEnabled={peopleToolEnabled}
-          groupsBadgeCount={groupsPendingCount}
+          groupsBadgeCount={groupsEnabled ? groupsPendingCount : 0}
         />
       ) : null}
       <LoginOverlay

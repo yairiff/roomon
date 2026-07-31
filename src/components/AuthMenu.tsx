@@ -10,6 +10,9 @@ import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, getWeekS
 import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
 import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon, CloseIcon } from "./Icons";
 import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
+import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
+import DataUsageRoundedIcon from "@mui/icons-material/DataUsageRounded";
+import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import type { AppNotification, NotificationResponseActions } from "../types/notifications";
 import { NotificationsList } from "../screens/home/overlays/NotificationsOverlay";
 import { getPeopleCategoryLabel } from "../lib/peopleDirectory";
@@ -466,8 +469,7 @@ export default function AuthMenu({
               <CloseIcon />
             </button>
             <div className="auth-menu-content">
-              <section className="auth-menu-section auth-profile-section" aria-labelledby="auth-profile-title">
-                <h2 id="auth-profile-title" className="auth-section-title">פרופיל</h2>
+              <section className="auth-menu-section auth-profile-section" aria-label="פרופיל">
                 <div className="auth-profile-capsule">
                   <div className="auth-user">
                     <button
@@ -502,7 +504,7 @@ export default function AuthMenu({
               </section>
 
               <section className="auth-menu-section auth-notifications-embed" aria-labelledby="auth-notifications-title">
-                <header className="auth-notifications-header">
+                <header className="auth-notifications-header auth-section-title">
                   <span className="auth-notifications-title">
                     <NotificationsRoundedIcon fontSize="small" />
                     <strong id="auth-notifications-title">התראות</strong>
@@ -524,7 +526,10 @@ export default function AuthMenu({
 
               {quotaRows.length ? (
                 <section className="auth-menu-section auth-quotas" aria-labelledby="auth-quotas-title">
-                  <h2 id="auth-quotas-title" className="auth-section-title auth-quotas-title">מכסות שריונים</h2>
+                  <h2 id="auth-quotas-title" className="auth-section-title auth-quotas-title">
+                    <DataUsageRoundedIcon fontSize="small" />
+                    <span>מכסות שריונים</span>
+                  </h2>
                   <ul className="auth-quotas-list">
                     {quotaRows.map((row) => (
                       <li key={row.label} className="auth-quotas-row">
@@ -547,7 +552,10 @@ export default function AuthMenu({
               ) : null}
 
               <section className="auth-menu-section auth-options-section" aria-labelledby="auth-options-title">
-                <h2 id="auth-options-title" className="auth-section-title">אפשרויות</h2>
+                <h2 id="auth-options-title" className="auth-section-title">
+                  <TuneRoundedIcon fontSize="small" />
+                  <span>אפשרויות</span>
+                </h2>
                 <div className="auth-section-rows">
                   <button
                     className="secondary auth-section-row auth-admin-button"
@@ -584,7 +592,10 @@ export default function AuthMenu({
 
               {user.role === "admin" || user.role === "moderator" ? (
                 <section className="auth-menu-section" aria-labelledby="auth-management-title">
-                  <h2 id="auth-management-title" className="auth-section-title">ניהול</h2>
+                  <h2 id="auth-management-title" className="auth-section-title">
+                    <AdminPanelSettingsRoundedIcon fontSize="small" />
+                    <span>ניהול</span>
+                  </h2>
                   <div className="auth-section-rows">
                     {user.role === "admin" ? (
                       <button

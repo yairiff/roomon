@@ -82,7 +82,7 @@ export type HomeScreenProps = {
   navReselectToken?: number;
   adminMode?: boolean;
   collaborationEnabled?: boolean;
-  peopleToolEnabled?: boolean;
+  groupsEnabled?: boolean;
   onGroupsPendingCountChange?: (count: number) => void;
   resolveNotification?: (notificationId: string, responseStatus?: "approved" | "declined") => Promise<void>;
   onNotificationActionsChange?: (actions: NotificationResponseActions | null) => void;
@@ -316,7 +316,7 @@ export default function HomeScreen({
   navReselectToken,
   adminMode = false,
   collaborationEnabled = false,
-  peopleToolEnabled = false,
+  groupsEnabled = false,
   onGroupsPendingCountChange,
   resolveNotification,
   onNotificationActionsChange
@@ -1967,8 +1967,8 @@ export default function HomeScreen({
 
   useEffect(() => {
     const currentEmail = (currentUser?.email || "").trim().toLowerCase();
-    const groupMembers = groups.flatMap((group) => group.memberEmails || []);
-    const peopleMembers = peopleToolEnabled ? finderPrefilledPeopleEmails : [];
+    const groupMembers = groupsEnabled ? groups.flatMap((group) => group.memberEmails || []) : [];
+    const peopleMembers = finderPrefilledPeopleEmails;
     if (!currentEmail && !groupMembers.length && !peopleMembers.length) {
       setCollaboratorProfiles((prev) => (prev.length ? [] : prev));
       return;
@@ -2041,7 +2041,7 @@ export default function HomeScreen({
     currentUser?.email,
     finderPrefilledPeopleEmails,
     myPins,
-    peopleToolEnabled,
+    groupsEnabled,
     usersByEmail
   ]);
 
@@ -4568,7 +4568,7 @@ export default function HomeScreen({
     <HomeViewRouter
       view={effectiveView}
       collaborationEnabled={collaborationAvailable}
-      peopleToolEnabled={peopleToolEnabled}
+      groupsEnabled={groupsEnabled}
       rooms={rooms}
       lessons={lessons}
       reservationMap={displayReservationMap}
@@ -4585,8 +4585,8 @@ export default function HomeScreen({
       collaboratorProfiles={collaboratorProfiles}
       finderPolicyMaxDurationMinutes={finderPolicyMaxDurationMinutes}
       finderPolicyMaxDaysForward={finderPolicyMaxDaysForward}
-      finderPrefilledGroupId={collaborationAvailable ? finderPrefilledGroupId : ""}
-      finderPrefilledPeopleEmails={peopleToolEnabled ? finderPrefilledPeopleEmails : []}
+      finderPrefilledGroupId={groupsEnabled ? finderPrefilledGroupId : ""}
+      finderPrefilledPeopleEmails={finderPrefilledPeopleEmails}
       onFinderSchedule={handleFinderSchedule}
       onCreateGroup={handleCreateGroup}
       myScheduleMode={myScheduleMode}
@@ -4629,7 +4629,7 @@ export default function HomeScreen({
       onNavigateNext={handleNext}
       currentEmail={(currentUser?.email || "").toLowerCase()}
       directoryUsers={users}
-	      pendingInvites={collaborationAvailable ? pendingInvites : []}
+      pendingInvites={groupsEnabled ? pendingInvites : []}
 	      onGroupCreate={handleCreateGroup}
 	      onGroupInvite={(groupId, email) => { void handleInviteToGroup(groupId, email); }}
 	      onGroupInviteResponse={(groupId, accept) => { void handleGroupInviteResponse(groupId, accept); }}
@@ -4650,13 +4650,13 @@ export default function HomeScreen({
       roomZoomResetToken={roomZoomResetToken}
       myScheduleZoomResetToken={myScheduleZoomResetToken}
       onOpenFinderForGroup={(groupId) => {
-        if (!collaborationAvailable) return;
+        if (!groupsEnabled) return;
         setFinderPrefilledPeopleEmails([]);
         setFinderPrefilledGroupId(groupId);
         onViewChange("finder");
       }}
       onOpenFinderForPeople={(participantEmails) => {
-        if (!peopleToolEnabled) return;
+        if (!collaborationAvailable) return;
         setFinderPrefilledGroupId("");
         setFinderPrefilledPeopleEmails(normalizeEmailList(participantEmails));
         onViewChange("finder");
@@ -4973,10 +4973,10 @@ export default function HomeScreen({
           limitHoursPerWeekTotal={pendingConfirm.limitHoursPerWeekTotal}
           limitMaxDaysForward={pendingConfirm.limitMaxDaysForward}
           quotaUsage={pendingConfirm.quotaUsage}
-          groupOptions={reservationGroupOptions}
+          groupOptions={groupsEnabled ? reservationGroupOptions : []}
           directoryUsers={users}
           currentEmail={currentUser?.email}
-          peopleSelectionEnabled={peopleToolEnabled}
+          peopleSelectionEnabled={collaborationAvailable}
           resolveCommonQuotaCapacity={(startMinutes, participantEmails) =>
             getCommonQuotaCapacityMinutes(
               pendingConfirm.request.date,
@@ -4988,8 +4988,8 @@ export default function HomeScreen({
           }
           onCreateGroup={handleCreateGroup}
           linkedGroupName={pendingConfirmLinkedGroupName}
-          initialLinkToGroup={collaborationAvailable && Boolean(effectivePendingFinderAutoLink?.groupId)}
-          initialGroupId={collaborationAvailable ? (effectivePendingFinderAutoLink?.groupId || "") : ""}
+          initialLinkToGroup={groupsEnabled && Boolean(effectivePendingFinderAutoLink?.groupId)}
+          initialGroupId={groupsEnabled ? (effectivePendingFinderAutoLink?.groupId || "") : ""}
           mode={pendingConfirm.mode}
           onRelease={
             pendingConfirm.mode === "edit" && pendingConfirm.reservationId
@@ -5013,10 +5013,10 @@ export default function HomeScreen({
                 : [];
               const linkedReservationTarget = Boolean(linkedGroupIdForQuota);
               const editingLinkedReservation = pendingConfirm.mode === "edit" && Boolean(pendingConfirmLinkedIds);
-              const shouldUseSharedParticipants = peopleToolEnabled && !linkedReservationTarget;
+              const shouldUseSharedParticipants = collaborationAvailable && !linkedReservationTarget;
               const requestWithParticipants: ReserveRequest = {
                 ...pendingConfirm.request,
-                participantEmails: editingLinkedReservation && peopleToolEnabled
+                participantEmails: editingLinkedReservation && collaborationAvailable
                   ? normalizedParticipants
                   : linkedReservationTarget
                   ? normalizeEmailList(
@@ -5040,7 +5040,7 @@ export default function HomeScreen({
                 );
                 if (
                   updatedReservation &&
-                  collaborationAvailable &&
+                  groupsEnabled &&
                   linkedGroupId &&
                   !extractLinkedIdsFromReservation(updatedReservation)
                 ) {
@@ -5057,7 +5057,7 @@ export default function HomeScreen({
                 sharedDescription
               );
               if (!createdReservation) return;
-              const targetLinkedGroupId = collaborationAvailable ? (linkedGroupId || autoLinkedGroupId) : "";
+              const targetLinkedGroupId = groupsEnabled ? (linkedGroupId || autoLinkedGroupId) : "";
               if (targetLinkedGroupId) {
                 await createLinkedRehearsalFromReservation(
                   createdReservation,
@@ -5072,7 +5072,7 @@ export default function HomeScreen({
           }}
           onClose={() => {
             setPendingConfirm(null);
-            if (collaborationAvailable) {
+            if (groupsEnabled) {
               setPendingFinderAutoLinkSynced(null);
             }
           }}

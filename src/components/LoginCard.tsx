@@ -71,8 +71,7 @@ function DevLogin({ onLogin, setAuthError }: DevLoginProps) {
       email,
       allowed: true,
       role: "student",
-      betaUser: true,
-      peopleToolEnabled: true
+      betaUser: true
     });
   };
 

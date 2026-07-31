@@ -7,7 +7,6 @@ export type User = {
   allowed: boolean;
   role?: "admin" | "moderator" | "student" | "pending";
   betaUser?: boolean;
-  peopleToolEnabled?: boolean;
   phone?: string;
   cohortStartYear?: number;
 };

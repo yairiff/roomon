@@ -26,7 +26,7 @@ import type {
 export type HomeViewRouterProps = {
   view: ViewMode;
   collaborationEnabled?: boolean;
-  peopleToolEnabled?: boolean;
+  groupsEnabled?: boolean;
   rooms: Room[];
   lessons: Lesson[];
   reservationMap: ReservationMap;
@@ -159,7 +159,7 @@ export type HomeViewRouterProps = {
 export default function HomeViewRouter({
   view,
   collaborationEnabled = false,
-  peopleToolEnabled = false,
+  groupsEnabled = false,
   rooms,
   lessons,
   reservationMap,
@@ -258,17 +258,18 @@ export default function HomeViewRouter({
       onOpenSchedule={(roomId, dateKey) => onRoomSelect(roomId, dateKey)}
       onDateWindowChange={onFinderDateWindowChange}
       availability={availability}
-      groups={groups}
+      groups={groupsEnabled ? groups : []}
       collaborators={collaboratorProfiles}
       directoryUsers={directoryUsers}
       currentEmail={currentEmail}
       collaborationEnabled={collaborationEnabled}
+      groupsEnabled={groupsEnabled}
       policyMaxDurationMinutes={finderPolicyMaxDurationMinutes}
       policyMaxDaysForward={finderPolicyMaxDaysForward}
       policyDayKeys={policyDayKeys}
       policyWindows={policyWindows}
-      prefilledGroupId={finderPrefilledGroupId}
-      prefilledPeopleEmails={peopleToolEnabled ? finderPrefilledPeopleEmails : []}
+      prefilledGroupId={groupsEnabled ? finderPrefilledGroupId : ""}
+      prefilledPeopleEmails={finderPrefilledPeopleEmails}
       isActive={isFinderView}
       resetToken={finderResetToken}
       onCreateGroup={onCreateGroup}
@@ -298,7 +299,7 @@ export default function HomeViewRouter({
       getAvailableRoomsForSlot={getAvailableRoomsForSlot}
       policyDayKeys={policyDayKeys}
       onOpenFinderForGroup={onOpenFinderForGroup}
-      peopleToolEnabled={peopleToolEnabled}
+      groupsEnabled={groupsEnabled}
       onOpenFinderForPeople={onOpenFinderForPeople}
       onTopBarChange={onGroupsTopBarChange}
       isActive={isGroupsView}

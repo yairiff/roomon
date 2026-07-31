@@ -63,7 +63,7 @@ type GroupsViewProps = {
     excludeReservationId?: string;
   }) => { id: string; name: string }[];
   onOpenFinderForGroup: (groupId: string) => void;
-  peopleToolEnabled?: boolean;
+  groupsEnabled?: boolean;
   onOpenFinderForPeople?: (participantEmails: string[]) => void;
   onTopBarChange?: (context: { title: string; subtitle?: ReactNode | string | null; key: string }) => void;
   policyDayKeys?: DayKey[];
@@ -145,7 +145,7 @@ export default function GroupsView({
   onRespondToRehearsal,
   getAvailableRoomsForSlot,
   onOpenFinderForGroup,
-  peopleToolEnabled = false,
+  groupsEnabled = false,
   onOpenFinderForPeople,
   onTopBarChange,
   policyDayKeys = DEFAULT_POLICY_DAY_KEYS,
@@ -153,8 +153,8 @@ export default function GroupsView({
   resetToken
 }: GroupsViewProps) {
   const currentEmailNormalized = (currentEmail || "").trim().toLowerCase();
-  const [selectedGroupId, setSelectedGroupId] = useState(prefilledGroupId || "");
-  const [activeTool, setActiveTool] = useState<"groups" | "people">(() => peopleToolEnabled ? "people" : "groups");
+  const [selectedGroupId, setSelectedGroupId] = useState(groupsEnabled ? prefilledGroupId || "" : "");
+  const [activeTool, setActiveTool] = useState<"groups" | "people">("people");
   const [createOverlayOpen, setCreateOverlayOpen] = useState(false);
   const [peopleGroupOverlayOpen, setPeopleGroupOverlayOpen] = useState(false);
   const [peopleSearch, setPeopleSearch] = useState("");
@@ -184,22 +184,19 @@ export default function GroupsView({
   }, [policyDayKeys]);
 
   useEffect(() => {
-    if (prefilledGroupId) {
+    if (groupsEnabled && prefilledGroupId) {
       setActiveTool("groups");
       setSelectedGroupId(prefilledGroupId);
     }
-  }, [prefilledGroupId]);
+  }, [groupsEnabled, prefilledGroupId]);
 
   useEffect(() => {
-    if (peopleToolEnabled) {
-      if (!prefilledGroupId && !selectedGroupId) setActiveTool("people");
-      return;
-    }
-    setActiveTool("groups");
+    if (groupsEnabled) return;
+    setActiveTool("people");
+    setSelectedGroupId("");
     setPeopleSearch("");
-    setSelectedPeopleEmails([]);
     setPeopleGroupOverlayOpen(false);
-  }, [peopleToolEnabled, prefilledGroupId, selectedGroupId]);
+  }, [groupsEnabled]);
 
   useEffect(() => {
     if (!resetToken) return;
@@ -215,9 +212,9 @@ export default function GroupsView({
     setPeopleGroupOverlayOpen(false);
     setPeopleSearch("");
     setSelectedPeopleEmails([]);
-    setActiveTool(peopleToolEnabled ? "people" : "groups");
+    setActiveTool("people");
     setRehearsalName("");
-  }, [peopleToolEnabled, resetToken]);
+  }, [resetToken]);
 
   useEffect(() => {
     if (selectedGroupId && !groups.some((group) => group.id === selectedGroupId)) {
@@ -243,8 +240,8 @@ export default function GroupsView({
   );
 
   const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId) || null,
-    [groups, selectedGroupId]
+    () => groupsEnabled ? groups.find((group) => group.id === selectedGroupId) || null : null,
+    [groups, groupsEnabled, selectedGroupId]
   );
 
   const editingRehearsal = useMemo(
@@ -514,7 +511,7 @@ export default function GroupsView({
   if (!selectedGroup) {
     return (
       <section className="finder groups-view groups-whatsapp">
-        {peopleToolEnabled ? (
+        {groupsEnabled ? (
           <div className="groups-tool-switch" role="tablist" aria-label="כלי שיתוף">
             <button
               type="button"
@@ -542,7 +539,7 @@ export default function GroupsView({
           </div>
         ) : null}
 
-        {peopleToolEnabled && activeTool === "people" ? (
+        {activeTool === "people" ? (
           <>
             <div className="finder-results groups-list-panel people-panel">
               <div className="people-toolbar">
@@ -620,15 +617,17 @@ export default function GroupsView({
             </div>
 
             {selectedPeopleEmails.length ? (
-              <div className="people-action-bar">
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => setPeopleGroupOverlayOpen(true)}
-                >
-                  <GroupsIcon />
-                  <span>הרכב חדש</span>
-                </button>
+              <div className={`people-action-bar${groupsEnabled ? "" : " single"}`}>
+                {groupsEnabled ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setPeopleGroupOverlayOpen(true)}
+                  >
+                    <GroupsIcon />
+                    <span>הרכב חדש</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="primary"
@@ -640,22 +639,24 @@ export default function GroupsView({
               </div>
             ) : null}
 
-            <GroupCreateOverlay
-              open={peopleGroupOverlayOpen}
-              users={users}
-              currentEmail={currentEmail}
-              initialMemberEmails={selectedPeopleEmails}
-              onClose={() => setPeopleGroupOverlayOpen(false)}
-              onCreateGroup={onCreateGroup}
-              memberSubtitle={memberYearSubtitle}
-              onCreated={(groupId) => {
-                setPeopleGroupOverlayOpen(false);
-                if (groupId) {
-                  setActiveTool("groups");
-                  setSelectedGroupId(groupId);
-                }
-              }}
-            />
+            {groupsEnabled ? (
+              <GroupCreateOverlay
+                open={peopleGroupOverlayOpen}
+                users={users}
+                currentEmail={currentEmail}
+                initialMemberEmails={selectedPeopleEmails}
+                onClose={() => setPeopleGroupOverlayOpen(false)}
+                onCreateGroup={onCreateGroup}
+                memberSubtitle={memberYearSubtitle}
+                onCreated={(groupId) => {
+                  setPeopleGroupOverlayOpen(false);
+                  if (groupId) {
+                    setActiveTool("groups");
+                    setSelectedGroupId(groupId);
+                  }
+                }}
+              />
+            ) : null}
             <div
               className={`avatar-zoom${zoomedPerson ? " open" : ""}`}
               aria-hidden={!zoomedPerson}

@@ -639,7 +639,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
     name: "",
     role: "student",
     betaUser: false,
-    peopleToolEnabled: false,
     phone: "",
     cohortStartYear: getAcademicYearStartYear()
   });
@@ -2736,7 +2735,6 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                 name: "",
                 role: "student",
                 betaUser: false,
-                peopleToolEnabled: false,
                 phone: "",
                 cohortStartYear: currentAcademicYear
               })
