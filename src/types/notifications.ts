@@ -41,3 +41,15 @@ export type NotificationDraft = Omit<AppNotification, "id" | "readAt" | "resolve
   readAt?: number | null;
   resolvedAt?: number | null;
 };
+
+export type NotificationResponseActions = {
+  respondSharedReservation: (
+    notification: AppNotification,
+    status: "approved" | "declined"
+  ) => void;
+  respondRehearsal: (
+    notification: AppNotification,
+    status: "approved" | "declined"
+  ) => void;
+  respondGroupInvite: (notification: AppNotification, accept: boolean) => void;
+};

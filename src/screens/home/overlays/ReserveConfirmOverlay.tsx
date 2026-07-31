@@ -4,6 +4,12 @@ import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import type { ReserveRequest } from "../../../types/reservations";
 import type { DirectoryUser } from "../../../types/admin";
+import {
+  getPeopleCategoryLabel,
+  matchesPeopleCategory,
+  peopleCategoryOptions,
+  type PeopleCategory
+} from "../../../lib/peopleDirectory";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { AddIcon, ChevronLeftIcon, GroupsIcon, UserIcon } from "../../../components/Icons";
 import GroupCreateOverlay from "../components/GroupCreateOverlay";
@@ -25,6 +31,7 @@ export type ReserveConfirmOverlayProps = {
   windowStart: number;
   initialDuration: number;
   initialPrivateDescription?: string;
+  initialSharedDescription?: string;
   userRemainingMinutes: number;
   limitHoursPerRoomPerDay: number;
   limitHoursPerRoomPerWeek: number;
@@ -60,6 +67,7 @@ export type ReserveConfirmOverlayProps = {
     startMinutes: number,
     durationMinutes: number,
     privateDescription?: string,
+    sharedDescription?: string,
     linkedGroupId?: string,
     rehearsalName?: string,
     participantEmails?: string[]
@@ -78,6 +86,7 @@ export default function ReserveConfirmOverlay({
   windowStart,
   initialDuration,
   initialPrivateDescription = "",
+  initialSharedDescription = "",
   userRemainingMinutes,
   limitHoursPerRoomPerDay,
   limitHoursPerRoomPerWeek,
@@ -191,6 +200,7 @@ export default function ReserveConfirmOverlay({
   const [startMinutes, setStartMinutes] = useState(initialStart);
   const [endMinutes, setEndMinutes] = useState(initialStart + initialDuration);
   const [privateDescription, setPrivateDescription] = useState(initialPrivateDescription);
+  const [sharedDescription, setSharedDescription] = useState(initialSharedDescription);
   const [infoOpen, setInfoOpen] = useState(false);
   const [participantTarget, setParticipantTarget] = useState<"self" | "people" | "group">("self");
   const [participantPickerTab, setParticipantPickerTab] = useState<"people" | "groups">("people");
@@ -201,6 +211,7 @@ export default function ReserveConfirmOverlay({
   const [rehearsalName, setRehearsalName] = useState("");
   const [participantPickerOpen, setParticipantPickerOpen] = useState(false);
   const [participantSearch, setParticipantSearch] = useState("");
+  const [participantCategory, setParticipantCategory] = useState<PeopleCategory>("all");
   const [selectedParticipantEmails, setSelectedParticipantEmails] = useState<string[]>([]);
   const currentEmailNormalized = (currentEmail || "").trim().toLowerCase();
   const normalizeEmails = (values: string[]) => {
@@ -220,6 +231,7 @@ export default function ReserveConfirmOverlay({
     setStartMinutes(initialStart);
     setEndMinutes(initialStart + initialDuration);
     setPrivateDescription(initialPrivateDescription);
+    setSharedDescription(initialSharedDescription);
     setInfoOpen(false);
     const initialPeople = normalizeEmails(request.participantEmails || []);
     const startsWithGroup = Boolean(initialLinkToGroup || initialGroupId);
@@ -232,6 +244,7 @@ export default function ReserveConfirmOverlay({
     setRehearsalName("");
     setParticipantPickerOpen(false);
     setParticipantSearch("");
+    setParticipantCategory("all");
     setSelectedParticipantEmails(initialPeople);
   }, [
     currentEmailNormalized,
@@ -240,6 +253,7 @@ export default function ReserveConfirmOverlay({
     initialGroupId,
     initialLinkToGroup,
     initialPrivateDescription,
+    initialSharedDescription,
     initialStart,
     open,
     peopleSelectionEnabled,
@@ -285,12 +299,14 @@ export default function ReserveConfirmOverlay({
     const selected = new Set(selectedParticipantEmails);
     return directoryUsers
       .filter((user) => user.email.toLowerCase() !== currentEmailNormalized)
+      .filter((user) => matchesPeopleCategory(user, participantCategory))
       .filter((user) => {
         if (!q) return true;
         const name = (user.name || "").trim().toLowerCase();
         const email = user.email.toLowerCase();
         const phone = (user.phone || "").trim().toLowerCase();
-        return name.includes(q) || email.includes(q) || phone.includes(q);
+        const category = getPeopleCategoryLabel(user).toLowerCase();
+        return name.includes(q) || email.includes(q) || phone.includes(q) || category.includes(q);
       })
       .sort((a, b) => {
         const aSelected = selected.has(a.email.toLowerCase());
@@ -298,7 +314,7 @@ export default function ReserveConfirmOverlay({
         if (aSelected !== bSelected) return aSelected ? -1 : 1;
         return ((a.name || a.email).trim()).localeCompare((b.name || b.email).trim(), "he");
       });
-  }, [currentEmailNormalized, directoryUsers, participantSearch, selectedParticipantEmails]);
+  }, [currentEmailNormalized, directoryUsers, participantCategory, participantSearch, selectedParticipantEmails]);
 
   const selectedParticipantPreview = useMemo(() => {
     const byEmail = new Map(directoryUsers.map((user) => [user.email.toLowerCase(), user]));
@@ -370,8 +386,12 @@ export default function ReserveConfirmOverlay({
 
   const durationMinutes = Math.max(0, endMinutes - startMinutes);
   const linkSelectionInvalid = !linkedGroupName && participantTarget === "group" && !selectedGroupId;
-  const linkedToRehearsal = Boolean(linkedGroupName || participantTarget === "group");
-  const privateDescriptionForSubmit = linkedToRehearsal ? undefined : privateDescription.trim();
+  const privateDescriptionForSubmit = participantTarget === "self" && !linkedGroupName
+    ? privateDescription.trim()
+    : undefined;
+  const sharedDescriptionForSubmit = participantTarget === "people" && !linkedGroupName
+    ? sharedDescription.trim()
+    : undefined;
   const participantEmailsForSubmit = participantTarget === "people" && peopleSelectionEnabled ? selectedParticipantEmails : [];
   const participantSummary = selectedParticipantEmails.length
     ? selectedParticipantEmails.length === 1
@@ -383,6 +403,27 @@ export default function ReserveConfirmOverlay({
     : participantTarget === "people"
       ? participantSummary
       : "רק אני";
+  const descriptionMode = participantTarget === "group" ? "rehearsal" : participantTarget === "people" ? "shared" : "personal";
+  const descriptionLabel = descriptionMode === "rehearsal"
+    ? "שם החזרה"
+    : descriptionMode === "shared"
+      ? "תיאור משותף"
+      : "תיאור אישי (רק בשבילך)";
+  const descriptionPlaceholder = descriptionMode === "rehearsal"
+    ? "לדוגמה: חזרה לשבוע הבא"
+    : descriptionMode === "shared"
+      ? "לדוגמה: עבודה על שיר חדש"
+      : "למשל: חזרה לשירימון";
+  const descriptionValue = descriptionMode === "rehearsal"
+    ? rehearsalName
+    : descriptionMode === "shared"
+      ? sharedDescription
+      : privateDescription;
+  const setDescriptionValue = (value: string) => {
+    if (descriptionMode === "rehearsal") setRehearsalName(value);
+    else if (descriptionMode === "shared") setSharedDescription(value);
+    else setPrivateDescription(value);
+  };
 
   const toggleParticipant = (email: string) => {
     const normalized = email.trim().toLowerCase();
@@ -495,22 +536,6 @@ export default function ReserveConfirmOverlay({
         </div>
 
         <p className="reserve-duration">משך: {formatDurationLabelHe(durationMinutes)}</p>
-        {!linkedToRehearsal ? (
-          <div className="reserve-field reserve-note-field">
-            <label htmlFor="reserve-private-description" className="reserve-field-hint reserve-note-label">
-              תיאור אישי (רק בשבילך)
-            </label>
-            <textarea
-              id="reserve-private-description"
-              className="reserve-note-input"
-              rows={3}
-              maxLength={180}
-              placeholder="למשל: חזרה לשירימון"
-              value={privateDescription}
-              onChange={(event) => setPrivateDescription(event.target.value)}
-            />
-          </div>
-        ) : null}
         {!linkedGroupName && (peopleSelectionEnabled || groupOptions.length) ? (
           <button
             type="button"
@@ -570,6 +595,23 @@ export default function ReserveConfirmOverlay({
           <p className="reserve-detail reserve-link-locked">מקושר לחזרה בהרכב: {linkedGroupName}</p>
         ) : null}
 
+        {!linkedGroupName ? (
+          <div className="reserve-field reserve-note-field reserve-dynamic-description">
+            <label htmlFor="reserve-description" className="reserve-field-hint reserve-note-label">
+              {descriptionLabel}
+            </label>
+            <textarea
+              id="reserve-description"
+              className="reserve-note-input"
+              rows={3}
+              maxLength={descriptionMode === "rehearsal" ? 80 : 180}
+              placeholder={descriptionPlaceholder}
+              value={descriptionValue}
+              onChange={(event) => setDescriptionValue(event.target.value)}
+            />
+          </div>
+        ) : null}
+
           <div className="reserve-actions">
             {mode === "edit" ? (
               <>
@@ -587,6 +629,7 @@ export default function ReserveConfirmOverlay({
                       startMinutes,
                       durationMinutes,
                       privateDescriptionForSubmit,
+                      sharedDescriptionForSubmit,
                       !linkedGroupName && participantTarget === "group" ? selectedGroupId : undefined,
                       !linkedGroupName && participantTarget === "group" ? rehearsalName.trim() : undefined,
                       participantEmailsForSubmit
@@ -610,6 +653,7 @@ export default function ReserveConfirmOverlay({
                       startMinutes,
                       durationMinutes,
                       privateDescriptionForSubmit,
+                      sharedDescriptionForSubmit,
                       !linkedGroupName && participantTarget === "group" ? selectedGroupId : undefined,
                       !linkedGroupName && participantTarget === "group" ? rehearsalName.trim() : undefined,
                       participantEmailsForSubmit
@@ -653,14 +697,26 @@ export default function ReserveConfirmOverlay({
             ) : null}
             {participantPickerTab === "people" && peopleSelectionEnabled ? (
               <>
-                <label className="finder-group-search-field">
-                  <input
-                    type="search"
-                    value={participantSearch}
-                    placeholder="חיפוש אנשים"
-                    onChange={(event) => setParticipantSearch(event.target.value)}
-                  />
-                </label>
+                <div className="reserve-participant-filter-row">
+                  <label className="finder-group-search-field">
+                    <input
+                      type="search"
+                      value={participantSearch}
+                      placeholder="חיפוש אנשים"
+                      onChange={(event) => setParticipantSearch(event.target.value)}
+                    />
+                  </label>
+                  <select
+                    className="reserve-participant-category"
+                    aria-label="סינון לפי שנתון"
+                    value={participantCategory}
+                    onChange={(event) => setParticipantCategory(event.target.value as PeopleCategory)}
+                  >
+                    {peopleCategoryOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <ul className="groups-chat-list finder-group-picker-list">
                   {participantOptions.map((user) => {
                     const email = user.email.toLowerCase();
@@ -685,7 +741,7 @@ export default function ReserveConfirmOverlay({
                           </span>
                           <span className="groups-chat-text">
                             <span className="groups-chat-title">{label}</span>
-                            <span className="groups-chat-subtitle">{user.phone || user.email}</span>
+                            <span className="groups-chat-subtitle">{getPeopleCategoryLabel(user)}</span>
                           </span>
                         </button>
                       </li>
@@ -720,11 +776,9 @@ export default function ReserveConfirmOverlay({
                           setSelectedGroupId(group.id);
                           setParticipantTarget("group");
                           setSelectedParticipantEmails([]);
+                          setParticipantPickerOpen(false);
                         }}
                       >
-                        <span className={`finder-member-check ${participantTarget === "group" && group.id === selectedGroupId ? "active" : ""}`} aria-hidden="true">
-                          {participantTarget === "group" && group.id === selectedGroupId ? "✓" : ""}
-                        </span>
                         <span className="groups-chat-avatar groups-chat-avatar-group reserve-group-selector-icon" aria-hidden="true"><GroupsIcon /></span>
                         <span className="groups-chat-text">
                           <span className="groups-chat-title">{group.name}</span>
@@ -734,19 +788,6 @@ export default function ReserveConfirmOverlay({
                     </li>
                   ))}
                 </ul>
-                {participantTarget === "group" ? (
-                  <div className="reserve-field reserve-note-field reserve-rehearsal-name-field">
-                    <label htmlFor="reserve-rehearsal-name" className="reserve-field-hint reserve-note-label">שם חזרה (אופציונלי)</label>
-                    <input
-                      id="reserve-rehearsal-name"
-                      type="text"
-                      maxLength={80}
-                      placeholder="לדוגמה: חזרה לשבוע הבא"
-                      value={rehearsalName}
-                      onChange={(event) => setRehearsalName(event.target.value)}
-                    />
-                  </div>
-                ) : null}
               </>
             )}
             <div className="groups-overlay-actions">
@@ -754,12 +795,15 @@ export default function ReserveConfirmOverlay({
                 setParticipantTarget("self");
                 setSelectedParticipantEmails([]);
                 setSelectedGroupId("");
+                setParticipantPickerOpen(false);
               }}>
                 רק אני
               </button>
-              <button type="button" className="chip active" onClick={() => setParticipantPickerOpen(false)}>
-                שמירה
-              </button>
+              {participantPickerTab === "people" && peopleSelectionEnabled ? (
+                <button type="button" className="chip active" onClick={() => setParticipantPickerOpen(false)}>
+                  שמירה
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -775,6 +819,8 @@ export default function ReserveConfirmOverlay({
           if (groupId) {
             setSelectedGroupId(groupId);
             setParticipantTarget("group");
+            setSelectedParticipantEmails([]);
+            setParticipantPickerOpen(false);
             return;
           }
           setCreateGroupPendingName(name);

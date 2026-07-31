@@ -36,6 +36,7 @@ export type PendingConfirm = {
   windowStart: number;
   userRemainingMinutes: number;
   privateDescription?: string;
+  sharedDescription?: string;
   limitHoursPerRoomPerDay: number;
   limitHoursPerRoomPerWeek: number;
   limitHoursPerDayTotal: number;
@@ -760,6 +761,7 @@ export function useReserveFlow({
         windowStart,
         userRemainingMinutes,
         privateDescription: request.privateDescription || "",
+        sharedDescription: request.sharedDescription || "",
         limitHoursPerRoomPerDay: effectivePolicy.maxHoursPerRoomPerDay,
         limitHoursPerRoomPerWeek: effectivePolicy.maxHoursPerRoomPerWeek,
         limitHoursPerDayTotal: globalQuotaPolicy.maxHoursPerDayTotal,
@@ -788,10 +790,17 @@ export function useReserveFlow({
   );
 
   const handleConfirmReserve = useCallback(
-    async (draft: ReserveRequest, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
+    async (
+      draft: ReserveRequest,
+      startMinutes: number,
+      durationMinutes: number,
+      privateDescription?: string,
+      sharedDescription?: string
+    ) => {
       if (!currentUser?.allowed) return null;
       const { date, day, roomId } = draft;
-      const normalizedDescription = (privateDescription || "").trim();
+      const normalizedPrivateDescription = (privateDescription || "").trim();
+      const normalizedSharedDescription = (sharedDescription || "").trim();
 
       if (startMinutes % STEP !== 0 || durationMinutes % STEP !== 0) {
         showToast("יש לבחור שעות במרווחים של חצי שעה.");
@@ -893,7 +902,8 @@ export function useReserveFlow({
         reservedEmail: currentUser.email,
         reservedPhone: currentUser.phone || undefined,
         reservedPicture: nextReservedPicture,
-        privateDescription: normalizedDescription,
+        privateDescription: normalizedPrivateDescription,
+        sharedDescription: normalizedSharedDescription,
         participants,
         quotaParticipantEmails
       };
@@ -1049,6 +1059,7 @@ export function useReserveFlow({
         roomId,
         durationMinutes: entry.durationMinutes,
         privateDescription: entry.privateDescription || "",
+        sharedDescription: entry.sharedDescription || "",
         participantEmails: resolveReservationParticipantStates(entry)
           .filter((participant) =>
             participant.status !== "declined" && participant.email !== currentUser.email.trim().toLowerCase()
@@ -1066,6 +1077,7 @@ export function useReserveFlow({
         windowStart: alignedWindowStart,
         userRemainingMinutes: effectiveRemainingDuration,
         privateDescription: entry.privateDescription || "",
+        sharedDescription: entry.sharedDescription || "",
         limitHoursPerRoomPerDay: remaining.effectivePolicy.maxHoursPerRoomPerDay,
         limitHoursPerRoomPerWeek: remaining.effectivePolicy.maxHoursPerRoomPerWeek,
         limitHoursPerDayTotal: remaining.globalQuotaPolicy.maxHoursPerDayTotal,
@@ -1106,11 +1118,18 @@ export function useReserveFlow({
   );
 
   const handleConfirmEdit = useCallback(
-    async (pending: PendingConfirm, startMinutes: number, durationMinutes: number, privateDescription?: string) => {
+    async (
+      pending: PendingConfirm,
+      startMinutes: number,
+      durationMinutes: number,
+      privateDescription?: string,
+      sharedDescription?: string
+    ) => {
       if (!currentUser?.allowed || !pending.reservationId) return false;
       const { date, day, roomId } = pending.request;
       const reservationId = pending.reservationId;
-      const normalizedDescription = (privateDescription || "").trim();
+      const normalizedPrivateDescription = (privateDescription || "").trim();
+      const normalizedSharedDescription = (sharedDescription || "").trim();
 
       if (startMinutes % STEP !== 0 || durationMinutes % STEP !== 0) {
         showToast("יש לבחור שעות במרווחים של חצי שעה.");
@@ -1229,7 +1248,8 @@ export function useReserveFlow({
           const existing = (currentEntry.reservedPicture || "").trim();
           return isFirebaseStorageDownloadUrl(existing) ? existing : undefined;
         })(),
-        privateDescription: normalizedDescription,
+        privateDescription: normalizedPrivateDescription,
+        sharedDescription: normalizedSharedDescription,
         participants,
         quotaParticipantEmails
       });

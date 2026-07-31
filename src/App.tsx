@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import HomeScreen from "./screens/home/HomeScreen";
 import { useAuth } from "./hooks/useAuth";
@@ -14,6 +14,8 @@ import SignupOverlay from "./components/SignupOverlay";
 import { addDays, formatDateKey, getWeekStart } from "./lib/date";
 import { db } from "./lib/firebase";
 import { useScheduleSettings } from "./hooks/useScheduleSettings";
+import { useNotifications } from "./hooks/useNotifications";
+import type { NotificationResponseActions } from "./types/notifications";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const DEV_LOGIN_ENABLED = import.meta.env.VITE_ENABLE_DEV_LOGIN === "true";
@@ -60,8 +62,11 @@ export default function App() {
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
   const [view, setView] = useState<ViewMode>("live");
   const [groupsPendingCount, setGroupsPendingCount] = useState(0);
-  const [notificationCount, setNotificationCount] = useState(0);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const notificationInbox = useNotifications(user?.email);
+  const notificationActionsRef = useRef<NotificationResponseActions | null>(null);
+  const handleNotificationActionsChange = useCallback((actions: NotificationResponseActions | null) => {
+    notificationActionsRef.current = actions;
+  }, []);
   const [navReselect, setNavReselect] = useState<{ view: ViewMode; token: number }>({
     view: "live",
     token: 0
@@ -239,7 +244,7 @@ export default function App() {
         onPrev={topBar.onPrev}
         onNext={topBar.onNext}
         controls={topBar.controls}
-        notificationCount={notificationCount}
+        notificationCount={notificationInbox.badgeCount}
       />
       <AuthMenu
         user={user}
@@ -262,8 +267,19 @@ export default function App() {
         reservationPolicies={reservationPolicies}
         reservationMap={reservationMap}
         quotaReferenceDate={quotaReferenceDate}
-        notificationCount={notificationCount}
-        onNotificationsClick={() => setNotificationsOpen(true)}
+        notificationCount={notificationInbox.badgeCount}
+        notifications={notificationInbox.notifications}
+        notificationsReady={notificationInbox.ready}
+        onNotificationsOpened={() => { void notificationInbox.markAllRead(); }}
+        respondSharedReservation={(notification, status) => {
+          notificationActionsRef.current?.respondSharedReservation(notification, status);
+        }}
+        respondRehearsal={(notification, status) => {
+          notificationActionsRef.current?.respondRehearsal(notification, status);
+        }}
+        respondGroupInvite={(notification, accept) => {
+          notificationActionsRef.current?.respondGroupInvite(notification, accept);
+        }}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen
@@ -286,9 +302,8 @@ export default function App() {
           collaborationEnabled={collaborationEnabled}
           peopleToolEnabled={peopleToolEnabled}
           onGroupsPendingCountChange={setGroupsPendingCount}
-          notificationsOpen={notificationsOpen}
-          onNotificationsClose={() => setNotificationsOpen(false)}
-          onNotificationsCountChange={setNotificationCount}
+          resolveNotification={notificationInbox.resolve}
+          onNotificationActionsChange={handleNotificationActionsChange}
         />
       </main>
       {user ? (

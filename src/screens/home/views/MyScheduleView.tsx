@@ -242,8 +242,8 @@ export default function MyScheduleView({
             date: dateKey,
             roomId: MY_ROOM_ID,
             reservedBy: ownsReservation
-              ? `אני${entry.privateDescription ? ` · ${entry.privateDescription}` : ""}\n${roomLine}`
-              : `${entry.reservedBy || "שריון משותף"}\n${roomLine}`,
+              ? `אני${entry.sharedDescription || entry.privateDescription ? ` · ${entry.sharedDescription || entry.privateDescription}` : ""}\n${roomLine}`
+              : `${entry.reservedBy || "שריון משותף"}${entry.sharedDescription ? ` · ${entry.sharedDescription}` : ""}\n${roomLine}`,
             pending: !ownsReservation && participant?.status === "pending"
           });
         });
@@ -340,7 +340,7 @@ export default function MyScheduleView({
             roomId: entry.roomId,
             startMinutes: start,
             durationMinutes: entry.durationMinutes,
-            title: ownsReservation ? "שמור" : participant?.status === "pending" ? "ממתין לאישור" : "שריון משותף",
+            title: entry.sharedDescription || (ownsReservation ? "שמור" : participant?.status === "pending" ? "ממתין לאישור" : "שריון משותף"),
             meta: `${formatMinutes(start)}–${formatMinutes(end)} · ${roomName(entry.roomId)}`,
             clickable: true,
             onClick: () => ownsReservation

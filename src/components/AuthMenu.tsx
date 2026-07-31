@@ -10,6 +10,9 @@ import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, getWeekS
 import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
 import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
 import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
+import type { AppNotification, NotificationResponseActions } from "../types/notifications";
+import { NotificationsList } from "../screens/home/overlays/NotificationsOverlay";
+import { getPeopleCategoryLabel } from "../lib/peopleDirectory";
 
 export type AuthMenuProps = {
   user: User | null;
@@ -31,8 +34,10 @@ export type AuthMenuProps = {
   reservationMap?: ReservationMap;
   quotaReferenceDate?: string;
   notificationCount?: number;
-  onNotificationsClick?: () => void;
-};
+  notifications?: AppNotification[];
+  notificationsReady?: boolean;
+  onNotificationsOpened?: () => void;
+} & NotificationResponseActions;
 
 export default function AuthMenu({
   user,
@@ -54,7 +59,12 @@ export default function AuthMenu({
   reservationMap = {},
   quotaReferenceDate,
   notificationCount = 0,
-  onNotificationsClick
+  notifications = [],
+  notificationsReady = false,
+  onNotificationsOpened,
+  respondSharedReservation,
+  respondRehearsal,
+  respondGroupInvite
 }: AuthMenuProps) {
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
@@ -68,17 +78,25 @@ export default function AuthMenu({
   const [profileStatus, setProfileStatus] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const profileFileInputRef = useRef<HTMLInputElement | null>(null);
+  const notificationsOpenedRef = useRef(false);
 
   const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
   const isIOS = /iPad|iPhone|iPod/i.test(ua);
   const isAndroid = /Android/i.test(ua);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      notificationsOpenedRef.current = false;
+      return;
+    }
     setInstallHelpOpen(false);
     setZoomOpen(false);
     setProfileOpen(false);
-  }, [open]);
+    if (user && !notificationsOpenedRef.current) {
+      notificationsOpenedRef.current = true;
+      onNotificationsOpened?.();
+    }
+  }, [onNotificationsOpened, open, user]);
 
   const installHintTitle = useMemo(() => {
     if (isIOS) return "הוספה למסך הבית (iPhone/iPad)";
@@ -115,6 +133,7 @@ export default function AuthMenu({
   };
 
   const pictureUrl = (user?.picture || "").trim();
+  const profileCategoryLabel = user ? getPeopleCategoryLabel(user) : "";
   const quotaRows = useMemo(() => {
     if (!user || !reservationPolicy) return [];
     const email = user.email.toLowerCase();
@@ -433,28 +452,28 @@ export default function AuthMenu({
 
   return (
     <div className="auth-overlay" onClick={handleBackdropClick}>
-      <div className="auth-menu" onClick={(event) => event.stopPropagation()}>
+      <div className={`auth-menu${user ? " authenticated" : ""}`} onClick={(event) => event.stopPropagation()}>
         {user ? (
           <>
-            <div className="auth-user">
-              <button
-                type="button"
-                className={`auth-user-avatar${pictureUrl ? " clickable" : ""}`}
-                aria-label={pictureUrl ? "הצג תמונת פרופיל" : undefined}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (!pictureUrl) return;
-                  setZoomOpen(true);
-                }}
-                disabled={!pictureUrl}
-              >
-                {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
-              </button>
-              <div className="auth-user-text">
-                <p className="auth-user-name">{user.name}</p>
-                <span className="auth-user-email">{user.email}</span>
-              </div>
-            </div>
+            <section className="auth-notifications-embed" aria-label="התראות">
+              <header className="auth-notifications-header">
+                <span className="auth-notifications-title">
+                  <NotificationsRoundedIcon fontSize="small" />
+                  <strong>התראות</strong>
+                </span>
+                {notificationCount > 0 ? (
+                  <span className="auth-notifications-count">{notificationCount > 99 ? "99+" : notificationCount}</span>
+                ) : null}
+              </header>
+              <NotificationsList
+                notifications={notifications}
+                ready={notificationsReady}
+                className="auth-notifications-list"
+                respondSharedReservation={respondSharedReservation}
+                respondRehearsal={respondRehearsal}
+                respondGroupInvite={respondGroupInvite}
+              />
+            </section>
             {quotaRows.length ? (
               <div className="auth-quotas" aria-label="מכסות שריונים">
                 <p className="auth-quotas-title">מכסות שריונים</p>
@@ -522,24 +541,6 @@ export default function AuthMenu({
                 </button>
               </div>
             ) : null}
-            <button className="secondary auth-reservations-button" type="button" onClick={openProfileEditor}>
-              <UserIcon />
-              <span>עריכת פרופיל</span>
-            </button>
-            <button
-              className="secondary auth-reservations-button auth-notifications-button"
-              type="button"
-              onClick={() => {
-                onNotificationsClick?.();
-                onClose();
-              }}
-            >
-              <span className="auth-menu-icon-with-badge" aria-hidden="true">
-                <NotificationsRoundedIcon fontSize="small" />
-                {notificationCount > 0 ? <span className="nav-badge">{notificationCount > 99 ? "99+" : notificationCount}</span> : null}
-              </span>
-              <span>התראות</span>
-            </button>
             <div className="auth-admin-row">
               <button
                 className="secondary auth-admin-button"
@@ -584,10 +585,37 @@ export default function AuthMenu({
                 ) : null}
               </>
             ) : null}
-            <button className="secondary auth-signout-button" onClick={onSignOut} type="button">
-              <LogoutIcon />
-              <span>התנתק</span>
-            </button>
+            <section className="auth-profile-capsule">
+              <div className="auth-user">
+                <button
+                  type="button"
+                  className={`auth-user-avatar${pictureUrl ? " clickable" : ""}`}
+                  aria-label={pictureUrl ? "הצג תמונת פרופיל" : undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!pictureUrl) return;
+                    setZoomOpen(true);
+                  }}
+                  disabled={!pictureUrl}
+                >
+                  {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
+                </button>
+                <div className="auth-user-text">
+                  <p className="auth-user-name">{user.name}</p>
+                  <span className="auth-user-email">{profileCategoryLabel}</span>
+                </div>
+              </div>
+              <div className="auth-profile-actions">
+                <button className="secondary" type="button" onClick={openProfileEditor}>
+                  <UserIcon />
+                  <span>עריכת פרופיל</span>
+                </button>
+                <button className="secondary auth-signout-button" onClick={onSignOut} type="button">
+                  <LogoutIcon />
+                  <span>התנתק</span>
+                </button>
+              </div>
+            </section>
           </>
         ) : (
           <>

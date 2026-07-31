@@ -3,7 +3,6 @@ import HomeViewRouter from "./HomeViewRouter";
 import ReserveConfirmOverlay from "./overlays/ReserveConfirmOverlay";
 import MyScheduleAddOverlay from "./overlays/MyScheduleAddOverlay";
 import ReservationDetailsOverlay from "./overlays/ReservationDetailsOverlay";
-import NotificationsOverlay from "./overlays/NotificationsOverlay";
 import BlockDetailsOverlay from "./overlays/BlockDetailsOverlay";
 import { isFirebaseStorageDownloadUrl, isGoogleUserContentUrl } from "../../lib/profilePhoto";
 import ConfirmOverlay from "./overlays/ConfirmOverlay";
@@ -35,7 +34,7 @@ import {
 } from "../../lib/reservationPolicyWindows";
 import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
-import type { AppNotification, NotificationDraft } from "../../types/notifications";
+import type { AppNotification, NotificationDraft, NotificationResponseActions } from "../../types/notifications";
 import type { DayKey, Lesson, TimeSlot } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
 import type { MySchedulePin } from "../../types/mySchedule";
@@ -56,7 +55,7 @@ import type {
 } from "../../types/collaboration";
 import type { GroupRehearsal } from "../../types/collaboration";
 import { allDayKeys, defaultWeekDayKeys } from "../../config";
-import { notificationDocumentId, useNotifications, writeUserNotifications } from "../../hooks/useNotifications";
+import { notificationDocumentId, writeUserNotifications } from "../../hooks/useNotifications";
 import {
   getApprovedParticipantEmails,
   normalizeReservationParticipantList,
@@ -84,9 +83,8 @@ export type HomeScreenProps = {
   collaborationEnabled?: boolean;
   peopleToolEnabled?: boolean;
   onGroupsPendingCountChange?: (count: number) => void;
-  notificationsOpen?: boolean;
-  onNotificationsClose?: () => void;
-  onNotificationsCountChange?: (count: number) => void;
+  resolveNotification?: (notificationId: string, responseStatus?: "approved" | "declined") => Promise<void>;
+  onNotificationActionsChange?: (actions: NotificationResponseActions | null) => void;
 };
 
 type CollaboratorProfile = {
@@ -248,9 +246,8 @@ export default function HomeScreen({
   collaborationEnabled = false,
   peopleToolEnabled = false,
   onGroupsPendingCountChange,
-  notificationsOpen = false,
-  onNotificationsClose,
-  onNotificationsCountChange
+  resolveNotification,
+  onNotificationActionsChange
 }: HomeScreenProps) {
   const [selectedDate, setSelectedDate] = useState(() => formatDateKey(new Date()));
   const [selectedRoom, setSelectedRoom] = useState<string>("");
@@ -476,16 +473,11 @@ export default function HomeScreen({
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "moderator";
   const hasNav = Boolean(currentUser);
   const collaborationAvailable = collaborationEnabled && Boolean(currentUser);
-  const notificationInbox = useNotifications(currentUser?.email);
   const effectiveView: ViewMode =
     !collaborationAvailable && (view === "groups" || view === "mySchedule")
       ? "room"
       : view;
   const scheduleDateKey = effectiveView === "live" ? todayDateKey : selectedDate;
-
-  useEffect(() => {
-    onNotificationsCountChange?.(notificationInbox.badgeCount);
-  }, [notificationInbox.badgeCount, onNotificationsCountChange]);
 
   const pinIdFor = useCallback(
     (pin: Pick<MySchedulePin, "kind" | "dateKey" | "roomId" | "startMinutes" | "durationMinutes" | "lessonId">) => {
@@ -661,7 +653,7 @@ export default function HomeScreen({
       if (!recipientEmail) return;
       const group = groups.find((entry) => entry.id === groupId) || null;
       await respondToInvite(groupId, accept);
-      await notificationInbox.resolve(
+      await resolveNotification?.(
         notificationId || notificationDocumentId("group-invite", groupId, recipientEmail),
         accept ? "approved" : "declined"
       );
@@ -683,7 +675,7 @@ export default function HomeScreen({
         ]);
       }
     },
-    [currentUser?.email, currentUser?.name, groups, notificationInbox, respondToInvite]
+    [currentUser?.email, currentUser?.name, groups, resolveNotification, respondToInvite]
   );
 
   const handleCreateGroup = useCallback(
@@ -3577,12 +3569,48 @@ export default function HomeScreen({
     [currentUser?.email, currentUser?.name, showToast, updateLinkedPinStatusForEmail]
   );
 
+  useEffect(() => {
+    if (!onNotificationActionsChange) return;
+    onNotificationActionsChange({
+      respondSharedReservation: (notification, status) => {
+        if (!notification.reservationId) return;
+        void respondToSharedReservation(notification.reservationId, status, notification.id);
+      },
+      respondRehearsal: (notification, status) => {
+        if (!notification.groupId || !notification.rehearsalId) return;
+        void applyRehearsalResponse(notification.groupId, notification.rehearsalId, status, notification.id);
+      },
+      respondGroupInvite: (notification, accept) => {
+        if (!notification.groupId) return;
+        void handleGroupInviteResponse(notification.groupId, accept, notification.id);
+      }
+    });
+    return () => onNotificationActionsChange(null);
+  }, [
+    applyRehearsalResponse,
+    handleGroupInviteResponse,
+    onNotificationActionsChange,
+    respondToSharedReservation
+  ]);
+
   const handleConfirmEdit = useCallback(
-    async (pending: Parameters<typeof baseHandleConfirmEdit>[0], startMinutes: number, durationMinutes: number, privateDescription?: string) => {
+    async (
+      pending: Parameters<typeof baseHandleConfirmEdit>[0],
+      startMinutes: number,
+      durationMinutes: number,
+      privateDescription?: string,
+      sharedDescription?: string
+    ) => {
       const currentEntry = (displayReservationMap[pending.request.date] || []).find(
         (entry) => entry.id === pending.reservationId
       );
-      const ok = await baseHandleConfirmEdit(pending, startMinutes, durationMinutes, privateDescription);
+      const ok = await baseHandleConfirmEdit(
+        pending,
+        startMinutes,
+        durationMinutes,
+        privateDescription,
+        sharedDescription
+      );
       if (!ok || !currentEntry) return null;
       const linked = extractLinkedIdsFromReservation(currentEntry);
       const participants = linked
@@ -3593,6 +3621,7 @@ export default function HomeScreen({
         time: startMinutes,
         durationMinutes,
         privateDescription: (privateDescription || "").trim(),
+        sharedDescription: (sharedDescription || "").trim(),
         participants,
         quotaParticipantEmails: getApprovedParticipantEmails(participants, currentEntry.reservedEmail)
       };
@@ -4168,6 +4197,7 @@ export default function HomeScreen({
       currentUser.email.toLowerCase() === detailsReservation.reservedEmail.toLowerCase()
   );
   const detailsPrivateDescription = detailsIsMine ? (detailsReservation?.privateDescription || "").trim() : "";
+  const detailsSharedDescription = (detailsReservation?.sharedDescription || "").trim();
   const detailsName = detailsReservation?.reservedBy || detailsContact?.name || "";
   const detailsEmail = detailsReservation?.reservedEmail || "";
   const detailsPhone = detailsReservation?.reservedPhone || detailsContact?.phone || "";
@@ -4289,25 +4319,6 @@ export default function HomeScreen({
           {toast.message}
         </div>
       ) : null}
-      <NotificationsOverlay
-        open={notificationsOpen}
-        notifications={notificationInbox.notifications}
-        ready={notificationInbox.ready}
-        onClose={() => onNotificationsClose?.()}
-        onOpened={() => { void notificationInbox.markAllRead(); }}
-        onRespondSharedReservation={(notification, status) => {
-          if (!notification.reservationId) return;
-          void respondToSharedReservation(notification.reservationId, status, notification.id);
-        }}
-        onRespondRehearsal={(notification, status) => {
-          if (!notification.groupId || !notification.rehearsalId) return;
-          void applyRehearsalResponse(notification.groupId, notification.rehearsalId, status, notification.id);
-        }}
-        onRespondGroupInvite={(notification, accept) => {
-          if (!notification.groupId) return;
-          void handleGroupInviteResponse(notification.groupId, accept, notification.id);
-        }}
-      />
       {pendingConfirm ? (
         <ReserveConfirmOverlay
           open
@@ -4321,6 +4332,7 @@ export default function HomeScreen({
           windowStart={pendingConfirm.windowStart}
           initialDuration={pendingConfirm.durationMinutes}
           initialPrivateDescription={pendingConfirm.privateDescription}
+          initialSharedDescription={pendingConfirm.sharedDescription}
           userRemainingMinutes={pendingConfirm.userRemainingMinutes}
           limitHoursPerRoomPerDay={pendingConfirm.limitHoursPerRoomPerDay}
           limitHoursPerRoomPerWeek={pendingConfirm.limitHoursPerRoomPerWeek}
@@ -4345,7 +4357,7 @@ export default function HomeScreen({
                 }
               : undefined
           }
-          onConfirm={(startMinutes, durationMinutes, privateDescription, linkedGroupId, rehearsalName, participantEmails) => {
+          onConfirm={(startMinutes, durationMinutes, privateDescription, sharedDescription, linkedGroupId, rehearsalName, participantEmails) => {
             void (async () => {
               const normalizedParticipants = normalizeEmailList(participantEmails || []);
               const linkedReservationTarget = Boolean(
@@ -4367,7 +4379,8 @@ export default function HomeScreen({
                   { ...pendingConfirm, request: requestWithParticipants },
                   startMinutes,
                   durationMinutes,
-                  privateDescription
+                  privateDescription,
+                  sharedDescription
                 );
                 if (
                   updatedReservation &&
@@ -4384,7 +4397,8 @@ export default function HomeScreen({
                 requestWithParticipants,
                 startMinutes,
                 durationMinutes,
-                privateDescription
+                privateDescription,
+                sharedDescription
               );
               if (!createdReservation) return;
               const targetLinkedGroupId = collaborationAvailable ? (linkedGroupId || autoLinkedGroupId) : "";
@@ -4468,6 +4482,7 @@ export default function HomeScreen({
             : undefined
         }
         privateDescription={detailsPrivateDescription || undefined}
+        sharedDescription={detailsSharedDescription || undefined}
         pinned={reservationPinned}
         onTogglePin={
           detailsReservation && currentUser?.email

@@ -19,6 +19,7 @@ export type Reservation = {
   reservedPhone?: string;
   reservedPicture?: string;
   privateDescription?: string;
+  sharedDescription?: string;
   linkedGroupId?: string;
   linkedRehearsalId?: string;
   participants?: ReservationParticipant[];
@@ -36,5 +37,6 @@ export type ReserveRequest = {
   roomId: string;
   durationMinutes?: number;
   privateDescription?: string;
+  sharedDescription?: string;
   participantEmails?: string[];
 };

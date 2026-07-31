@@ -131,6 +131,8 @@ export function useReservations(window: ReservationsWindow = null) {
               : typeof data.description === "string"
                 ? data.description.trim()
                 : "";
+          const sharedDescription =
+            typeof data.sharedDescription === "string" ? data.sharedDescription.trim() : "";
           const durationMinutes = parseDurationMinutes(data, time);
           const participants = Array.isArray(data.participants)
             ? normalizeReservationParticipantList(
@@ -158,6 +160,7 @@ export function useReservations(window: ReservationsWindow = null) {
             ...(reservedPhone ? { reservedPhone } : {}),
             ...(reservedPicture ? { reservedPicture } : {}),
             ...(privateDescription ? { privateDescription } : {}),
+            ...(sharedDescription ? { sharedDescription } : {}),
             ...(typeof data.linkedGroupId === "string" && data.linkedGroupId.trim()
               ? { linkedGroupId: data.linkedGroupId.trim() }
               : {}),

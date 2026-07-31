@@ -21,6 +21,7 @@ export type ReservationDetailsOverlayProps = {
   currentParticipantStatus?: ReservationParticipantStatus;
   onRespondParticipation?: (status: "approved" | "declined") => void;
   privateDescription?: string;
+  sharedDescription?: string;
   pinned?: boolean;
   onTogglePin?: () => void;
   onClose: () => void;
@@ -40,6 +41,7 @@ export default function ReservationDetailsOverlay({
   currentParticipantStatus,
   onRespondParticipation,
   privateDescription,
+  sharedDescription,
   pinned = false,
   onTogglePin,
   onClose
@@ -93,6 +95,7 @@ export default function ReservationDetailsOverlay({
           <p className="reserve-time">{timeLine}</p>
           {!name ? <p className="reserve-detail">{title}</p> : null}
           {privateDescription ? <p className="reserve-detail">תיאור אישי: {privateDescription}</p> : null}
+          {sharedDescription ? <p className="reserve-detail">תיאור משותף: {sharedDescription}</p> : null}
           {participants.length > 1 ? (
             <div className="reservation-participant-summary">
               <ParticipantAvatarStack

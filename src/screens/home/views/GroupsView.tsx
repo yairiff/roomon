@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import EmailRoundedIcon from "@mui/icons-material/EmailRounded";
+import MailRoundedIcon from "@mui/icons-material/MailRounded";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
 import {
   AddIcon,
@@ -23,6 +23,12 @@ import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import type { DirectoryUser } from "../../../types/admin";
 import { getContactLinks } from "../../../lib/contactLinks";
+import {
+  getPeopleCategoryLabel,
+  matchesPeopleCategory,
+  peopleCategoryOptions,
+  type PeopleCategory
+} from "../../../lib/peopleDirectory";
 import type { CollaborationGroup, GroupRehearsal, RehearsalParticipant } from "../../../types/collaboration";
 import type { DayKey, Room } from "../../../types/schedule";
 
@@ -155,6 +161,7 @@ export default function GroupsView({
   const [createOverlayOpen, setCreateOverlayOpen] = useState(false);
   const [peopleGroupOverlayOpen, setPeopleGroupOverlayOpen] = useState(false);
   const [peopleSearch, setPeopleSearch] = useState("");
+  const [peopleCategory, setPeopleCategory] = useState<PeopleCategory>("all");
   const [selectedPeopleEmails, setSelectedPeopleEmails] = useState<string[]>([]);
 
   const [rehearsalOverlayOpen, setRehearsalOverlayOpen] = useState(false);
@@ -327,12 +334,14 @@ export default function GroupsView({
     const q = peopleSearch.trim().toLowerCase();
     return users
       .filter((user) => user.email.toLowerCase() !== currentEmailNormalized)
+      .filter((user) => matchesPeopleCategory(user, peopleCategory))
       .filter((user) => {
         if (!q) return true;
         const name = (user.name || "").trim().toLowerCase();
         const email = user.email.toLowerCase();
         const phone = (user.phone || "").trim().toLowerCase();
-        return name.includes(q) || email.includes(q) || phone.includes(q);
+        const category = getPeopleCategoryLabel(user).toLowerCase();
+        return name.includes(q) || email.includes(q) || phone.includes(q) || category.includes(q);
       })
       .sort((a, b) => {
         const aSelected = selectedPeopleEmails.includes(a.email.toLowerCase());
@@ -340,7 +349,7 @@ export default function GroupsView({
         if (aSelected !== bSelected) return aSelected ? -1 : 1;
         return ((a.name || a.email).trim()).localeCompare((b.name || b.email).trim(), "he");
       });
-  }, [currentEmailNormalized, peopleSearch, selectedPeopleEmails, users]);
+  }, [currentEmailNormalized, peopleCategory, peopleSearch, selectedPeopleEmails, users]);
 
   const selectedPeopleSet = useMemo(() => new Set(selectedPeopleEmails), [selectedPeopleEmails]);
 
@@ -538,14 +547,26 @@ export default function GroupsView({
         {peopleToolEnabled && activeTool === "people" ? (
           <>
             <div className="finder-results groups-list-panel people-panel">
-              <label className="finder-group-search-field people-search-field">
-                <input
-                  type="search"
-                  value={peopleSearch}
-                  placeholder="חיפוש אנשים"
-                  onChange={(event) => setPeopleSearch(event.target.value)}
-                />
-              </label>
+              <div className="people-toolbar">
+                <label className="finder-group-search-field people-search-field">
+                  <input
+                    type="search"
+                    value={peopleSearch}
+                    placeholder="חיפוש אנשים"
+                    onChange={(event) => setPeopleSearch(event.target.value)}
+                  />
+                </label>
+                <select
+                  className="people-category-filter"
+                  aria-label="סינון לפי שנתון"
+                  value={peopleCategory}
+                  onChange={(event) => setPeopleCategory(event.target.value as PeopleCategory)}
+                >
+                  {peopleCategoryOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
               <ul className="groups-chat-list people-list">
                 {peopleList.map((user) => {
                   const email = user.email.toLowerCase();
@@ -570,14 +591,12 @@ export default function GroupsView({
                           </span>
                           <span className="groups-chat-text">
                             <span className="groups-chat-title">{label}</span>
-                            <span className="groups-chat-subtitle">
-                              {user.phone ? user.phone : user.email}
-                            </span>
+                            <span className="groups-chat-subtitle">{getPeopleCategoryLabel(user)}</span>
                           </span>
                         </button>
                         <span className="reserve-contact-actions people-contact-actions" aria-label="יצירת קשר">
-                          <a className="icon-button contact email" href={emailHref} aria-label={`שליחת אימייל אל ${label}`}>
-                            <EmailRoundedIcon fontSize="small" />
+                          <a className="icon-button contact email gmail" href={emailHref} aria-label={`שליחת אימייל אל ${label}`}>
+                            <MailRoundedIcon fontSize="small" />
                           </a>
                           {telHref ? (
                             <a className="icon-button contact" href={telHref} aria-label={`התקשר אל ${label}`}>
@@ -1124,8 +1143,8 @@ export default function GroupsView({
                       {participant.status === "approved" ? "אישר" : participant.status === "declined" ? "דחה" : "ממתין"}
                     </span>
                     <span className="reserve-contact-actions groups-rehearsal-member-contacts" aria-label="יצירת קשר">
-                      <a className="icon-button contact email" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
-                        <EmailRoundedIcon fontSize="small" />
+                      <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
+                        <MailRoundedIcon fontSize="small" />
                       </a>
                       {links.telHref ? (
                         <a className="icon-button contact" href={links.telHref} aria-label={`התקשר אל ${name}`}>
