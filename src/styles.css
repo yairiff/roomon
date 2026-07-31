@@ -281,14 +281,15 @@ button.participant-avatar-stack {
 }
 
 .reservation-participant-summary {
-  width: 100%;
-  min-height: 48px;
-  margin-top: 10px;
-  padding: 6px 10px;
+  width: auto;
+  min-width: 0;
+  min-height: 46px;
+  margin: 0;
+  padding: 5px 8px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-solid) 92%, var(--accent) 8%);
@@ -304,8 +305,15 @@ button.participant-avatar-stack {
 }
 
 .reservation-participant-count {
-  min-width: 74px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
   color: var(--ink);
+  white-space: nowrap;
+}
+
+.reservation-participant-count strong {
+  font-size: 0.78rem;
 }
 
 .reservation-participant-chevron {
@@ -559,13 +567,24 @@ button.participant-avatar-stack {
   }
 
   .reservation-participant-row {
-    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding-inline: 8px;
   }
 
   .reservation-participant-actions {
-    grid-column: 1 / -1;
+    grid-column: auto;
     justify-content: flex-start;
-    padding-inline-start: 41px;
+    gap: 4px;
+    padding-inline-start: 0;
+  }
+
+  .reservation-participant-actions .icon-button.contact {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    flex-basis: 32px;
   }
 
   .groups-rehearsal-member-row {
@@ -2485,6 +2504,25 @@ body,
   gap: 12px;
 }
 
+.reserve-actions.reserve-actions-details.multi-participant {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.reserve-actions.reserve-actions-details.multi-participant .reserve-pin-action,
+.reserve-actions.reserve-actions-details.multi-participant .reservation-response-actions {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.reserve-actions.reserve-actions-details.multi-participant .reservation-response-actions button {
+  width: 100%;
+}
+
+.reserve-actions.reserve-actions-details.multi-participant .reserve-pin-action {
+  padding-inline: 10px;
+}
+
 .reserve-actions.reserve-actions-details.single {
   justify-content: center;
 }
@@ -2500,12 +2538,18 @@ body,
 .reservation-participants {
   display: grid;
   gap: 0;
-  margin-top: 10px;
+  margin-top: 0;
   max-height: min(42dvh, 340px);
   overflow-x: hidden;
   overflow-y: auto;
   border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
   border-radius: 8px;
+}
+
+@media (max-width: 520px) {
+  .reservation-participant-count-label {
+    display: none;
+  }
 }
 
 .reservation-participant-row {
@@ -10743,13 +10787,24 @@ select,
   }
 
   .reservation-participant-row {
-    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding-inline: 8px;
   }
 
   .reservation-participant-actions {
-    grid-column: 1 / -1;
+    grid-column: auto;
     justify-content: flex-start;
-    padding-inline-start: 41px;
+    gap: 4px;
+    padding-inline-start: 0;
+  }
+
+  .reservation-participant-actions .icon-button.contact {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    flex-basis: 32px;
   }
 
   .groups-rehearsal-member-row {

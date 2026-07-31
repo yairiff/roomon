@@ -65,7 +65,10 @@ export default function ReservationDetailsOverlay({
   );
   const hasJoinAction = Boolean(onJoinRequest && joinRequestState);
   const showGeneralContactActions = !hasMultipleParticipants;
-  const showFooterActions = canRespondParticipation || hasJoinAction || showGeneralContactActions;
+  const showFooterActions = canRespondParticipation
+    || hasJoinAction
+    || showGeneralContactActions
+    || hasMultipleParticipants;
 
   const initials = (() => {
     const source = (name || "").trim() || (email || "").trim();
@@ -110,25 +113,8 @@ export default function ReservationDetailsOverlay({
           {!name ? <p className="reserve-detail">{title}</p> : null}
           {privateDescription ? <p className="reserve-detail">תיאור אישי: {privateDescription}</p> : null}
           {sharedDescription ? <p className="reserve-detail">תיאור משותף: {sharedDescription}</p> : null}
-          {hasMultipleParticipants ? (
-            <button
-              type="button"
-              className={`reservation-participant-summary${participantsExpanded ? " expanded" : ""}`}
-              aria-expanded={participantsExpanded}
-              aria-label={`${participantsExpanded ? "הסתרת" : "הצגת"} ${visibleParticipants.length} משתתפים`}
-              onClick={() => setParticipantsExpanded((value) => !value)}
-            >
-              <span className="reservation-participant-count">{visibleParticipants.length} משתתפים</span>
-              <ParticipantAvatarStack
-                participants={visibleParticipants}
-                maxVisible={6}
-              />
-              <ExpandMoreRoundedIcon className="reservation-participant-chevron" fontSize="small" />
-            </button>
-          ) : null}
-          {participantsExpanded ? <ParticipantRows participants={visibleParticipants} /> : null}
         </div>
-        {showFooterActions ? <div className="reserve-actions reserve-actions-details">
+        {showFooterActions ? <div className={`reserve-actions reserve-actions-details${hasMultipleParticipants ? " multi-participant" : ""}`}>
           {canRespondParticipation ? (
             <div className="reservation-response-actions">
               <button className="secondary danger" type="button" onClick={() => onRespondParticipation?.("declined")}>דחיית השתתפות</button>
@@ -147,8 +133,29 @@ export default function ReservationDetailsOverlay({
             </button>
           ) : null}
 
+          {hasMultipleParticipants ? (
+            <button
+              type="button"
+              className={`reservation-participant-summary${participantsExpanded ? " expanded" : ""}`}
+              aria-expanded={participantsExpanded}
+              aria-label={`${participantsExpanded ? "הסתרת" : "הצגת"} ${visibleParticipants.length} משתתפים`}
+              onClick={() => setParticipantsExpanded((value) => !value)}
+            >
+              <span className="reservation-participant-count">
+                <strong>{visibleParticipants.length}</strong>
+                <span className="reservation-participant-count-label"> משתתפים</span>
+              </span>
+              <ParticipantAvatarStack
+                participants={visibleParticipants}
+                compact
+                maxVisible={3}
+              />
+              <ExpandMoreRoundedIcon className="reservation-participant-chevron" fontSize="small" />
+            </button>
+          ) : null}
           {showGeneralContactActions ? <ContactActionButtons email={email} phone={phone} label={name || email} /> : null}
         </div> : null}
+        {participantsExpanded ? <ParticipantRows participants={visibleParticipants} /> : null}
       </div>
 
       <div
