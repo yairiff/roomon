@@ -725,6 +725,7 @@ button.participant-avatar-stack {
 .auth-menu-content {
   width: 100%;
   min-width: 0;
+  min-height: 0;
   max-width: 100%;
   margin-inline: auto;
   display: grid;
@@ -733,6 +734,8 @@ button.participant-avatar-stack {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .auth-menu-section {
@@ -990,8 +993,10 @@ button.participant-avatar-stack {
 
   .auth-menu-content {
     width: min(100%, 480px);
+    height: 100%;
     padding-inline: 2px;
     padding-bottom: 2px;
+    overflow-y: auto;
   }
 }
 
