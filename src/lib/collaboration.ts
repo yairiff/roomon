@@ -85,9 +85,7 @@ const normalizeRehearsal = (raw: unknown): GroupRehearsal | null => {
           const participant = entry as Partial<GroupRehearsal["participants"][number]>;
           const email = String(participant.email || "").trim().toLowerCase();
           if (!email) return null;
-          const status = participant.status === "approved" || participant.status === "declined"
-            ? participant.status
-            : "pending";
+          const status = participant.status === "declined" ? "declined" : "approved";
           return {
             email,
             status,

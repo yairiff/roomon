@@ -124,7 +124,9 @@ export function useNotifications(email?: string | null) {
   }, [normalizedEmail]);
 
   const badgeCount = useMemo(
-    () => notifications.filter((entry) => (entry.action && !entry.resolvedAt) || !entry.readAt).length,
+    () => notifications.filter(
+      (entry) => !entry.readAt || (entry.action === "group_invite" && !entry.resolvedAt)
+    ).length,
     [notifications]
   );
 

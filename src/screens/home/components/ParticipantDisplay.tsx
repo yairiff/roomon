@@ -19,7 +19,6 @@ const initialsFromLabel = (label: string) => {
 };
 
 const statusLabel = (status: ReservationParticipantStatus) => {
-  if (status === "pending") return "ממתין לאישור";
   if (status === "declined") return "נדחה";
   return "משתתף";
 };
@@ -41,7 +40,7 @@ export function ParticipantAvatarStack({
   maxVisible?: number;
   className?: string;
 }) {
-  const approved = participants.filter((participant) => participant.status === "approved");
+  const approved = participants.filter((participant) => participant.status !== "declined");
   if (!approved.length) return null;
   const visible = approved.slice(0, maxVisible);
   const hiddenCount = Math.max(0, approved.length - visible.length);

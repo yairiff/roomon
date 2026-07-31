@@ -481,7 +481,7 @@ export default function GroupsView({
 
     const participants = participantEmails.map((email) => {
       const previous = existingParticipantByEmail.get(email);
-      const fallbackStatus: RehearsalParticipant["status"] = email === currentEmailNormalized ? "approved" : "pending";
+      const fallbackStatus: RehearsalParticipant["status"] = "approved";
       const status = previous?.status || fallbackStatus;
       return {
         email,
@@ -906,19 +906,8 @@ export default function GroupsView({
                         ) : null}
                       </div>
                     </div>
-                    {currentParticipantStatus === "pending" ? (
+                    {currentParticipantStatus && currentParticipantStatus !== "declined" && rehearsal.createdBy !== currentEmailNormalized ? (
                       <div className="groups-inline-actions">
-                        <button
-                          type="button"
-                          className="icon-button groups-rehearsal-respond-button approve"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void onRespondToRehearsal(selectedGroup.id, rehearsal.id, "approved");
-                          }}
-                          aria-label="אישור"
-                        >
-                          <ApproveIcon />
-                        </button>
                         <button
                           type="button"
                           className="icon-button groups-rehearsal-respond-button decline"
@@ -1140,7 +1129,7 @@ export default function GroupsView({
                       <p className="groups-chat-subtitle">{participant.email}</p>
                     </div>
                     <span className={`groups-rehearsal-member-status ${participant.status}`}>
-                      {participant.status === "approved" ? "אישר" : participant.status === "declined" ? "דחה" : "ממתין"}
+                      {participant.status === "approved" ? "משתתף" : participant.status === "declined" ? "דחה" : "משתתף"}
                     </span>
                     <span className="reserve-contact-actions groups-rehearsal-member-contacts" aria-label="יצירת קשר">
                       <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
@@ -1162,27 +1151,17 @@ export default function GroupsView({
               })}
             </ul>
 
-            {currentUserStatus ? (
+            {currentUserStatus && currentUserStatus !== "declined" && detailsRehearsal.createdBy !== currentEmailNormalized ? (
               <div className="groups-rehearsal-details-actions">
                 <button
                   type="button"
-                  className={`groups-rehearsal-details-action decline ${currentUserStatus === "declined" ? "active" : ""}`}
+                  className="groups-rehearsal-details-action decline"
                   onClick={() => {
                     void onRespondToRehearsal(selectedGroup.id, detailsRehearsal.id, "declined");
                     setDetailsRehearsal(null);
                   }}
                 >
                   דחייה
-                </button>
-                <button
-                  type="button"
-                  className={`groups-rehearsal-details-action approve ${currentUserStatus === "approved" ? "active" : ""}`}
-                  onClick={() => {
-                    void onRespondToRehearsal(selectedGroup.id, detailsRehearsal.id, "approved");
-                    setDetailsRehearsal(null);
-                  }}
-                >
-                  אישור
                 </button>
               </div>
             ) : null}

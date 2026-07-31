@@ -57,6 +57,7 @@ export type ReserveConfirmOverlayProps = {
   directoryUsers?: DirectoryUser[];
   currentEmail?: string;
   peopleSelectionEnabled?: boolean;
+  resolveCommonQuotaCapacity?: (startMinutes: number, participantEmails: string[]) => number;
   onCreateGroup?: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
   linkedGroupName?: string;
   initialLinkToGroup?: boolean;
@@ -98,6 +99,7 @@ export default function ReserveConfirmOverlay({
   directoryUsers = [],
   currentEmail,
   peopleSelectionEnabled = false,
+  resolveCommonQuotaCapacity,
   onCreateGroup,
   linkedGroupName,
   initialLinkToGroup = false,
@@ -357,7 +359,23 @@ export default function ReserveConfirmOverlay({
 
   const STEP = 30;
   const MIN_DURATION = 30;
-  const maxDurationForStart = Math.floor(Math.min(limitEnd - startMinutes, userRemainingMinutes) / STEP) * STEP;
+  const activeQuotaParticipantCount = participantTarget === "group"
+    ? Math.max(1, selectedGroupMembersPreview.length || selectedGroup?.memberCount || 1)
+    : participantTarget === "people"
+      ? Math.max(1, selectedParticipantEmails.length + 1)
+      : 1;
+  const activeQuotaParticipantEmails = participantTarget === "group"
+    ? selectedGroupMembersPreview.map((member) => member.email)
+    : participantTarget === "people"
+      ? selectedParticipantEmails
+      : [];
+  const commonQuotaCapacityMinutes = resolveCommonQuotaCapacity
+    ? resolveCommonQuotaCapacity(startMinutes, activeQuotaParticipantEmails)
+    : userRemainingMinutes * activeQuotaParticipantCount;
+  const availableCommonQuotaMinutes = Math.min(limitEnd - startMinutes, commonQuotaCapacityMinutes);
+  const maxDurationForStart = Math.floor(
+    availableCommonQuotaMinutes / STEP
+  ) * STEP;
   const endOptions = useMemo(() => {
     const options: { end: number; duration: number; label: string }[] = [];
     for (let duration = MIN_DURATION; duration <= maxDurationForStart; duration += STEP) {
@@ -376,7 +394,8 @@ export default function ReserveConfirmOverlay({
     const hasMatch = endOptions.some((opt) => opt.duration === currentDuration);
     if (hasMatch) return;
     if (endOptions.length) {
-      setEndMinutes(endOptions[0].end);
+      const closest = endOptions.find((option) => option.duration >= currentDuration) || endOptions[endOptions.length - 1];
+      setEndMinutes(closest.end);
     } else {
       setEndMinutes(startMinutes);
     }
@@ -466,7 +485,10 @@ export default function ReserveConfirmOverlay({
                 const nextStart = Number(event.target.value);
                 const previousDuration = Math.max(MIN_DURATION, endMinutes - startMinutes);
                 setStartMinutes(nextStart);
-                const nextMaxRaw = Math.min(limitEnd - nextStart, userRemainingMinutes);
+                const nextQuotaCapacity = resolveCommonQuotaCapacity
+                  ? resolveCommonQuotaCapacity(nextStart, activeQuotaParticipantEmails)
+                  : commonQuotaCapacityMinutes;
+                const nextMaxRaw = Math.min(limitEnd - nextStart, nextQuotaCapacity);
                 const nextMax = Math.floor(nextMaxRaw / STEP) * STEP;
                 const nextDurationRaw = Math.max(MIN_DURATION, Math.min(previousDuration, nextMax));
                 const nextDuration = Math.max(MIN_DURATION, Math.floor(nextDurationRaw / STEP) * STEP);
@@ -589,6 +611,14 @@ export default function ReserveConfirmOverlay({
             )}
             <ChevronLeftIcon />
           </button>
+        ) : null}
+
+        {activeQuotaParticipantCount > 1 ? (
+          <p className="reserve-common-quota" role="status">
+            מכסה משותפת · {activeQuotaParticipantCount} משתתפים · עד {Number.isFinite(availableCommonQuotaMinutes)
+              ? formatDurationLabelHe(Math.max(0, Math.floor(availableCommonQuotaMinutes / STEP) * STEP))
+              : "ללא הגבלה"}
+          </p>
         ) : null}
 
         {linkedGroupName ? (

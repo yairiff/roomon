@@ -7,9 +7,6 @@ import type { RehearsalParticipant } from "../types/collaboration";
 
 export const normalizeParticipantEmail = (value: string) => value.trim().toLowerCase();
 
-const isParticipantStatus = (value: unknown): value is ReservationParticipantStatus =>
-  value === "pending" || value === "approved" || value === "declined";
-
 export const normalizeReservationParticipantList = (
   values: Array<Partial<ReservationParticipant>>,
   ownerEmail?: string
@@ -19,7 +16,8 @@ export const normalizeReservationParticipantList = (
   values.forEach((value) => {
     const email = normalizeParticipantEmail(value.email || "");
     if (!email) return;
-    const status = email === owner ? "approved" : isParticipantStatus(value.status) ? value.status : "pending";
+    const status: ReservationParticipantStatus =
+      email === owner || value.status !== "declined" ? "approved" : "declined";
     const updatedAt = Number(value.updatedAt);
     byEmail.set(email, {
       email,
@@ -56,19 +54,19 @@ export const resolveReservationParticipantStates = (
 export const getApprovedParticipantEmails = (participants: ReservationParticipant[], ownerEmail?: string) => {
   const owner = normalizeParticipantEmail(ownerEmail || "");
   const approved = participants
-    .filter((participant) => participant.status === "approved")
+    .filter((participant) => participant.status !== "declined")
     .map((participant) => normalizeParticipantEmail(participant.email))
     .filter(Boolean);
   if (owner && !approved.includes(owner)) approved.unshift(owner);
   return Array.from(new Set(approved));
 };
 
-export const buildPendingReservationParticipants = (ownerEmail: string, selectedEmails: string[], now = Date.now()) => {
+export const buildActiveReservationParticipants = (ownerEmail: string, selectedEmails: string[], now = Date.now()) => {
   const owner = normalizeParticipantEmail(ownerEmail);
   return normalizeReservationParticipantList(
     [
       ...(owner ? [{ email: owner, status: "approved" as const, updatedAt: now }] : []),
-      ...selectedEmails.map((email) => ({ email, status: "pending" as const, updatedAt: now }))
+      ...selectedEmails.map((email) => ({ email, status: "approved" as const, updatedAt: now }))
     ],
     owner
   );
@@ -93,7 +91,7 @@ export const updateReservationParticipantSelection = (
     const previous = existingByEmail.get(email);
     next.push({
       email,
-      status: previous && previous.status !== "declined" ? previous.status : "pending",
+      status: "approved",
       updatedAt: previous && previous.status !== "declined" ? previous.updatedAt : now
     });
   });

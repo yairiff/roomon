@@ -528,6 +528,14 @@ button.participant-avatar-stack {
   margin-top: 2px;
 }
 
+.reserve-common-quota {
+  margin: -2px 2px 2px;
+  color: color-mix(in srgb, var(--accent-strong) 76%, var(--ink));
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-align: right;
+}
+
 .reserve-participant-picker-overlay {
   direction: rtl;
   width: min(540px, 100%);

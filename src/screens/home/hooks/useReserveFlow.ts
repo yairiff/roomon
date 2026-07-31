@@ -7,8 +7,10 @@ import type { Reservation, ReservationMap, ReserveRequest } from "../../../types
 import type { ReservationPolicy, ReservationScopedPolicy } from "../../../types/settings";
 import { addDays, formatDateKey, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
+import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
 import { getReservationUsageShareForEmail, normalizeEmailList } from "../../../lib/quotaUsage";
+import { calculateReservationQuotaAdjustment } from "../../../lib/reservationQuotaAdjustment";
 import { defaultWeekDayKeys } from "../../../config";
 import {
   buildReservationPolicyWindowsForDays,
@@ -17,7 +19,7 @@ import {
 } from "../../../lib/reservationPolicyWindows";
 import type { ReservationPolicyWindow } from "../../../lib/reservationPolicyWindows";
 import {
-  buildPendingReservationParticipants,
+  buildActiveReservationParticipants,
   getApprovedParticipantEmails,
   resolveReservationParticipantStates,
   updateReservationParticipantSelection
@@ -167,6 +169,36 @@ export function useReserveFlow({
       return durationMinutes / participantCount;
     },
     [getDraftParticipantEmails]
+  );
+  const getCommonQuotaCapacityMinutes = useCallback(
+    (
+      dateKey: string,
+      roomId: string,
+      startMinutes: number,
+      participantEmails?: string[],
+      excludeReservationId?: string
+    ) => {
+      if (!currentUserEmail) return 0;
+      const quotaParticipantEmails = getDraftParticipantEmails(participantEmails);
+      const draft: Reservation = {
+        id: excludeReservationId || "__quota-draft__",
+        date: dateKey,
+        roomId,
+        time: startMinutes,
+        durationMinutes: 24 * 60,
+        reservedBy: "",
+        reservedEmail: currentUserEmail,
+        quotaParticipantEmails
+      };
+      return calculateReservationQuotaAdjustment({
+        reservation: draft,
+        participantEmails: quotaParticipantEmails,
+        reservations: Object.values(reservationMap).flat(),
+        basePolicy: reservationPolicy,
+        scopedPolicies: reservationPolicies
+      }).durationMinutes;
+    },
+    [currentUserEmail, getDraftParticipantEmails, reservationMap, reservationPolicies, reservationPolicy]
   );
   const policyWindows = useMemo(() => {
     if (allowedPolicyWindows?.length) return allowedPolicyWindows;
@@ -611,9 +643,7 @@ export function useReserveFlow({
 
       const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
       const remaining = getRemainingMinutes(request.date, request.roomId, alignedStart, excludeReservationId);
-      const participantCount = excludeReservationId
-        ? Math.max(1, getDraftParticipantEmails(request.participantEmails).length)
-        : 1;
+      const participantCount = Math.max(1, getDraftParticipantEmails(request.participantEmails).length);
       const effectiveRemainingDuration = remaining.effectiveRemaining * participantCount;
       if (windowDuration < MIN_DURATION || effectiveRemainingDuration < MIN_DURATION) return null;
       const currentDayUsed = getUserReservedMinutesForDate(request.date, excludeReservationId);
@@ -633,7 +663,7 @@ export function useReserveFlow({
         limitEnd: alignedLimitEnd,
         startMinutes: alignedStart,
         windowStart: alignedWindowStart,
-        userRemainingMinutes: effectiveRemainingDuration,
+        userRemainingMinutes: remaining.effectiveRemaining,
         effectivePolicy: remaining.effectivePolicy,
         globalQuotaPolicy,
         quotaUsage: {
@@ -720,7 +750,7 @@ export function useReserveFlow({
         request.time,
         requestedDuration,
         undefined,
-        undefined
+        request.participantEmails
       );
       if (requestedLimitMessage) {
         showToast(requestedLimitMessage);
@@ -734,7 +764,7 @@ export function useReserveFlow({
           request.time,
           MIN_DURATION,
           undefined,
-          undefined
+          request.participantEmails
         );
         if (minimumLimitMessage) {
           showToast(minimumLimitMessage);
@@ -744,7 +774,8 @@ export function useReserveFlow({
 
       const { limitEnd, startMinutes, windowStart, userRemainingMinutes, effectivePolicy, globalQuotaPolicy, quotaUsage } = availability;
       const windowDuration = limitEnd - startMinutes;
-      const maxDuration = Math.min(windowDuration, userRemainingMinutes);
+      const participantCount = Math.max(1, getDraftParticipantEmails(request.participantEmails).length);
+      const maxDuration = Math.min(windowDuration, userRemainingMinutes * participantCount);
       if (maxDuration < MIN_DURATION) return;
 
       const baseDuration = request.durationMinutes
@@ -780,6 +811,7 @@ export function useReserveFlow({
       getAvailability,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getDraftParticipantEmails,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,
       openRoomDay,
@@ -863,8 +895,22 @@ export function useReserveFlow({
         return null;
       }
 
-      const participants = buildPendingReservationParticipants(currentUser.email, draft.participantEmails || []);
+      const participants = buildActiveReservationParticipants(currentUser.email, draft.participantEmails || []);
       const quotaParticipantEmails = getApprovedParticipantEmails(participants, currentUser.email);
+      const commonQuotaCapacityMinutes = getCommonQuotaCapacityMinutes(
+        date,
+        roomId,
+        startMinutes,
+        quotaParticipantEmails
+      );
+      if (durationMinutes > commonQuotaCapacityMinutes) {
+        showToast(
+          commonQuotaCapacityMinutes >= MIN_DURATION
+            ? `המכסה המשותפת מאפשרת עד ${formatDurationLabelHe(commonQuotaCapacityMinutes)}.`
+            : "אין למשתתפים מספיק מכסה משותפת לשריון הזה."
+        );
+        return null;
+      }
       const limitMessage = getLimitViolationMessage(
         date,
         roomId,
@@ -943,6 +989,7 @@ export function useReserveFlow({
       getConcurrencyViolationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getCommonQuotaCapacityMinutes,
       getDraftParticipantEmails,
       getLessonsForDate,
       getLimitViolationMessage,
@@ -1075,7 +1122,7 @@ export function useReserveFlow({
         limitEnd: alignedLimitEnd,
         startMinutes: alignedStart,
         windowStart: alignedWindowStart,
-        userRemainingMinutes: effectiveRemainingDuration,
+        userRemainingMinutes: remaining.effectiveRemaining,
         privateDescription: entry.privateDescription || "",
         sharedDescription: entry.sharedDescription || "",
         limitHoursPerRoomPerDay: remaining.effectivePolicy.maxHoursPerRoomPerDay,
@@ -1202,6 +1249,21 @@ export function useReserveFlow({
         pending.request.participantEmails || []
       );
       const quotaParticipantEmails = getApprovedParticipantEmails(participants, currentUser.email);
+      const commonQuotaCapacityMinutes = getCommonQuotaCapacityMinutes(
+        date,
+        roomId,
+        startMinutes,
+        quotaParticipantEmails,
+        reservationId
+      );
+      if (durationMinutes > commonQuotaCapacityMinutes) {
+        showToast(
+          commonQuotaCapacityMinutes >= MIN_DURATION
+            ? `המכסה המשותפת מאפשרת עד ${formatDurationLabelHe(commonQuotaCapacityMinutes)}.`
+            : "אין למשתתפים מספיק מכסה משותפת לשריון הזה."
+        );
+        return false;
+      }
       const limitMessage = getLimitViolationMessage(
         date,
         roomId,
@@ -1268,6 +1330,7 @@ export function useReserveFlow({
       getConcurrencyViolationMessage,
       getCutoffViolationMessage,
       getForwardLimitViolationMessage,
+      getCommonQuotaCapacityMinutes,
       getDraftParticipantEmails,
       getLessonsForDate,
       getLimitViolationMessage,
@@ -1290,6 +1353,7 @@ export function useReserveFlow({
     setPendingConfirm,
     getUserReservedMinutes,
     getAvailability,
+    getCommonQuotaCapacityMinutes,
     handleReserve,
     handleConfirmReserve,
     handleEditReservation,

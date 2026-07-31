@@ -157,7 +157,7 @@ export function useCollaborationGroups({ email }: UseCollaborationGroupsArgs) {
             ...rehearsal,
             participants: [
               ...rehearsal.participants,
-              { email: normalizedEmail, status: "pending" as const, updatedAt: now }
+              { email: normalizedEmail, status: "approved" as const, updatedAt: now }
             ]
           };
         });
@@ -240,7 +240,7 @@ export function useCollaborationGroups({ email }: UseCollaborationGroupsArgs) {
           if (existing) return existing;
           return {
             email: memberEmail,
-            status: (memberEmail === owner ? "approved" : "pending") as RehearsalParticipant["status"],
+            status: "approved" as RehearsalParticipant["status"],
             updatedAt: now
           };
         });

@@ -3,7 +3,7 @@ import type { ReservationMap, ReserveRequest, ReservationParticipant } from "../
 import type { User } from "../../../types/auth";
 import { addDays, formatDateKey, parseDateKey, type WeekDate } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
-import { AddIcon, ApproveIcon, CloseIcon, ReleaseIcon } from "../../../components/Icons";
+import { AddIcon, CloseIcon, ReleaseIcon } from "../../../components/Icons";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { DirectoryUser, RoomMeta } from "../../../types/admin";
 import type { AvailabilityDateOffs, CollaborationGroup, RehearsalParticipant, UserAvailability } from "../../../types/collaboration";
@@ -310,7 +310,11 @@ export default function ScheduleGrid({
   const rehearsalDataByLink = useMemo(() => {
     const map = new Map<
       string,
-      { approvedParticipantEmails: string[]; participantStatusByEmail: Map<string, RehearsalParticipant["status"]> }
+      {
+        approvedParticipantEmails: string[];
+        participantStatusByEmail: Map<string, RehearsalParticipant["status"]>;
+        createdBy: string;
+      }
     >();
     groups.forEach((group) => {
       const groupId = (group.id || "").trim();
@@ -324,15 +328,14 @@ export default function ScheduleGrid({
           const email = (participant.email || "").trim().toLowerCase();
           if (!email) return;
           const status: RehearsalParticipant["status"] =
-            participant.status === "approved" || participant.status === "declined"
-              ? participant.status
-              : "pending";
+            participant.status === "declined" ? "declined" : "approved";
           participantStatusByEmail.set(email, status);
           if (status === "approved") approvedParticipantEmails.push(email);
         });
         map.set(rehearsalLinkKey(groupId, rehearsalId), {
           approvedParticipantEmails: Array.from(new Set(approvedParticipantEmails)),
-          participantStatusByEmail
+          participantStatusByEmail,
+          createdBy: (rehearsal.createdBy || "").trim().toLowerCase()
         });
       });
     });
@@ -954,7 +957,9 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
               block.type !== "lesson" &&
               block.linkedGroupId &&
               block.linkedRehearsalId &&
-              currentUserRehearsalStatus === "pending" &&
+              currentUserRehearsalStatus &&
+              currentUserRehearsalStatus !== "declined" &&
+              currentUserEmail !== rehearsalData?.createdBy &&
               onLinkedRehearsalRespond
           );
           const hasRehearsalStack = rehearsalAvatars.length > 0;
@@ -1089,18 +1094,6 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                       >
                         <CloseIcon />
                       </button>
-                      <button
-                        type="button"
-                        className="cell-action icon-button rehearsal approve"
-                        aria-label="אישור"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (!linkedGroupId || !linkedRehearsalId) return;
-                          onLinkedRehearsalRespond?.(linkedGroupId, linkedRehearsalId, "approved");
-                        }}
-                      >
-                        <ApproveIcon />
-                      </button>
                     </div>
                   ) : null}
                   {interactive && block.type === "reserved" && !block.pending && currentUser?.allowed && block.reservedEmail === currentUser.email ? (
@@ -1143,18 +1136,6 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                         }}
                       >
                         <CloseIcon />
-                      </button>
-                      <button
-                        type="button"
-                        className="cell-action icon-button rehearsal approve"
-                        aria-label="אישור"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (!linkedGroupId || !linkedRehearsalId) return;
-                          onLinkedRehearsalRespond?.(linkedGroupId, linkedRehearsalId, "approved");
-                        }}
-                      >
-                        <ApproveIcon />
                       </button>
                     </div>
                   ) : null}

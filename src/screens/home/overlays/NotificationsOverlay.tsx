@@ -44,6 +44,7 @@ export function NotificationsList({
       {ready && !notifications.length ? <p className="notifications-empty">אין התראות חדשות.</p> : null}
       {notifications.map((notification) => {
         const actionable = Boolean(notification.action && !notification.resolvedAt);
+        const rejectOnly = notification.action === "shared_reservation" || notification.action === "rehearsal";
         const dateLine = notification.dateKey
           ? `${formatShortDate(notification.dateKey)}${typeof notification.startMinutes === "number" ? ` · ${formatMinutes(notification.startMinutes)}` : ""}`
           : "";
@@ -73,17 +74,15 @@ export function NotificationsList({
                   >
                     דחייה
                   </button>
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => {
-                      if (notification.action === "shared_reservation") respondSharedReservation(notification, "approved");
-                      if (notification.action === "rehearsal") respondRehearsal(notification, "approved");
-                      if (notification.action === "group_invite") respondGroupInvite(notification, true);
-                    }}
-                  >
-                    אישור
-                  </button>
+                  {!rejectOnly ? (
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => respondGroupInvite(notification, true)}
+                    >
+                      אישור
+                    </button>
+                  ) : null}
                 </div>
               ) : notification.responseStatus ? (
                 <span className={`notification-resolution ${notification.responseStatus}`}>

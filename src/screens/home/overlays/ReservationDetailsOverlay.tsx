@@ -113,9 +113,6 @@ export default function ReservationDetailsOverlay({
         <div className="reserve-actions reserve-actions-details">
           {onRespondParticipation && currentParticipantStatus && currentParticipantStatus !== "declined" ? (
             <div className="reservation-response-actions">
-              {currentParticipantStatus === "pending" ? (
-                <button className="primary" type="button" onClick={() => onRespondParticipation("approved")}>אישור השתתפות</button>
-              ) : null}
               <button className="secondary danger" type="button" onClick={() => onRespondParticipation("declined")}>דחיית השתתפות</button>
             </div>
           ) : null}

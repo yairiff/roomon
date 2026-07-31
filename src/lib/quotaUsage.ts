@@ -21,7 +21,7 @@ export const buildApprovedQuotaParticipantEmails = (
 ) => {
   const approved = normalizeEmailList(
     (participants || [])
-      .filter((participant) => participant.status === "approved")
+      .filter((participant) => participant.status !== "declined")
       .map((participant) => participant.email || "")
   );
   if (approved.length) return approved;
@@ -30,18 +30,30 @@ export const buildApprovedQuotaParticipantEmails = (
 };
 
 export const resolveQuotaParticipantEmails = (
-  reservation: Pick<Reservation, "reservedEmail" | "quotaParticipantEmails">
+  reservation: Pick<Reservation, "reservedEmail" | "linkedGroupId" | "participants" | "quotaParticipantEmails">
 ) => {
   const explicit = Array.isArray(reservation.quotaParticipantEmails)
     ? normalizeEmailList(reservation.quotaParticipantEmails)
     : [];
+  if (reservation.linkedGroupId && explicit.length) return explicit;
+  const activeParticipants = Array.isArray(reservation.participants)
+    ? normalizeEmailList(
+        reservation.participants
+          .filter((participant) => participant.status !== "declined")
+          .map((participant) => participant.email)
+      )
+    : [];
+  if (activeParticipants.length) {
+    const owner = normalizeEmail(reservation.reservedEmail || "");
+    return normalizeEmailList([owner, ...activeParticipants]);
+  }
   if (explicit.length) return explicit;
   const fallback = normalizeEmail(reservation.reservedEmail || "");
   return fallback ? [fallback] : [];
 };
 
 export const getReservationUsageShareForEmail = (
-  reservation: Pick<Reservation, "reservedEmail" | "durationMinutes" | "quotaParticipantEmails">,
+  reservation: Pick<Reservation, "reservedEmail" | "durationMinutes" | "linkedGroupId" | "participants" | "quotaParticipantEmails">,
   email: string
 ) => {
   const normalizedEmail = normalizeEmail(email || "");

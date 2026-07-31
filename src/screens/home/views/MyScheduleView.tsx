@@ -340,7 +340,7 @@ export default function MyScheduleView({
             roomId: entry.roomId,
             startMinutes: start,
             durationMinutes: entry.durationMinutes,
-            title: entry.sharedDescription || (ownsReservation ? "שמור" : participant?.status === "pending" ? "ממתין לאישור" : "שריון משותף"),
+            title: entry.sharedDescription || (ownsReservation ? "שמור" : "שריון משותף"),
             meta: `${formatMinutes(start)}–${formatMinutes(end)} · ${roomName(entry.roomId)}`,
             clickable: true,
             onClick: () => ownsReservation
