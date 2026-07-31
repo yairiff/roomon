@@ -751,8 +751,10 @@ button.participant-avatar-stack {
   border-bottom: 0;
 }
 
-.auth-menu-close {
+.auth-menu.authenticated > .auth-menu-close {
   display: none;
+  width: 44px;
+  height: 44px;
 }
 
 .auth-notifications-embed {
@@ -953,12 +955,12 @@ button.participant-avatar-stack {
     overflow: hidden;
   }
 
-  .auth-menu-close {
+  .auth-menu.authenticated > .auth-menu-close {
     position: relative;
     z-index: 3;
     display: grid;
     place-items: center;
-    width: 44px !important;
+    width: 44px;
     height: 44px;
     margin-right: auto;
     border-radius: 50%;
