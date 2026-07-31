@@ -49,6 +49,10 @@ const normalizePin = (raw: Partial<MySchedulePin> & Record<string, unknown>, fal
       raw.rehearsalStatus === "approved" || raw.rehearsalStatus === "declined" || raw.rehearsalStatus === "pending"
         ? raw.rehearsalStatus
         : undefined,
+    joinRequestReservationId:
+      typeof raw.joinRequestReservationId === "string" && raw.joinRequestReservationId.trim()
+        ? raw.joinRequestReservationId.trim()
+        : undefined,
     createdAt: Number(raw.createdAt || 0) || 0
   };
 };
@@ -216,6 +220,7 @@ export function useMySchedulePins({ email, pinIdFor, showToast }: UseMyScheduleP
                 linkedGroupId: pin.linkedGroupId,
                 linkedRehearsalId: pin.linkedRehearsalId,
                 rehearsalStatus: pin.rehearsalStatus,
+                joinRequestReservationId: pin.joinRequestReservationId,
                 createdAt: now
               }
             ];

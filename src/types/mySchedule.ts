@@ -16,5 +16,6 @@ export type MySchedulePin = {
   linkedGroupId?: string;
   linkedRehearsalId?: string;
   rehearsalStatus?: "pending" | "approved" | "declined";
+  joinRequestReservationId?: string;
   createdAt: number;
 };

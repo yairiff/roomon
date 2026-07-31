@@ -221,7 +221,7 @@ export default function MyScheduleView({
         roomId: MY_ROOM_ID,
         reservedBy: `${reservedBy || "ללא שם"}\n${roomLine}`,
         reservedEmail: pin.reservedEmail || "",
-        pending: pin.rehearsalStatus === "pending",
+        pending: pin.rehearsalStatus === "pending" || Boolean(pin.joinRequestReservationId),
         linkedGroupId: pin.linkedGroupId,
         linkedRehearsalId: pin.linkedRehearsalId
       });

@@ -30,10 +30,18 @@ const notificationTypes = new Set<AppNotificationType>([
   "shared_reservation_invite",
   "reservation_updated",
   "reservation_cancelled",
+  "reservation_join_request",
+  "reservation_join_approved",
+  "reservation_join_declined",
   "participant_response"
 ]);
 
-const notificationActions = new Set<AppNotificationAction>(["shared_reservation", "rehearsal", "group_invite"]);
+const notificationActions = new Set<AppNotificationAction>([
+  "shared_reservation",
+  "rehearsal",
+  "group_invite",
+  "reservation_join_request"
+]);
 
 const parseNotification = (id: string, raw: Record<string, unknown>): AppNotification | null => {
   const type = raw.type as AppNotificationType;
@@ -125,7 +133,9 @@ export function useNotifications(email?: string | null) {
 
   const badgeCount = useMemo(
     () => notifications.filter(
-      (entry) => !entry.readAt || (entry.action === "group_invite" && !entry.resolvedAt)
+      (entry) => !entry.readAt || (
+        (entry.action === "group_invite" || entry.action === "reservation_join_request") && !entry.resolvedAt
+      )
     ).length,
     [notifications]
   );

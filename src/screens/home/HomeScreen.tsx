@@ -210,6 +210,30 @@ const extractLinkedIdsFromReservation = (reservation: Reservation): { groupId: s
   return null;
 };
 
+const reservationParticipantStatesFromRaw = (raw: Record<string, unknown>) => {
+  const ownerEmail = String(raw.reservedEmail || "").trim().toLowerCase();
+  const rawParticipants = Array.isArray(raw.participants)
+    ? raw.participants
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+        .map((entry) => ({
+          email: typeof entry.email === "string" ? entry.email : "",
+          status:
+            entry.status === "approved" || entry.status === "declined" || entry.status === "pending"
+              ? (entry.status as "approved" | "declined" | "pending")
+              : undefined,
+          updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : 0
+        }))
+    : [];
+  const legacyQuotaEmails = Array.isArray(raw.quotaParticipantEmails)
+    ? raw.quotaParticipantEmails.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return resolveReservationParticipantStates({
+    reservedEmail: ownerEmail,
+    participants: normalizeReservationParticipantList(rawParticipants, ownerEmail),
+    quotaParticipantEmails: legacyQuotaEmails
+  });
+};
+
 const parseQuotaReservationRecord = (
   id: string,
   raw: Record<string, unknown>
@@ -1524,6 +1548,291 @@ export default function HomeScreen({
       }
     },
     [calculateAdjustmentAfterRejection, currentUser?.email, currentUser?.name, showToast]
+  );
+
+  const requestReservationJoin = useCallback(
+    async (reservation: Reservation) => {
+      const requesterEmail = (currentUser?.email || "").trim().toLowerCase();
+      const firestore = db;
+      if (!firestore || !requesterEmail || !reservation.id) return;
+      const nowMs = Date.now();
+      try {
+        const pendingPin = await runTransaction(firestore, async (transaction) => {
+          const reservationRef = doc(firestore, "reservations", reservation.id);
+          const requesterRef = doc(firestore, "users", requesterEmail);
+          const reservationSnapshot = await transaction.get(reservationRef);
+          const requesterSnapshot = await transaction.get(requesterRef);
+          if (!reservationSnapshot.exists()) throw new Error("reservation-not-found");
+          const raw = reservationSnapshot.data() as Record<string, unknown>;
+          const ownerEmail = String(raw.reservedEmail || "").trim().toLowerCase();
+          if (!ownerEmail || ownerEmail === requesterEmail) throw new Error("already-participant");
+          const linkedGroupId = typeof raw.linkedGroupId === "string" ? raw.linkedGroupId.trim() : "";
+          const linkedRehearsalId = typeof raw.linkedRehearsalId === "string" ? raw.linkedRehearsalId.trim() : "";
+          let linkedGroup: CollaborationGroup | null = null;
+          if (linkedGroupId && linkedRehearsalId) {
+            const groupSnapshot = await transaction.get(doc(firestore, "collaborationGroups", linkedGroupId));
+            linkedGroup = groupSnapshot.exists()
+              ? normalizeCollaborationGroup(groupSnapshot.data(), groupSnapshot.id)
+              : null;
+            if (!linkedGroup) throw new Error("reservation-not-found");
+            const rehearsal = linkedGroup.rehearsals.find((entry) => entry.id === linkedRehearsalId);
+            if (!rehearsal) throw new Error("reservation-not-found");
+            if (rehearsal.participants.some((entry) => entry.email === requesterEmail && entry.status !== "declined")) {
+              throw new Error("already-participant");
+            }
+          } else if (
+            reservationParticipantStatesFromRaw(raw).some(
+              (participant) => participant.email === requesterEmail && participant.status !== "declined"
+            )
+          ) {
+            throw new Error("already-participant");
+          }
+
+          const dateKey = String(raw.date || reservation.date).trim();
+          const roomId = String(raw.roomId || reservation.roomId).trim();
+          const startMinutes = Number(raw.time ?? reservation.time);
+          const durationMinutes = Number(raw.durationMinutes ?? reservation.durationMinutes);
+          const ownerLabel = String(raw.reservedBy || reservation.reservedBy || ownerEmail).trim();
+          const nextPendingPin: MySchedulePin = {
+            id: `join-request:${reservation.id}`,
+            kind: "reservation",
+            dateKey,
+            roomId,
+            startMinutes,
+            durationMinutes,
+            title: "ממתין להצטרפות",
+            meta: ownerLabel,
+            reservedEmail: ownerEmail,
+            joinRequestReservationId: reservation.id,
+            createdAt: nowMs
+          };
+          const requesterRaw = requesterSnapshot.exists()
+            ? (requesterSnapshot.data() as Record<string, unknown>)
+            : {};
+          const existingPins = Array.isArray(requesterRaw.myPins)
+            ? (requesterRaw.myPins.filter((entry) => Boolean(entry) && typeof entry === "object") as MySchedulePin[])
+            : [];
+          const nextPins = [
+            ...existingPins.filter(
+              (pin) => pin.joinRequestReservationId !== reservation.id && pin.id !== nextPendingPin.id
+            ),
+            nextPendingPin
+          ];
+          transaction.set(
+            requesterRef,
+            { email: requesterEmail, myPins: nextPins, myPinsUpdatedAt: serverTimestamp() },
+            { merge: true }
+          );
+          transaction.set(
+            doc(
+              firestore,
+              "users",
+              ownerEmail,
+              "notifications",
+              notificationDocumentId("reservation-join-request", reservation.id, requesterEmail)
+            ),
+            {
+              type: "reservation_join_request",
+              recipientEmail: ownerEmail,
+              actorEmail: requesterEmail,
+              title: "בקשת הצטרפות לשריון",
+              message: `${(currentUser?.name || requesterEmail).trim()} ביקש/ה להצטרף לשריון ולשתף במכסה.`,
+              action: "reservation_join_request",
+              reservationId: reservation.id,
+              dateKey,
+              roomId,
+              roomName: rooms.find((room) => room.id === roomId)?.name || roomId,
+              startMinutes,
+              durationMinutes,
+              responseStatus: "pending",
+              createdAt: nowMs,
+              readAt: null,
+              resolvedAt: null
+            }
+          );
+          return nextPendingPin;
+        });
+        setMyPins((existingPins) => [
+          ...existingPins.filter(
+            (pin) => pin.joinRequestReservationId !== reservation.id && pin.id !== pendingPin.id
+          ),
+          pendingPin
+        ]);
+        showToast("בקשת ההצטרפות נשלחה והשריון נוסף למערכת שלך.", "success");
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "";
+        showToast(
+          reason === "already-participant"
+            ? "כבר הצטרפת לשריון הזה."
+            : reason === "reservation-not-found"
+              ? "השריון כבר אינו קיים."
+              : "לא ניתן היה לשלוח את בקשת ההצטרפות.",
+          "error"
+        );
+      }
+    },
+    [currentUser?.email, currentUser?.name, rooms, setMyPins, showToast]
+  );
+
+  const respondToReservationJoinRequest = useCallback(
+    async (notification: AppNotification, accept: boolean) => {
+      const organizerEmail = (currentUser?.email || "").trim().toLowerCase();
+      const requesterEmail = (notification.actorEmail || "").trim().toLowerCase();
+      const reservationId = (notification.reservationId || "").trim();
+      const firestore = db;
+      if (!firestore || !organizerEmail || !requesterEmail || !reservationId) return;
+      const nowMs = Date.now();
+      try {
+        await runTransaction(firestore, async (transaction) => {
+          const reservationRef = doc(firestore, "reservations", reservationId);
+          const requesterRef = doc(firestore, "users", requesterEmail);
+          const requestNotificationRef = doc(
+            firestore,
+            "users",
+            organizerEmail,
+            "notifications",
+            notification.id
+          );
+          const reservationSnapshot = await transaction.get(reservationRef);
+          const requesterSnapshot = await transaction.get(requesterRef);
+          if (!reservationSnapshot.exists()) throw new Error("reservation-not-found");
+          const raw = reservationSnapshot.data() as Record<string, unknown>;
+          const ownerEmail = String(raw.reservedEmail || "").trim().toLowerCase();
+          if (ownerEmail !== organizerEmail) throw new Error("not-organizer");
+          const linkedGroupId = typeof raw.linkedGroupId === "string" ? raw.linkedGroupId.trim() : "";
+          const linkedRehearsalId = typeof raw.linkedRehearsalId === "string" ? raw.linkedRehearsalId.trim() : "";
+          const linkedGroupRef = linkedGroupId && linkedRehearsalId
+            ? doc(firestore, "collaborationGroups", linkedGroupId)
+            : null;
+          const linkedGroupSnapshot = linkedGroupRef ? await transaction.get(linkedGroupRef) : null;
+          const dateKey = String(raw.date || notification.dateKey || "").trim();
+          const roomId = String(raw.roomId || notification.roomId || "").trim();
+          const startMinutes = Number(raw.time ?? notification.startMinutes ?? 0);
+          const durationMinutes = Number(raw.durationMinutes ?? notification.durationMinutes ?? 60);
+          const ownerLabel = String(raw.reservedBy || organizerEmail).trim();
+          let nextParticipants = reservationParticipantStatesFromRaw(raw);
+
+          if (accept) {
+            nextParticipants = normalizeReservationParticipantList(
+              [
+                ...nextParticipants.filter((participant) => participant.email !== requesterEmail),
+                { email: requesterEmail, status: "approved", updatedAt: nowMs }
+              ],
+              ownerEmail
+            );
+            if (linkedGroupRef) {
+              const linkedGroup = linkedGroupSnapshot?.exists()
+                ? normalizeCollaborationGroup(linkedGroupSnapshot.data(), linkedGroupSnapshot.id)
+                : null;
+              if (!linkedGroup) throw new Error("reservation-not-found");
+              const rehearsal = linkedGroup.rehearsals.find((entry) => entry.id === linkedRehearsalId);
+              if (!rehearsal) throw new Error("reservation-not-found");
+              const nextRehearsalParticipants = normalizeReservationParticipantList(
+                [
+                  ...rehearsal.participants.filter((participant) => participant.email !== requesterEmail),
+                  { email: requesterEmail, status: "approved", updatedAt: nowMs }
+                ],
+                rehearsal.createdBy || ownerEmail
+              );
+              nextParticipants = nextRehearsalParticipants;
+              transaction.update(linkedGroupRef, {
+                rehearsals: linkedGroup.rehearsals.map((entry) =>
+                  entry.id === linkedRehearsalId
+                    ? { ...entry, participants: nextRehearsalParticipants }
+                    : entry
+                ),
+                updatedAt: nowMs,
+                updatedAtServer: serverTimestamp()
+              });
+            }
+            transaction.update(reservationRef, {
+              participants: nextParticipants,
+              quotaParticipantEmails: getApprovedParticipantEmails(nextParticipants, ownerEmail),
+              updatedAt: serverTimestamp()
+            });
+          }
+
+          const requesterRaw = requesterSnapshot.exists()
+            ? (requesterSnapshot.data() as Record<string, unknown>)
+            : {};
+          const existingPins = Array.isArray(requesterRaw.myPins)
+            ? (requesterRaw.myPins.filter((entry) => Boolean(entry) && typeof entry === "object") as MySchedulePin[])
+            : [];
+          let nextPins = existingPins.filter((pin) => pin.joinRequestReservationId !== reservationId);
+          if (accept && linkedGroupId && linkedRehearsalId) {
+            const pendingPin = existingPins.find((pin) => pin.joinRequestReservationId === reservationId);
+            nextPins = [
+              ...nextPins.filter((pin) => pin.id !== (pendingPin?.id || `join-request:${reservationId}`)),
+              {
+                id: pendingPin?.id || `joined:${reservationId}`,
+                kind: "reservation",
+                dateKey,
+                roomId,
+                startMinutes,
+                durationMinutes,
+                title: "שמור",
+                meta: ownerLabel,
+                reservedEmail: ownerEmail,
+                linkedGroupId,
+                linkedRehearsalId,
+                rehearsalStatus: "approved",
+                createdAt: pendingPin?.createdAt || nowMs
+              }
+            ];
+          }
+          transaction.set(
+            requesterRef,
+            { email: requesterEmail, myPins: nextPins, myPinsUpdatedAt: serverTimestamp() },
+            { merge: true }
+          );
+          transaction.set(
+            requestNotificationRef,
+            {
+              readAt: nowMs,
+              resolvedAt: nowMs,
+              responseStatus: accept ? "approved" : "declined"
+            },
+            { merge: true }
+          );
+          transaction.set(
+            doc(
+              firestore,
+              "users",
+              requesterEmail,
+              "notifications",
+              notificationDocumentId("reservation-join-response", reservationId, requesterEmail)
+            ),
+            {
+              type: accept ? "reservation_join_approved" : "reservation_join_declined",
+              recipientEmail: requesterEmail,
+              actorEmail: organizerEmail,
+              title: accept ? "בקשת ההצטרפות אושרה" : "בקשת ההצטרפות נדחתה",
+              message: accept
+                ? "נוספת כמשתתף/ת בשריון והמכסה משותפת מעכשיו."
+                : "המארגן/ת דחה/תה את בקשת ההצטרפות והשריון הוסר מהמערכת שלך.",
+              reservationId,
+              dateKey,
+              roomId,
+              roomName: rooms.find((room) => room.id === roomId)?.name || roomId,
+              startMinutes,
+              durationMinutes,
+              responseStatus: accept ? "approved" : "declined",
+              createdAt: nowMs,
+              readAt: null,
+              resolvedAt: nowMs
+            }
+          );
+        });
+        showToast(accept ? "בקשת ההצטרפות אושרה." : "בקשת ההצטרפות נדחתה.", "success");
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "";
+        showToast(
+          reason === "reservation-not-found" ? "השריון כבר אינו קיים." : "לא ניתן היה לעדכן את בקשת ההצטרפות.",
+          "error"
+        );
+      }
+    },
+    [currentUser?.email, rooms, showToast]
   );
 
   const collaborationDateKeys = useMemo(() => {
@@ -3796,6 +4105,9 @@ export default function HomeScreen({
       respondGroupInvite: (notification, accept) => {
         if (!notification.groupId) return;
         void handleGroupInviteResponse(notification.groupId, accept, notification.id);
+      },
+      respondReservationJoinRequest: (notification, accept) => {
+        void respondToReservationJoinRequest(notification, accept);
       }
     });
     return () => onNotificationActionsChange(null);
@@ -3803,6 +4115,7 @@ export default function HomeScreen({
     applyRehearsalResponse,
     handleGroupInviteResponse,
     onNotificationActionsChange,
+    respondToReservationJoinRequest,
     respondToSharedReservation
   ]);
 
@@ -4464,15 +4777,16 @@ export default function HomeScreen({
     if (!currentEmail || !detailsReservation) return undefined;
     return detailsParticipants.find((participant) => participant.email === currentEmail)?.status;
   })();
-  const reservationPinned = detailsReservation
-    ? isPinned({
-        kind: "reservation",
-        dateKey: detailsReservation.date,
-        roomId: detailsReservation.roomId,
-        startMinutes: detailsReservation.time,
-        durationMinutes: detailsDuration
-      })
-    : false;
+  const reservationJoinPending = Boolean(
+    detailsReservation && myPins.some((pin) => pin.joinRequestReservationId === detailsReservation.id)
+  );
+  const reservationCanRequestJoin = Boolean(
+    detailsReservation &&
+      currentUser?.allowed &&
+      currentUser.email &&
+      !detailsIsMine &&
+      !detailsCurrentParticipantStatus
+  );
   const linkedBlockPin = blockDetails
     ? collaborationAvailable
       ? myPins.find(
@@ -4728,19 +5042,12 @@ export default function HomeScreen({
         }
         privateDescription={detailsPrivateDescription || undefined}
         sharedDescription={detailsSharedDescription || undefined}
-        pinned={reservationPinned}
-        onTogglePin={
-          detailsReservation && currentUser?.email
-            ? () => togglePin({
-                kind: "reservation",
-                dateKey: reservationDetails?.dateKey || detailsReservation.date,
-                roomId: detailsReservation.roomId,
-                startMinutes: detailsReservation.time,
-                durationMinutes: detailsDuration,
-                title: "שמור",
-                meta: detailsName,
-                reservedEmail: detailsEmail
-              })
+        joinRequestState={
+          reservationCanRequestJoin ? (reservationJoinPending ? "pending" : "available") : undefined
+        }
+        onJoinRequest={
+          reservationCanRequestJoin && detailsReservation
+            ? () => { void requestReservationJoin(detailsReservation); }
             : undefined
         }
         onClose={() => setReservationDetails(null)}

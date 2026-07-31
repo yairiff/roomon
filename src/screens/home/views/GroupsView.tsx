@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import MailRoundedIcon from "@mui/icons-material/MailRounded";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
+import GmailIcon from "../../../components/GmailIcon";
 import {
   AddIcon,
   ApproveIcon,
@@ -163,6 +163,7 @@ export default function GroupsView({
   const [peopleSearch, setPeopleSearch] = useState("");
   const [peopleCategory, setPeopleCategory] = useState<PeopleCategory>("all");
   const [selectedPeopleEmails, setSelectedPeopleEmails] = useState<string[]>([]);
+  const [zoomedPerson, setZoomedPerson] = useState<{ name: string; pictureUrl: string } | null>(null);
 
   const [rehearsalOverlayOpen, setRehearsalOverlayOpen] = useState(false);
   const [editingRehearsalId, setEditingRehearsalId] = useState<string>("");
@@ -577,27 +578,38 @@ export default function GroupsView({
                   return (
                     <li key={`person-${email}`}>
                       <div className={`groups-chat-item people-row ${selected ? "active" : ""}`}>
-                        <button
-                          type="button"
-                          className="people-row-main"
-                          onClick={() => togglePerson(email)}
-                          aria-pressed={selected}
-                        >
-                          <span className={`finder-member-check ${selected ? "active" : ""}`} aria-hidden="true">
+                        <span className="people-row-main">
+                          <button
+                            type="button"
+                            className={`people-select-check finder-member-check ${selected ? "active" : ""}`}
+                            onClick={() => togglePerson(email)}
+                            aria-label={selected ? `הסרת ${label} מהבחירה` : `בחירת ${label}`}
+                            aria-pressed={selected}
+                          >
                             {selected ? "✓" : ""}
-                          </span>
-                          <span className="groups-chat-avatar">
+                          </button>
+                          <button
+                            type="button"
+                            className={`groups-chat-avatar people-avatar-button${pictureUrl ? " clickable" : ""}`}
+                            onClick={() => {
+                              if (pictureUrl) setZoomedPerson({ name: label, pictureUrl });
+                            }}
+                            aria-label={pictureUrl ? `הצגת התמונה של ${label}` : undefined}
+                            disabled={!pictureUrl}
+                          >
                             {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : initialsFromLabel(label)}
-                          </span>
-                          <span className="groups-chat-text">
+                          </button>
+                          <button
+                            type="button"
+                            className="groups-chat-text people-identity-button"
+                            onClick={() => togglePerson(email)}
+                            aria-pressed={selected}
+                          >
                             <span className="groups-chat-title">{label}</span>
                             <span className="groups-chat-subtitle">{getPeopleCategoryLabel(user)}</span>
-                          </span>
-                        </button>
+                          </button>
+                        </span>
                         <span className="reserve-contact-actions people-contact-actions" aria-label="יצירת קשר">
-                          <a className="icon-button contact email gmail" href={emailHref} aria-label={`שליחת אימייל אל ${label}`}>
-                            <MailRoundedIcon fontSize="small" />
-                          </a>
                           {telHref ? (
                             <a className="icon-button contact" href={telHref} aria-label={`התקשר אל ${label}`}>
                               <PhoneInTalkRoundedIcon fontSize="small" />
@@ -622,6 +634,9 @@ export default function GroupsView({
                               <WhatsAppIcon fontSize="small" />
                             </button>
                           )}
+                          <a className="icon-button contact email gmail" href={emailHref} aria-label={`שליחת אימייל אל ${label}`}>
+                            <GmailIcon />
+                          </a>
                         </span>
                       </div>
                     </li>
@@ -668,6 +683,15 @@ export default function GroupsView({
                 }
               }}
             />
+            <div
+              className={`avatar-zoom${zoomedPerson ? " open" : ""}`}
+              aria-hidden={!zoomedPerson}
+              onClick={() => setZoomedPerson(null)}
+            >
+              <div className="avatar-zoom-inner" onClick={(event) => event.stopPropagation()}>
+                {zoomedPerson ? <img src={zoomedPerson.pictureUrl} alt={zoomedPerson.name} /> : null}
+              </div>
+            </div>
           </>
         ) : (
           <>
@@ -1132,9 +1156,6 @@ export default function GroupsView({
                       {participant.status === "approved" ? "משתתף" : participant.status === "declined" ? "דחה" : "משתתף"}
                     </span>
                     <span className="reserve-contact-actions groups-rehearsal-member-contacts" aria-label="יצירת קשר">
-                      <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
-                        <MailRoundedIcon fontSize="small" />
-                      </a>
                       {links.telHref ? (
                         <a className="icon-button contact" href={links.telHref} aria-label={`התקשר אל ${name}`}>
                           <PhoneInTalkRoundedIcon fontSize="small" />
@@ -1145,6 +1166,9 @@ export default function GroupsView({
                           <WhatsAppIcon fontSize="small" />
                         </a>
                       ) : null}
+                      <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
+                        <GmailIcon />
+                      </a>
                     </span>
                   </li>
                 );

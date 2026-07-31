@@ -36,7 +36,8 @@ export function NotificationsList({
   className = "",
   respondSharedReservation,
   respondRehearsal,
-  respondGroupInvite
+  respondGroupInvite,
+  respondReservationJoinRequest
 }: NotificationsListProps) {
   return (
     <div className={`notifications-list${className ? ` ${className}` : ""}`}>
@@ -70,6 +71,7 @@ export function NotificationsList({
                       if (notification.action === "shared_reservation") respondSharedReservation(notification, "declined");
                       if (notification.action === "rehearsal") respondRehearsal(notification, "declined");
                       if (notification.action === "group_invite") respondGroupInvite(notification, false);
+                      if (notification.action === "reservation_join_request") respondReservationJoinRequest(notification, false);
                     }}
                   >
                     דחייה
@@ -78,7 +80,10 @@ export function NotificationsList({
                     <button
                       type="button"
                       className="primary"
-                      onClick={() => respondGroupInvite(notification, true)}
+                      onClick={() => {
+                        if (notification.action === "group_invite") respondGroupInvite(notification, true);
+                        if (notification.action === "reservation_join_request") respondReservationJoinRequest(notification, true);
+                      }}
                     >
                       אישור
                     </button>

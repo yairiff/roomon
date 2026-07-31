@@ -8,7 +8,7 @@ import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../lib/date";
 import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
-import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
+import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon, CloseIcon } from "./Icons";
 import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
 import type { AppNotification, NotificationResponseActions } from "../types/notifications";
 import { NotificationsList } from "../screens/home/overlays/NotificationsOverlay";
@@ -64,7 +64,8 @@ export default function AuthMenu({
   onNotificationsOpened,
   respondSharedReservation,
   respondRehearsal,
-  respondGroupInvite
+  respondGroupInvite,
+  respondReservationJoinRequest
 }: AuthMenuProps) {
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
@@ -451,10 +452,19 @@ export default function AuthMenu({
   if (!open) return null;
 
   return (
-    <div className="auth-overlay" onClick={handleBackdropClick}>
-      <div className={`auth-menu${user ? " authenticated" : ""}`} onClick={(event) => event.stopPropagation()}>
+    <div className={`auth-overlay${user ? " authenticated" : ""}`} onClick={handleBackdropClick}>
+      <div
+        className={`auth-menu${user ? " authenticated" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={user ? "פרופיל והתראות" : "התחברות"}
+        onClick={(event) => event.stopPropagation()}
+      >
         {user ? (
           <>
+            <button type="button" className="icon-button auth-menu-close" onClick={onClose} aria-label="סגירת תפריט הפרופיל">
+              <CloseIcon />
+            </button>
             <section className="auth-notifications-embed" aria-label="התראות">
               <header className="auth-notifications-header">
                 <span className="auth-notifications-title">
@@ -472,6 +482,7 @@ export default function AuthMenu({
                 respondSharedReservation={respondSharedReservation}
                 respondRehearsal={respondRehearsal}
                 respondGroupInvite={respondGroupInvite}
+                respondReservationJoinRequest={respondReservationJoinRequest}
               />
             </section>
             {quotaRows.length ? (

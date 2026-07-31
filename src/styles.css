@@ -141,6 +141,42 @@
   min-height: 56px;
 }
 
+.people-select-check {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.people-avatar-button {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+  cursor: default;
+}
+
+.people-avatar-button.clickable {
+  cursor: zoom-in;
+}
+
+.people-identity-button {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
 .people-contact-actions {
   display: inline-flex;
   flex-wrap: nowrap;
@@ -491,6 +527,9 @@ button.participant-avatar-stack {
   .people-contact-actions .icon-button {
     width: 34px;
     height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    flex-basis: 34px;
   }
 
   .reservation-participant-row {
@@ -542,7 +581,7 @@ button.participant-avatar-stack {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, auto) auto;
 }
 
 .reserve-participant-filter-row,
@@ -585,6 +624,8 @@ button.participant-avatar-stack {
   overscroll-behavior: contain;
   margin: 0;
   padding: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .reserve-participant-picker-overlay .finder-group-picker-list > li,
@@ -634,6 +675,11 @@ button.participant-avatar-stack {
   background: color-mix(in srgb, #ffffff 94%, #d93025);
 }
 
+.icon-button.contact.email.gmail svg {
+  width: 20px;
+  height: 20px;
+}
+
 :root[data-theme="dark"] .icon-button.contact.email.gmail {
   color: #ff746c;
   border-color: color-mix(in srgb, #ff746c 40%, var(--line));
@@ -647,6 +693,10 @@ button.participant-avatar-stack {
   gap: 10px;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+.auth-menu-close {
+  display: none;
 }
 
 .auth-notifications-embed {
@@ -774,10 +824,15 @@ button.participant-avatar-stack {
 
   .reserve-participant-picker-overlay {
     width: 100%;
-    height: min(78dvh, 690px);
+    height: auto;
     max-height: calc(100dvh - 18px);
     border-radius: 8px 8px 0 0;
     padding: 12px;
+    grid-template-rows: auto auto auto minmax(0, auto) auto;
+  }
+
+  .reserve-participant-picker-overlay .finder-group-picker-list {
+    max-height: min(44dvh, 390px);
   }
 
   .reserve-participant-filter-row,
@@ -790,12 +845,38 @@ button.participant-avatar-stack {
   }
 
   .auth-overlay {
-    padding: 72px 10px calc(84px + env(safe-area-inset-bottom));
+    padding: 0;
+    background: var(--surface-solid);
+    z-index: 70;
   }
 
   .auth-menu.authenticated {
     width: 100%;
-    max-height: calc(100dvh - 164px - env(safe-area-inset-bottom));
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .auth-menu-close {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    width: 44px !important;
+    height: 44px;
+    margin-right: auto;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--surface-solid) 92%, var(--line));
+  }
+
+  .auth-menu.authenticated .auth-profile-capsule {
+    margin-top: auto;
   }
 }
 
@@ -2288,6 +2369,7 @@ body,
   align-items: center;
   gap: 10px;
   flex: 0 0 auto;
+  direction: ltr;
 }
 
 .reservation-participants {
@@ -2323,6 +2405,11 @@ body,
 .icon-button.contact {
   width: 36px;
   height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  padding: 0;
+  border-radius: 50%;
 }
 
 .icon-button.contact.whatsapp {
@@ -3940,6 +4027,7 @@ select,
   direction: rtl;
   text-align: right;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .schedule-block.has-bottom-avatar {
@@ -4282,16 +4370,42 @@ select,
 .schedule-block-avatar-anchor {
   position: absolute;
   left: 5px;
+  right: 5px;
   bottom: 5px;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   pointer-events: none;
   z-index: 1;
+  direction: ltr;
 }
 
 .schedule-block-avatar-anchor.compact {
   left: 3px;
+  right: 3px;
   bottom: 3px;
+}
+
+.schedule-participant-names {
+  display: none;
+  position: absolute;
+  right: 0;
+  left: 76px;
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.2;
+  direction: rtl;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container (min-width: 150px) {
+  .schedule-participant-names {
+    display: block;
+  }
 }
 
 .schedule-avatar-stack {
@@ -10403,5 +10517,20 @@ select,
   .groups-overlay-backdrop.reserve-group-picker-layer {
     place-items: end center;
     padding: 0;
+  }
+
+  .auth-overlay.authenticated {
+    padding: 0;
+    background: var(--surface-solid);
+    z-index: 70;
+  }
+
+  .auth-overlay.authenticated .auth-menu.authenticated {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 }

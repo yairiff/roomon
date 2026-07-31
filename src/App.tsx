@@ -280,6 +280,9 @@ export default function App() {
         respondGroupInvite={(notification, accept) => {
           notificationActionsRef.current?.respondGroupInvite(notification, accept);
         }}
+        respondReservationJoinRequest={(notification, accept) => {
+          notificationActionsRef.current?.respondReservationJoinRequest(notification, accept);
+        }}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen

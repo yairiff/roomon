@@ -1,8 +1,8 @@
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import EmailRoundedIcon from "@mui/icons-material/EmailRounded";
+import PersonAddAltRoundedIcon from "@mui/icons-material/PersonAddAltRounded";
 import { useState } from "react";
-import { PinAddIcon, PinOnIcon } from "../../../components/Icons";
+import GmailIcon from "../../../components/GmailIcon";
 import { getContactLinks } from "../../../lib/contactLinks";
 import type { ReservationParticipantStatus } from "../../../types/reservations";
 import { ParticipantAvatarStack, ParticipantRows, type ParticipantDisplayEntry } from "../components/ParticipantDisplay";
@@ -22,8 +22,8 @@ export type ReservationDetailsOverlayProps = {
   onRespondParticipation?: (status: "approved" | "declined") => void;
   privateDescription?: string;
   sharedDescription?: string;
-  pinned?: boolean;
-  onTogglePin?: () => void;
+  joinRequestState?: "available" | "pending";
+  onJoinRequest?: () => void;
   onClose: () => void;
 };
 
@@ -42,8 +42,8 @@ export default function ReservationDetailsOverlay({
   onRespondParticipation,
   privateDescription,
   sharedDescription,
-  pinned = false,
-  onTogglePin,
+  joinRequestState,
+  onJoinRequest,
   onClose
 }: ReservationDetailsOverlayProps) {
   const [zoomOpen, setZoomOpen] = useState(false);
@@ -116,23 +116,20 @@ export default function ReservationDetailsOverlay({
               <button className="secondary danger" type="button" onClick={() => onRespondParticipation("declined")}>דחיית השתתפות</button>
             </div>
           ) : null}
-          {onTogglePin ? (
+          {onJoinRequest && joinRequestState ? (
             <button
               type="button"
               className="secondary reserve-pin-action"
-              aria-label={pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}
-              aria-pressed={pinned}
-              onClick={onTogglePin}
+              aria-label={joinRequestState === "pending" ? "בקשת ההצטרפות ממתינה לאישור" : "בקשת הצטרפות לשריון"}
+              onClick={onJoinRequest}
+              disabled={joinRequestState === "pending"}
             >
-              {pinned ? <PinOnIcon /> : <PinAddIcon />}
-              <span>{pinned ? "הסר מהמערכת שלי" : "הוסף למערכת שלי"}</span>
+              <PersonAddAltRoundedIcon fontSize="small" />
+              <span>{joinRequestState === "pending" ? "ממתין לאישור" : "הצטרף"}</span>
             </button>
           ) : null}
 
           <div className="reserve-contact-actions" aria-label="יצירת קשר">
-            <a className="icon-button contact email" href={ownerLinks.emailHref} aria-label="שליחת אימייל">
-              <EmailRoundedIcon fontSize="small" />
-            </a>
             {ownerLinks.telHref ? (
               <a className="icon-button contact" href={ownerLinks.telHref} aria-label="התקשר">
                 <PhoneInTalkRoundedIcon fontSize="small" />
@@ -158,6 +155,9 @@ export default function ReservationDetailsOverlay({
                 <WhatsAppIcon fontSize="small" />
               </button>
             )}
+            <a className="icon-button contact email gmail" href={ownerLinks.emailHref} aria-label="שליחת אימייל">
+              <GmailIcon />
+            </a>
           </div>
         </div>
       </div>

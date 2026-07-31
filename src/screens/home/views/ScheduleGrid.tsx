@@ -964,6 +964,12 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
           );
           const hasRehearsalStack = rehearsalAvatars.length > 0;
           const hasMultiParticipantRehearsalStack = rehearsalAvatars.length > 1;
+          const otherParticipantNames =
+            block.type !== "lesson"
+              ? rehearsalAvatars
+                  .filter((avatar) => avatar.email !== (block.reservedEmail || "").trim().toLowerCase())
+                  .map((avatar) => avatar.fallbackLabel)
+              : [];
           // If there's not enough vertical space for a dedicated meta line, render it inline to avoid clipping.
           // (Font sizes are fixed, so a fixed px threshold is more stable than a duration heuristic.)
           const canShowSecondLine = height >= 48;
@@ -1143,6 +1149,9 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
               ) : null}
               {showBottomAvatar ? (
                 <div className={`schedule-block-avatar-anchor${compact ? " compact" : ""}`} aria-hidden="true">
+                  {!compact && height >= 68 && otherParticipantNames.length ? (
+                    <span className="schedule-participant-names">{otherParticipantNames.join(" · ")}</span>
+                  ) : null}
                   {hasRehearsalStack ? (
                     <div className={`schedule-avatar-stack${compact ? " compact" : ""}`}>
                       {displayedRehearsalAvatars.map((avatar, index) => (

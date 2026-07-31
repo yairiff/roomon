@@ -10,9 +10,12 @@ export type AppNotificationType =
   | "shared_reservation_invite"
   | "reservation_updated"
   | "reservation_cancelled"
+  | "reservation_join_request"
+  | "reservation_join_approved"
+  | "reservation_join_declined"
   | "participant_response";
 
-export type AppNotificationAction = "shared_reservation" | "rehearsal" | "group_invite";
+export type AppNotificationAction = "shared_reservation" | "rehearsal" | "group_invite" | "reservation_join_request";
 
 export type AppNotification = {
   id: string;
@@ -52,4 +55,5 @@ export type NotificationResponseActions = {
     status: "approved" | "declined"
   ) => void;
   respondGroupInvite: (notification: AppNotification, accept: boolean) => void;
+  respondReservationJoinRequest: (notification: AppNotification, accept: boolean) => void;
 };

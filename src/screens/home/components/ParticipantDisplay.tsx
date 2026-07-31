@@ -1,6 +1,6 @@
-import EmailRoundedIcon from "@mui/icons-material/EmailRounded";
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import GmailIcon from "../../../components/GmailIcon";
 import { getContactLinks } from "../../../lib/contactLinks";
 import type { ReservationParticipantStatus } from "../../../types/reservations";
 
@@ -94,9 +94,6 @@ export function ParticipantRows({ participants }: { participants: ParticipantDis
               <span className={`participant-status ${participant.status}`}>{statusLabel(participant.status)}</span>
             </span>
             <span className="reserve-contact-actions reservation-participant-actions" aria-label="יצירת קשר">
-              <a className="icon-button contact email" href={links.emailHref} aria-label={`שליחת אימייל אל ${label}`}>
-                <EmailRoundedIcon fontSize="small" />
-              </a>
               {links.telHref ? (
                 <a className="icon-button contact" href={links.telHref} aria-label={`התקשר אל ${label}`}>
                   <PhoneInTalkRoundedIcon fontSize="small" />
@@ -115,6 +112,9 @@ export function ParticipantRows({ participants }: { participants: ParticipantDis
                   <WhatsAppIcon fontSize="small" />
                 </button>
               )}
+              <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${label}`}>
+                <GmailIcon />
+              </a>
             </span>
           </div>
         );
