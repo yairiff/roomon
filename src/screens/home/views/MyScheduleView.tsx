@@ -11,6 +11,7 @@ import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { allWeekDays } from "../../../config";
 import type { DirectoryUser } from "../../../types/admin";
 import type { AvailabilityDateOffs, CollaborationGroup, RehearsalParticipant, UserAvailability } from "../../../types/collaboration";
+import { resolveReservationParticipantStates } from "../../../lib/reservationParticipants";
 
 type MyScheduleMode = "day" | "week" | "agenda";
 
@@ -31,6 +32,7 @@ type MyScheduleViewProps = {
   currentUser: User | null;
   pins: MySchedulePin[];
   onEditReservation: (dateKey: string, reservationId: string) => void;
+  onReservationDetails: (reservationId: string, dateKey: string) => void;
   onOpenPinned: (pin: MySchedulePin) => void;
   onAddSlot: (request: ReserveRequest) => void;
   getScheduleLessonsForDate?: (dateKey: string, dayKey: DayKey) => Lesson[];
@@ -103,6 +105,7 @@ export default function MyScheduleView({
   currentUser,
   pins,
   onEditReservation,
+  onReservationDetails,
   onOpenPinned,
   onAddSlot,
   getScheduleLessonsForDate,
@@ -224,18 +227,24 @@ export default function MyScheduleView({
       });
     });
 
-    // My real reservations (merged into the synthetic column).
+    // My owned and shared reservations (merged into the synthetic column).
     if (email) {
       Object.entries(reservationMap).forEach(([dateKey, entries]) => {
         entries.forEach((entry) => {
           if (entry.kind) return;
-          if ((entry.reservedEmail || "").trim().toLowerCase() !== email) return;
+          const ownsReservation = (entry.reservedEmail || "").trim().toLowerCase() === email;
+          const participant = resolveReservationParticipantStates(entry).find((item) => item.email === email);
+          if (!ownsReservation && (!participant || participant.status === "declined")) return;
+          if (!ownsReservation && entry.linkedGroupId && entry.linkedRehearsalId) return;
           const roomLine = roomName(entry.roomId);
           add({
             ...entry,
             date: dateKey,
             roomId: MY_ROOM_ID,
-            reservedBy: `אני${entry.privateDescription ? ` · ${entry.privateDescription}` : ""}\n${roomLine}`
+            reservedBy: ownsReservation
+              ? `אני${entry.privateDescription ? ` · ${entry.privateDescription}` : ""}\n${roomLine}`
+              : `${entry.reservedBy || "שריון משותף"}\n${roomLine}`,
+            pending: !ownsReservation && participant?.status === "pending"
           });
         });
       });
@@ -318,7 +327,10 @@ export default function MyScheduleView({
       agendaDateKeys.forEach((dateKey) => {
         (reservationMap[dateKey] || []).forEach((entry) => {
           if (entry.kind) return;
-          if ((entry.reservedEmail || "").trim().toLowerCase() !== email) return;
+          const ownsReservation = (entry.reservedEmail || "").trim().toLowerCase() === email;
+          const participant = resolveReservationParticipantStates(entry).find((item) => item.email === email);
+          if (!ownsReservation && (!participant || participant.status === "declined")) return;
+          if (!ownsReservation && entry.linkedGroupId && entry.linkedRehearsalId) return;
           const start = entry.time;
           const end = entry.time + entry.durationMinutes;
           add({
@@ -328,10 +340,12 @@ export default function MyScheduleView({
             roomId: entry.roomId,
             startMinutes: start,
             durationMinutes: entry.durationMinutes,
-            title: "שמור",
+            title: ownsReservation ? "שמור" : participant?.status === "pending" ? "ממתין לאישור" : "שריון משותף",
             meta: `${formatMinutes(start)}–${formatMinutes(end)} · ${roomName(entry.roomId)}`,
             clickable: true,
-            onClick: () => onEditReservation(dateKey, entry.id)
+            onClick: () => ownsReservation
+              ? onEditReservation(dateKey, entry.id)
+              : onReservationDetails(entry.id, dateKey)
           });
         });
       });
@@ -423,7 +437,7 @@ export default function MyScheduleView({
       byDate.set(key, list);
     });
     return byDate;
-  }, [agendaDateKeys, agendaDateSet, email, onEditReservation, onOpenPinned, pins, reservationMap, roomName]);
+  }, [agendaDateKeys, agendaDateSet, email, onEditReservation, onOpenPinned, onReservationDetails, pins, reservationMap, roomName]);
 
   if (mode === "agenda") {
     const nonEmptyDates = agendaDateKeys.filter((dateKey) => (agendaEntriesByDate.get(dateKey) || []).length > 0);
@@ -576,8 +590,11 @@ export default function MyScheduleView({
     },
     onReservationClick: (reservationId: string, dateKey: string) => {
       const pin = pinBySyntheticId.get(reservationId);
-      if (!pin) return;
-      onOpenPinned(pin);
+      if (pin) {
+        onOpenPinned(pin);
+      } else {
+        onReservationDetails(reservationId, dateKey);
+      }
       onSelectedDateChange(dateKey);
     },
     onLinkedRehearsalRespond,

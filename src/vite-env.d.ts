@@ -26,7 +26,11 @@ declare global {
   }
 
   interface GoogleAccountsId {
-    initialize: (config: { client_id: string; callback: (response: { credential: string }) => void }) => void;
+    initialize: (config: {
+      client_id: string;
+      callback: (response: { credential: string }) => void;
+      use_fedcm_for_button?: boolean;
+    }) => void;
     renderButton: (element: HTMLElement, options: Record<string, unknown>) => void;
     disableAutoSelect: () => void;
   }

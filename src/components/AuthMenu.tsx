@@ -9,6 +9,7 @@ import { isPersistentProfileUrl } from "../lib/profilePhoto";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../lib/date";
 import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
 import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon } from "./Icons";
+import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
 
 export type AuthMenuProps = {
   user: User | null;
@@ -29,6 +30,8 @@ export type AuthMenuProps = {
   reservationPolicies?: ReservationScopedPolicy[];
   reservationMap?: ReservationMap;
   quotaReferenceDate?: string;
+  notificationCount?: number;
+  onNotificationsClick?: () => void;
 };
 
 export default function AuthMenu({
@@ -49,10 +52,10 @@ export default function AuthMenu({
   reservationPolicy,
   reservationPolicies = [],
   reservationMap = {},
-  quotaReferenceDate
+  quotaReferenceDate,
+  notificationCount = 0,
+  onNotificationsClick
 }: AuthMenuProps) {
-  if (!open) return null;
-
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -159,9 +162,10 @@ export default function AuthMenu({
         if (!firstMatchedGlobalPolicy) firstMatchedGlobalPolicy = policy;
       });
     if (firstMatchedGlobalPolicy) {
+      const matchedPolicy = firstMatchedGlobalPolicy as ReservationScopedPolicy;
       effectiveGlobalPolicy = {
         ...effectiveGlobalPolicy,
-        ...(firstMatchedGlobalPolicy.rules as Partial<ReservationPolicy>)
+        ...(matchedPolicy.rules as Partial<ReservationPolicy>)
       };
     }
 
@@ -425,6 +429,8 @@ export default function AuthMenu({
     onClose();
   };
 
+  if (!open) return null;
+
   return (
     <div className="auth-overlay" onClick={handleBackdropClick}>
       <div className="auth-menu" onClick={(event) => event.stopPropagation()}>
@@ -519,6 +525,20 @@ export default function AuthMenu({
             <button className="secondary auth-reservations-button" type="button" onClick={openProfileEditor}>
               <UserIcon />
               <span>עריכת פרופיל</span>
+            </button>
+            <button
+              className="secondary auth-reservations-button auth-notifications-button"
+              type="button"
+              onClick={() => {
+                onNotificationsClick?.();
+                onClose();
+              }}
+            >
+              <span className="auth-menu-icon-with-badge" aria-hidden="true">
+                <NotificationsRoundedIcon fontSize="small" />
+                {notificationCount > 0 ? <span className="nav-badge">{notificationCount > 99 ? "99+" : notificationCount}</span> : null}
+              </span>
+              <span>התראות</span>
             </button>
             <div className="auth-admin-row">
               <button

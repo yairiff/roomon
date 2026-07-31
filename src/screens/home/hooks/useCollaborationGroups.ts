@@ -116,27 +116,19 @@ export function useCollaborationGroups({ email }: UseCollaborationGroupsArgs) {
       if (!normalizedInvitee || normalizedInvitee === normalizedEmail) return;
       if (group.memberEmails.includes(normalizedInvitee)) return;
       const now = Date.now();
-      const memberSet = new Set<string>([group.ownerEmail, ...group.memberEmails, normalizedInvitee]);
-      const nextRehearsals = (group.rehearsals || []).map((rehearsal) => {
-        const alreadyParticipant = rehearsal.participants.some((participant) => participant.email === normalizedInvitee);
-        if (alreadyParticipant) return rehearsal;
-        return {
-          ...rehearsal,
-          participants: [
-            ...rehearsal.participants,
-            {
-              email: normalizedInvitee,
-              status: "pending" as const,
-              updatedAt: now
-            }
-          ]
-        };
-      });
+      const existingInvite = group.invites.find((invite) => invite.email === normalizedInvitee);
+      if (existingInvite?.status === "pending") return;
       await saveGroup({
         ...group,
-        memberEmails: Array.from(memberSet),
-        invites: group.invites.filter((invite) => invite.email !== normalizedInvitee),
-        rehearsals: nextRehearsals
+        invites: [
+          ...group.invites.filter((invite) => invite.email !== normalizedInvitee),
+          {
+            email: normalizedInvitee,
+            invitedBy: normalizedEmail,
+            invitedAt: now,
+            status: "pending"
+          }
+        ]
       });
     },
     [normalizedEmail, saveGroup]
@@ -152,17 +144,29 @@ export function useCollaborationGroups({ email }: UseCollaborationGroupsArgs) {
       const now = Date.now();
       const nextInvites = group.invites.map((entry) =>
         entry.email === normalizedEmail
-          ? { ...entry, status: accept ? "accepted" : "declined", respondedAt: now }
+          ? { ...entry, status: accept ? ("accepted" as const) : ("declined" as const), respondedAt: now }
           : entry
       );
       const memberSet = new Set(group.memberEmails);
+      let rehearsals = group.rehearsals || [];
       if (accept) {
         memberSet.add(normalizedEmail);
+        rehearsals = rehearsals.map((rehearsal) => {
+          if (rehearsal.participants.some((participant) => participant.email === normalizedEmail)) return rehearsal;
+          return {
+            ...rehearsal,
+            participants: [
+              ...rehearsal.participants,
+              { email: normalizedEmail, status: "pending" as const, updatedAt: now }
+            ]
+          };
+        });
       }
       await saveGroup({
         ...group,
         invites: nextInvites,
-        memberEmails: Array.from(memberSet)
+        memberEmails: Array.from(memberSet),
+        rehearsals
       });
     },
     [groups, normalizedEmail, saveGroup]

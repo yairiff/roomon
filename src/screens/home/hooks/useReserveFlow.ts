@@ -16,6 +16,12 @@ import {
   getReservationPolicyWindowForSlot
 } from "../../../lib/reservationPolicyWindows";
 import type { ReservationPolicyWindow } from "../../../lib/reservationPolicyWindows";
+import {
+  buildPendingReservationParticipants,
+  getApprovedParticipantEmails,
+  resolveReservationParticipantStates,
+  updateReservationParticipantSelection
+} from "../../../lib/reservationParticipants";
 
 const STEP = 30;
 const MIN_DURATION = 30;
@@ -275,9 +281,10 @@ export function useReserveFlow({
       });
 
       if (firstMatched) {
+        const matchedPolicy = firstMatched as ReservationScopedPolicy;
         effectivePolicy = {
           ...effectivePolicy,
-          ...(firstMatched.rules as Partial<ReservationPolicy>)
+          ...(matchedPolicy.rules as Partial<ReservationPolicy>)
         };
       }
 
@@ -603,7 +610,9 @@ export function useReserveFlow({
 
       const windowDuration = Math.max(0, alignedLimitEnd - alignedStart);
       const remaining = getRemainingMinutes(request.date, request.roomId, alignedStart, excludeReservationId);
-      const participantCount = Math.max(1, getDraftParticipantEmails(request.participantEmails).length);
+      const participantCount = excludeReservationId
+        ? Math.max(1, getDraftParticipantEmails(request.participantEmails).length)
+        : 1;
       const effectiveRemainingDuration = remaining.effectiveRemaining * participantCount;
       if (windowDuration < MIN_DURATION || effectiveRemainingDuration < MIN_DURATION) return null;
       const currentDayUsed = getUserReservedMinutesForDate(request.date, excludeReservationId);
@@ -710,7 +719,7 @@ export function useReserveFlow({
         request.time,
         requestedDuration,
         undefined,
-        request.participantEmails
+        undefined
       );
       if (requestedLimitMessage) {
         showToast(requestedLimitMessage);
@@ -724,7 +733,7 @@ export function useReserveFlow({
           request.time,
           MIN_DURATION,
           undefined,
-          request.participantEmails
+          undefined
         );
         if (minimumLimitMessage) {
           showToast(minimumLimitMessage);
@@ -845,8 +854,8 @@ export function useReserveFlow({
         return null;
       }
 
-      const participantEmails = getDraftParticipantEmails(draft.participantEmails);
-      const quotaParticipantEmails = participantEmails.length > 1 ? participantEmails : undefined;
+      const participants = buildPendingReservationParticipants(currentUser.email, draft.participantEmails || []);
+      const quotaParticipantEmails = getApprovedParticipantEmails(participants, currentUser.email);
       const limitMessage = getLimitViolationMessage(
         date,
         roomId,
@@ -885,6 +894,7 @@ export function useReserveFlow({
         reservedPhone: currentUser.phone || undefined,
         reservedPicture: nextReservedPicture,
         privateDescription: normalizedDescription,
+        participants,
         quotaParticipantEmails
       };
 
@@ -1039,7 +1049,11 @@ export function useReserveFlow({
         roomId,
         durationMinutes: entry.durationMinutes,
         privateDescription: entry.privateDescription || "",
-        participantEmails: entry.quotaParticipantEmails || []
+        participantEmails: resolveReservationParticipantStates(entry)
+          .filter((participant) =>
+            participant.status !== "declined" && participant.email !== currentUser.email.trim().toLowerCase()
+          )
+          .map((participant) => participant.email)
       };
 
       setPendingConfirm({
@@ -1164,8 +1178,11 @@ export function useReserveFlow({
         return false;
       }
 
-      const participantEmails = getDraftParticipantEmails(pending.request.participantEmails);
-      const quotaParticipantEmails = participantEmails.length > 1 ? participantEmails : [] as string[];
+      const participants = updateReservationParticipantSelection(
+        currentEntry,
+        pending.request.participantEmails || []
+      );
+      const quotaParticipantEmails = getApprovedParticipantEmails(participants, currentUser.email);
       const limitMessage = getLimitViolationMessage(
         date,
         roomId,
@@ -1213,6 +1230,7 @@ export function useReserveFlow({
           return isFirebaseStorageDownloadUrl(existing) ? existing : undefined;
         })(),
         privateDescription: normalizedDescription,
+        participants,
         quotaParticipantEmails
       });
       if (!ok) {

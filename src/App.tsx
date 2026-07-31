@@ -60,6 +60,8 @@ export default function App() {
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
   const [view, setView] = useState<ViewMode>("live");
   const [groupsPendingCount, setGroupsPendingCount] = useState(0);
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [navReselect, setNavReselect] = useState<{ view: ViewMode; token: number }>({
     view: "live",
     token: 0
@@ -237,6 +239,7 @@ export default function App() {
         onPrev={topBar.onPrev}
         onNext={topBar.onNext}
         controls={topBar.controls}
+        notificationCount={notificationCount}
       />
       <AuthMenu
         user={user}
@@ -259,6 +262,8 @@ export default function App() {
         reservationPolicies={reservationPolicies}
         reservationMap={reservationMap}
         quotaReferenceDate={quotaReferenceDate}
+        notificationCount={notificationCount}
+        onNotificationsClick={() => setNotificationsOpen(true)}
       />
       <main className={`app-content${user ? "" : " no-nav"}`}>
         <HomeScreen
@@ -281,6 +286,9 @@ export default function App() {
           collaborationEnabled={collaborationEnabled}
           peopleToolEnabled={peopleToolEnabled}
           onGroupsPendingCountChange={setGroupsPendingCount}
+          notificationsOpen={notificationsOpen}
+          onNotificationsClose={() => setNotificationsOpen(false)}
+          onNotificationsCountChange={setNotificationCount}
         />
       </main>
       {user ? (
@@ -290,6 +298,7 @@ export default function App() {
           onReselect={handleBottomNavReselect}
           locked={!user.allowed}
           showCollaborationTabs={collaborationEnabled}
+          peopleToolEnabled={peopleToolEnabled}
           groupsBadgeCount={groupsPendingCount}
         />
       ) : null}

@@ -15,6 +15,7 @@ export type TopBarProps = {
   onPrev?: () => void;
   onNext?: () => void;
   controls?: ReactNode;
+  notificationCount?: number;
 };
 
 export default function TopBar({
@@ -24,7 +25,8 @@ export default function TopBar({
   title,
   subtitle,
   subtitleOptions,
-  onSubtitleChange
+  onSubtitleChange,
+  notificationCount = 0
 }: TopBarProps) {
   const hasSubtitleOptions = Boolean(subtitleOptions?.length);
   const subtitleNode =
@@ -64,6 +66,9 @@ export default function TopBar({
             ) : (
               <UserIcon />
             )}
+            {notificationCount > 0 ? (
+              <span className="nav-badge topbar-notification-badge">{notificationCount > 99 ? "99+" : notificationCount}</span>
+            ) : null}
           </button>
         </div>
         <div className="top-bar-head-main" aria-label="כותרת">

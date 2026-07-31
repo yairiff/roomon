@@ -1,7 +1,11 @@
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import EmailRoundedIcon from "@mui/icons-material/EmailRounded";
 import { useState } from "react";
 import { PinAddIcon, PinOnIcon } from "../../../components/Icons";
+import { getContactLinks } from "../../../lib/contactLinks";
+import type { ReservationParticipantStatus } from "../../../types/reservations";
+import { ParticipantAvatarStack, ParticipantRows, type ParticipantDisplayEntry } from "../components/ParticipantDisplay";
 
 export type ReservationDetailsOverlayProps = {
   open: boolean;
@@ -13,7 +17,9 @@ export type ReservationDetailsOverlayProps = {
   email: string;
   phone: string;
   pictureUrl?: string;
-  participants?: Array<{ email: string; name: string; phone?: string; pictureUrl?: string }>;
+  participants?: ParticipantDisplayEntry[];
+  currentParticipantStatus?: ReservationParticipantStatus;
+  onRespondParticipation?: (status: "approved" | "declined") => void;
   privateDescription?: string;
   pinned?: boolean;
   onTogglePin?: () => void;
@@ -31,26 +37,19 @@ export default function ReservationDetailsOverlay({
   phone,
   pictureUrl,
   participants = [],
+  currentParticipantStatus,
+  onRespondParticipation,
   privateDescription,
   pinned = false,
   onTogglePin,
   onClose
 }: ReservationDetailsOverlayProps) {
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const [participantsExpanded, setParticipantsExpanded] = useState(false);
+
   if (!open) return null;
 
-  const [zoomOpen, setZoomOpen] = useState(false);
-
-  const normalizedPhone = phone ? phone.replace(/[^\d+]/g, "") : "";
-  const telHref = normalizedPhone ? `tel:${normalizedPhone}` : "";
-  const waPhone = (() => {
-    if (!normalizedPhone) return "";
-    const digits = normalizedPhone.replace(/[^\d]/g, "");
-    if (!digits) return "";
-    // Best-effort Israel normalization for local numbers like 05xxxxxxxx.
-    if (digits.startsWith("0") && digits.length === 10) return `972${digits.slice(1)}`;
-    return digits;
-  })();
-  const waHref = waPhone ? `https://wa.me/${waPhone}` : "";
+  const ownerLinks = getContactLinks(email, phone);
 
   const initials = (() => {
     const source = (name || "").trim() || (email || "").trim();
@@ -59,14 +58,6 @@ export default function ReservationDetailsOverlay({
     if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
     return source.slice(0, 2).toUpperCase();
   })();
-  const contactLinks = (rawPhone?: string) => {
-    const normalized = rawPhone ? rawPhone.replace(/[^\d+]/g, "") : "";
-    const tel = normalized ? `tel:${normalized}` : "";
-    const digits = normalized.replace(/[^\d]/g, "");
-    const wa = digits.startsWith("0") && digits.length === 10 ? `972${digits.slice(1)}` : digits;
-    return { tel, wa: wa ? `https://wa.me/${wa}` : "" };
-  };
-
   const handleBackdropClick = () => {
     if (zoomOpen) {
       setZoomOpen(false);
@@ -103,61 +94,28 @@ export default function ReservationDetailsOverlay({
           {!name ? <p className="reserve-detail">{title}</p> : null}
           {privateDescription ? <p className="reserve-detail">תיאור אישי: {privateDescription}</p> : null}
           {participants.length > 1 ? (
-            <div className="reservation-participants">
-              {participants.map((participant) => {
-                const label = (participant.name || "").trim() || participant.email;
-                const participantInitials = (() => {
-                  const parts = label.trim().split(/\s+/).filter(Boolean);
-                  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-                  return label.slice(0, 2).toUpperCase();
-                })();
-                const links = contactLinks(participant.phone);
-                return (
-                  <div key={`reservation-participant-${participant.email}`} className="reservation-participant-row">
-                    <span className="groups-chat-avatar reservation-participant-avatar" aria-hidden="true">
-                      {participant.pictureUrl ? (
-                        <img src={participant.pictureUrl} alt="" loading="lazy" />
-                      ) : (
-                        participantInitials
-                      )}
-                    </span>
-                    <span className="reservation-participant-text">
-                      <span className="groups-chat-title">{label}</span>
-                      <span className="groups-chat-subtitle">{participant.phone || participant.email}</span>
-                    </span>
-                    <span className="reserve-contact-actions reservation-participant-actions" aria-label="יצירת קשר">
-                      {links.tel ? (
-                        <a className="icon-button contact" href={links.tel} aria-label={`התקשר אל ${label}`}>
-                          <PhoneInTalkRoundedIcon fontSize="small" />
-                        </a>
-                      ) : (
-                        <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
-                          <PhoneInTalkRoundedIcon fontSize="small" />
-                        </button>
-                      )}
-                      {links.wa ? (
-                        <a
-                          className="icon-button contact whatsapp"
-                          href={links.wa}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label={`WhatsApp ${label}`}
-                        >
-                          <WhatsAppIcon fontSize="small" />
-                        </a>
-                      ) : (
-                        <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
-                          <WhatsAppIcon fontSize="small" />
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="reservation-participant-summary">
+              <ParticipantAvatarStack
+                participants={participants}
+                interactive
+                expanded={participantsExpanded}
+                onClick={() => setParticipantsExpanded((value) => !value)}
+                maxVisible={6}
+              />
+              <span>{participants.length} משתתפים</span>
             </div>
           ) : null}
+          {participantsExpanded ? <ParticipantRows participants={participants} /> : null}
         </div>
         <div className="reserve-actions reserve-actions-details">
+          {onRespondParticipation && currentParticipantStatus && currentParticipantStatus !== "declined" ? (
+            <div className="reservation-response-actions">
+              {currentParticipantStatus === "pending" ? (
+                <button className="primary" type="button" onClick={() => onRespondParticipation("approved")}>אישור השתתפות</button>
+              ) : null}
+              <button className="secondary danger" type="button" onClick={() => onRespondParticipation("declined")}>דחיית השתתפות</button>
+            </div>
+          ) : null}
           {onTogglePin ? (
             <button
               type="button"
@@ -172,8 +130,11 @@ export default function ReservationDetailsOverlay({
           ) : null}
 
           <div className="reserve-contact-actions" aria-label="יצירת קשר">
-            {telHref ? (
-              <a className="icon-button contact" href={telHref} aria-label="התקשר">
+            <a className="icon-button contact email" href={ownerLinks.emailHref} aria-label="שליחת אימייל">
+              <EmailRoundedIcon fontSize="small" />
+            </a>
+            {ownerLinks.telHref ? (
+              <a className="icon-button contact" href={ownerLinks.telHref} aria-label="התקשר">
                 <PhoneInTalkRoundedIcon fontSize="small" />
               </a>
             ) : (
@@ -182,10 +143,10 @@ export default function ReservationDetailsOverlay({
               </button>
             )}
 
-            {waHref ? (
+            {ownerLinks.whatsappHref ? (
               <a
                 className="icon-button contact whatsapp"
-                href={waHref}
+                href={ownerLinks.whatsappHref}
                 target="_blank"
                 rel="noreferrer"
                 aria-label="WhatsApp"

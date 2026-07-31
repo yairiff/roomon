@@ -3,7 +3,8 @@ import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc,
 import { db } from "../lib/firebase";
 import { stripUndefined } from "../lib/stripUndefined";
 import { formatDateKey } from "../lib/date";
-import type { Reservation, ReservationMap } from "../types/reservations";
+import type { Reservation, ReservationMap, ReservationParticipant } from "../types/reservations";
+import { normalizeReservationParticipantList } from "../lib/reservationParticipants";
 
 export type ReservationsWindow = { startDate: string; endDate: string } | null;
 
@@ -89,15 +90,16 @@ export function useReservations(window: ReservationsWindow = null) {
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as Partial<Reservation> & Record<string, unknown>;
           const dateKey = (() => {
-            if (typeof data.date === "string") return data.date.trim();
-            if (data.date instanceof Date) return formatDateKey(data.date);
+            const rawDate = data.date as unknown;
+            if (typeof rawDate === "string") return rawDate.trim();
+            if (rawDate instanceof Date) return formatDateKey(rawDate);
             if (
-              data.date &&
-              typeof data.date === "object" &&
-              "toDate" in data.date &&
-              typeof (data.date as { toDate?: unknown }).toDate === "function"
+              rawDate &&
+              typeof rawDate === "object" &&
+              "toDate" in rawDate &&
+              typeof (rawDate as { toDate?: unknown }).toDate === "function"
             ) {
-              const dt = (data.date as { toDate: () => Date }).toDate();
+              const dt = (rawDate as { toDate: () => Date }).toDate();
               return dt instanceof Date ? formatDateKey(dt) : "";
             }
             return "";
@@ -130,6 +132,21 @@ export function useReservations(window: ReservationsWindow = null) {
                 ? data.description.trim()
                 : "";
           const durationMinutes = parseDurationMinutes(data, time);
+          const participants = Array.isArray(data.participants)
+            ? normalizeReservationParticipantList(
+                (data.participants as unknown[])
+                  .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+                  .map((entry) => ({
+                    email: typeof entry.email === "string" ? entry.email : "",
+                    status:
+                      entry.status === "pending" || entry.status === "approved" || entry.status === "declined"
+                        ? entry.status
+                        : undefined,
+                    updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : 0
+                  })),
+                typeof data.reservedEmail === "string" ? data.reservedEmail : ""
+              )
+            : [];
           const reservation: Reservation = {
             id: docSnap.id,
             date: dateKey,
@@ -147,6 +164,7 @@ export function useReservations(window: ReservationsWindow = null) {
             ...(typeof data.linkedRehearsalId === "string" && data.linkedRehearsalId.trim()
               ? { linkedRehearsalId: data.linkedRehearsalId.trim() }
               : {}),
+            ...(participants.length ? { participants } : {}),
             ...(Array.isArray(data.quotaParticipantEmails)
               ? {
                   quotaParticipantEmails: data.quotaParticipantEmails

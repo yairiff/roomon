@@ -1,5 +1,13 @@
 import type { DayKey } from "./schedule";
 
+export type ReservationParticipantStatus = "pending" | "approved" | "declined";
+
+export type ReservationParticipant = {
+  email: string;
+  status: ReservationParticipantStatus;
+  updatedAt: number;
+};
+
 export type Reservation = {
   id: string;
   date: string;
@@ -13,6 +21,7 @@ export type Reservation = {
   privateDescription?: string;
   linkedGroupId?: string;
   linkedRehearsalId?: string;
+  participants?: ReservationParticipant[];
   quotaParticipantEmails?: string[];
   pending?: boolean;
   kind?: "special" | "exam" | "closed";

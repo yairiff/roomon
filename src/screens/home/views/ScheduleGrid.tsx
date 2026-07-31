@@ -1,5 +1,5 @@
 import type { DayKey, Lesson, Room, TimeSlot } from "../../../types/schedule";
-import type { ReservationMap, ReserveRequest } from "../../../types/reservations";
+import type { ReservationMap, ReserveRequest, ReservationParticipant } from "../../../types/reservations";
 import type { User } from "../../../types/auth";
 import { addDays, formatDateKey, parseDateKey, type WeekDate } from "../../../lib/date";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
@@ -7,6 +7,7 @@ import { AddIcon, ApproveIcon, CloseIcon, ReleaseIcon } from "../../../component
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { DirectoryUser, RoomMeta } from "../../../types/admin";
 import type { AvailabilityDateOffs, CollaborationGroup, RehearsalParticipant, UserAvailability } from "../../../types/collaboration";
+import { resolveReservationParticipantStates } from "../../../lib/reservationParticipants";
 
 type ScheduleView = "daily" | "room";
 
@@ -92,6 +93,8 @@ type ReservationBlock = {
   reservationId: string;
   reservedEmail: string;
   reservedPicture?: string;
+  participants?: ReservationParticipant[];
+  quotaParticipantEmails?: string[];
   linkedGroupId?: string;
   linkedRehearsalId?: string;
   kind?: "special" | "exam" | "closed";
@@ -619,6 +622,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
         reservationId: entry.id,
         reservedEmail: entry.reservedEmail || "",
         reservedPicture: entry.reservedPicture || "",
+        participants: entry.participants,
+        quotaParticipantEmails: entry.quotaParticipantEmails,
         linkedGroupId: entry.linkedGroupId,
         linkedRehearsalId: entry.linkedRehearsalId,
         kind: entry.kind,
@@ -899,10 +904,17 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                   rehearsalLinkKey(block.linkedGroupId, block.linkedRehearsalId)
                 ) || null
               : null;
+          const approvedParticipantEmails = rehearsalData
+            ? rehearsalData.approvedParticipantEmails
+            : block.type !== "lesson"
+              ? resolveReservationParticipantStates(block)
+                  .filter((participant) => participant.status === "approved")
+                  .map((participant) => participant.email)
+              : [];
           const rehearsalAvatars =
-            rehearsalData
+            approvedParticipantEmails.length
               ? (() => {
-                  const participantEmails = rehearsalData.approvedParticipantEmails;
+                  const participantEmails = approvedParticipantEmails;
                   const seen = new Set<string>();
                   return participantEmails
                     .map((entry) => entry.trim().toLowerCase())
@@ -935,6 +947,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
             currentUserEmail && rehearsalData
               ? rehearsalData.participantStatusByEmail.get(currentUserEmail)
               : undefined;
+          const linkedGroupId = block.type !== "lesson" ? block.linkedGroupId : undefined;
+          const linkedRehearsalId = block.type !== "lesson" ? block.linkedRehearsalId : undefined;
           const showPendingRehearsalActions = Boolean(
             !adminMode &&
               block.type !== "lesson" &&
@@ -1069,8 +1083,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                         aria-label="דחייה"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
-                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "declined");
+                          if (!linkedGroupId || !linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(linkedGroupId, linkedRehearsalId, "declined");
                         }}
                       >
                         <CloseIcon />
@@ -1081,8 +1095,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                         aria-label="אישור"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
-                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "approved");
+                          if (!linkedGroupId || !linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(linkedGroupId, linkedRehearsalId, "approved");
                         }}
                       >
                         <ApproveIcon />
@@ -1124,8 +1138,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                         aria-label="דחייה"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
-                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "declined");
+                          if (!linkedGroupId || !linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(linkedGroupId, linkedRehearsalId, "declined");
                         }}
                       >
                         <CloseIcon />
@@ -1136,8 +1150,8 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                         aria-label="אישור"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (!block.linkedGroupId || !block.linkedRehearsalId) return;
-                          onLinkedRehearsalRespond?.(block.linkedGroupId, block.linkedRehearsalId, "approved");
+                          if (!linkedGroupId || !linkedRehearsalId) return;
+                          onLinkedRehearsalRespond?.(linkedGroupId, linkedRehearsalId, "approved");
                         }}
                       >
                         <ApproveIcon />

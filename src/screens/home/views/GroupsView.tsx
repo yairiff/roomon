@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import EmailRoundedIcon from "@mui/icons-material/EmailRounded";
+import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
 import {
   AddIcon,
   ApproveIcon,
@@ -20,6 +22,7 @@ import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey } from ".
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import type { DirectoryUser } from "../../../types/admin";
+import { getContactLinks } from "../../../lib/contactLinks";
 import type { CollaborationGroup, GroupRehearsal, RehearsalParticipant } from "../../../types/collaboration";
 import type { DayKey, Room } from "../../../types/schedule";
 
@@ -119,15 +122,6 @@ const normalizeEmailList = (values: string[]) => {
   return result;
 };
 
-const phoneLinks = (phone: string) => {
-  const normalizedPhone = phone ? phone.replace(/[^\d+]/g, "") : "";
-  const telHref = normalizedPhone ? `tel:${normalizedPhone}` : "";
-  const digits = normalizedPhone.replace(/[^\d]/g, "");
-  const waPhone = digits.startsWith("0") && digits.length === 10 ? `972${digits.slice(1)}` : digits;
-  const waHref = waPhone ? `https://wa.me/${waPhone}` : "";
-  return { telHref, waHref };
-};
-
 export default function GroupsView({
   currentEmail,
   users,
@@ -157,7 +151,7 @@ export default function GroupsView({
 }: GroupsViewProps) {
   const currentEmailNormalized = (currentEmail || "").trim().toLowerCase();
   const [selectedGroupId, setSelectedGroupId] = useState(prefilledGroupId || "");
-  const [activeTool, setActiveTool] = useState<"groups" | "people">("groups");
+  const [activeTool, setActiveTool] = useState<"groups" | "people">(() => peopleToolEnabled ? "people" : "groups");
   const [createOverlayOpen, setCreateOverlayOpen] = useState(false);
   const [peopleGroupOverlayOpen, setPeopleGroupOverlayOpen] = useState(false);
   const [peopleSearch, setPeopleSearch] = useState("");
@@ -192,12 +186,15 @@ export default function GroupsView({
   }, [prefilledGroupId]);
 
   useEffect(() => {
-    if (peopleToolEnabled) return;
+    if (peopleToolEnabled) {
+      if (!prefilledGroupId && !selectedGroupId) setActiveTool("people");
+      return;
+    }
     setActiveTool("groups");
     setPeopleSearch("");
     setSelectedPeopleEmails([]);
     setPeopleGroupOverlayOpen(false);
-  }, [peopleToolEnabled]);
+  }, [peopleToolEnabled, prefilledGroupId, selectedGroupId]);
 
   useEffect(() => {
     if (!resetToken) return;
@@ -213,9 +210,9 @@ export default function GroupsView({
     setPeopleGroupOverlayOpen(false);
     setPeopleSearch("");
     setSelectedPeopleEmails([]);
-    setActiveTool("groups");
+    setActiveTool(peopleToolEnabled ? "people" : "groups");
     setRehearsalName("");
-  }, [resetToken]);
+  }, [peopleToolEnabled, resetToken]);
 
   useEffect(() => {
     if (selectedGroupId && !groups.some((group) => group.id === selectedGroupId)) {
@@ -514,15 +511,6 @@ export default function GroupsView({
           <div className="groups-tool-switch" role="tablist" aria-label="כלי שיתוף">
             <button
               type="button"
-              className={activeTool === "groups" ? "active" : ""}
-              onClick={() => setActiveTool("groups")}
-              role="tab"
-              aria-selected={activeTool === "groups"}
-            >
-              הרכבים
-            </button>
-            <button
-              type="button"
               className={activeTool === "people" ? "active" : ""}
               onClick={() => {
                 setSelectedGroupId("");
@@ -531,7 +519,18 @@ export default function GroupsView({
               role="tab"
               aria-selected={activeTool === "people"}
             >
+              <PersonRoundedIcon fontSize="small" />
               אנשים
+            </button>
+            <button
+              type="button"
+              className={activeTool === "groups" ? "active" : ""}
+              onClick={() => setActiveTool("groups")}
+              role="tab"
+              aria-selected={activeTool === "groups"}
+            >
+              <GroupsIcon />
+              הרכבים
             </button>
           </div>
         ) : null}
@@ -553,7 +552,7 @@ export default function GroupsView({
                   const selected = selectedPeopleSet.has(email);
                   const label = (user.name || "").trim() || user.email;
                   const pictureUrl = (user.pictureUrl || "").trim();
-                  const { telHref, waHref } = phoneLinks(user.phone || "");
+                  const { emailHref, telHref, whatsappHref } = getContactLinks(user.email, user.phone);
                   return (
                     <li key={`person-${email}`}>
                       <div className={`groups-chat-item people-row ${selected ? "active" : ""}`}>
@@ -563,6 +562,9 @@ export default function GroupsView({
                           onClick={() => togglePerson(email)}
                           aria-pressed={selected}
                         >
+                          <span className={`finder-member-check ${selected ? "active" : ""}`} aria-hidden="true">
+                            {selected ? "✓" : ""}
+                          </span>
                           <span className="groups-chat-avatar">
                             {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : initialsFromLabel(label)}
                           </span>
@@ -572,11 +574,11 @@ export default function GroupsView({
                               {user.phone ? user.phone : user.email}
                             </span>
                           </span>
-                          <span className={`finder-member-check ${selected ? "active" : ""}`} aria-hidden="true">
-                            {selected ? "✓" : ""}
-                          </span>
                         </button>
                         <span className="reserve-contact-actions people-contact-actions" aria-label="יצירת קשר">
+                          <a className="icon-button contact email" href={emailHref} aria-label={`שליחת אימייל אל ${label}`}>
+                            <EmailRoundedIcon fontSize="small" />
+                          </a>
                           {telHref ? (
                             <a className="icon-button contact" href={telHref} aria-label={`התקשר אל ${label}`}>
                               <PhoneInTalkRoundedIcon fontSize="small" />
@@ -586,10 +588,10 @@ export default function GroupsView({
                               <PhoneInTalkRoundedIcon fontSize="small" />
                             </button>
                           )}
-                          {waHref ? (
+                          {whatsappHref ? (
                             <a
                               className="icon-button contact whatsapp"
-                              href={waHref}
+                              href={whatsappHref}
                               target="_blank"
                               rel="noreferrer"
                               aria-label={`WhatsApp ${label}`}
@@ -1104,10 +1106,11 @@ export default function GroupsView({
             ) : null}
 
             <ul className="groups-rehearsal-details-list">
-              {detailsRehearsal.participants.map((participant) => {
+              {detailsRehearsal.participants.filter((participant) => participant.status !== "declined").map((participant) => {
                 const user = usersByEmail.get(participant.email);
                 const name = displayName(participant.email, usersByEmail);
                 const pictureUrl = (user?.pictureUrl || "").trim();
+                const links = getContactLinks(participant.email, user?.phone);
                 return (
                   <li key={`${detailsRehearsal.id}-${participant.email}`} className="groups-rehearsal-member-row">
                     <div className="groups-chat-avatar">
@@ -1119,6 +1122,21 @@ export default function GroupsView({
                     </div>
                     <span className={`groups-rehearsal-member-status ${participant.status}`}>
                       {participant.status === "approved" ? "אישר" : participant.status === "declined" ? "דחה" : "ממתין"}
+                    </span>
+                    <span className="reserve-contact-actions groups-rehearsal-member-contacts" aria-label="יצירת קשר">
+                      <a className="icon-button contact email" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
+                        <EmailRoundedIcon fontSize="small" />
+                      </a>
+                      {links.telHref ? (
+                        <a className="icon-button contact" href={links.telHref} aria-label={`התקשר אל ${name}`}>
+                          <PhoneInTalkRoundedIcon fontSize="small" />
+                        </a>
+                      ) : null}
+                      {links.whatsappHref ? (
+                        <a className="icon-button contact whatsapp" href={links.whatsappHref} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${name}`}>
+                          <WhatsAppIcon fontSize="small" />
+                        </a>
+                      ) : null}
                     </span>
                   </li>
                 );

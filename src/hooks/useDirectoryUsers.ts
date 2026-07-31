@@ -150,12 +150,13 @@ export function useDirectoryUsers(enabled = true) {
   };
 
   const removeUser = async (email: string) => {
-    if (!db) return;
+    const firestore = db;
+    if (!firestore) return;
     const safe = normalizeEmail(email);
     if (!safe) return;
     const sourceDocId = sourceDocIdByEmailRef.current.get(safe);
     const docIds = Array.from(new Set([safe, sourceDocId].filter((value): value is string => Boolean(value))));
-    await Promise.all(docIds.map((docId) => deleteDoc(doc(db, "users", docId))));
+    await Promise.all(docIds.map((docId) => deleteDoc(doc(firestore, "users", docId))));
   };
 
   return {

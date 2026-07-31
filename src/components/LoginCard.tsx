@@ -66,7 +66,14 @@ function DevLogin({ onLogin, setAuthError }: DevLoginProps) {
     event.preventDefault();
     if (!email) return;
     setAuthError("");
-    onLogin({ name: name || "משתמש", email, allowed: true, role: "student" });
+    onLogin({
+      name: name || "משתמש",
+      email,
+      allowed: true,
+      role: "student",
+      betaUser: true,
+      peopleToolEnabled: true
+    });
   };
 
   return (

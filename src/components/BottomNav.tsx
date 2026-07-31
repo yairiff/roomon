@@ -7,6 +7,7 @@ export type BottomNavProps = {
   onReselect?: (view: ViewMode) => void;
   locked?: boolean;
   showCollaborationTabs?: boolean;
+  peopleToolEnabled?: boolean;
   groupsBadgeCount?: number;
 };
 
@@ -16,6 +17,7 @@ export default function BottomNav({
   onReselect,
   locked,
   showCollaborationTabs = false,
+  peopleToolEnabled = false,
   groupsBadgeCount = 0
 }: BottomNavProps) {
   const handleTap = (target: ViewMode) => {
@@ -103,7 +105,7 @@ export default function BottomNav({
             <span className="nav-badge">{groupsBadgeLabel}</span>
           ) : null}
         </span>
-        <span className="nav-label">הרכבים</span>
+        <span className="nav-label">{peopleToolEnabled ? "אנשים" : "הרכבים"}</span>
       </button>
       <button
         className={`nav-item ${view === "mySchedule" ? "active" : ""}`}

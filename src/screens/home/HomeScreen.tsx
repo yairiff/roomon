@@ -3,6 +3,7 @@ import HomeViewRouter from "./HomeViewRouter";
 import ReserveConfirmOverlay from "./overlays/ReserveConfirmOverlay";
 import MyScheduleAddOverlay from "./overlays/MyScheduleAddOverlay";
 import ReservationDetailsOverlay from "./overlays/ReservationDetailsOverlay";
+import NotificationsOverlay from "./overlays/NotificationsOverlay";
 import BlockDetailsOverlay from "./overlays/BlockDetailsOverlay";
 import { isFirebaseStorageDownloadUrl, isGoogleUserContentUrl } from "../../lib/profilePhoto";
 import ConfirmOverlay from "./overlays/ConfirmOverlay";
@@ -12,7 +13,7 @@ import MyScheduleTopBarSubtitle from "./topBar/MyScheduleTopBarSubtitle";
 import { useSchedule } from "../../hooks/useSchedule";
 import { useLessonOverrides } from "../../hooks/useLessonOverrides";
 import { useDirectoryUsers } from "../../hooks/useDirectoryUsers";
-import { collection, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { collection, deleteField, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import {
   addDays,
@@ -34,6 +35,7 @@ import {
 } from "../../lib/reservationPolicyWindows";
 import type { User } from "../../types/auth";
 import type { Reservation, ReservationMap, ReserveRequest } from "../../types/reservations";
+import type { AppNotification, NotificationDraft } from "../../types/notifications";
 import type { DayKey, Lesson, TimeSlot } from "../../types/schedule";
 import type { TopBarContext, ViewMode } from "../../types/ui";
 import type { MySchedulePin } from "../../types/mySchedule";
@@ -44,7 +46,7 @@ import { useAdminDraftFlow } from "./hooks/useAdminDraftFlow";
 import { PERSONAL_PIN_ROOM_ID } from "./views/MyScheduleView";
 import { useUserAvailability } from "./hooks/useUserAvailability";
 import { useCollaborationGroups } from "./hooks/useCollaborationGroups";
-import { normalizeUserAvailability } from "../../lib/collaboration";
+import { normalizeCollaborationGroup, normalizeUserAvailability } from "../../lib/collaboration";
 import type {
   AvailabilityDateOffs,
   CollaborationGroup,
@@ -54,6 +56,13 @@ import type {
 } from "../../types/collaboration";
 import type { GroupRehearsal } from "../../types/collaboration";
 import { allDayKeys, defaultWeekDayKeys } from "../../config";
+import { notificationDocumentId, useNotifications, writeUserNotifications } from "../../hooks/useNotifications";
+import {
+  getApprovedParticipantEmails,
+  normalizeReservationParticipantList,
+  resolveReservationParticipantStates,
+  updateReservationParticipantSelection
+} from "../../lib/reservationParticipants";
 
 export type HomeScreenProps = {
   currentUser: User | null;
@@ -75,6 +84,9 @@ export type HomeScreenProps = {
   collaborationEnabled?: boolean;
   peopleToolEnabled?: boolean;
   onGroupsPendingCountChange?: (count: number) => void;
+  notificationsOpen?: boolean;
+  onNotificationsClose?: () => void;
+  onNotificationsCountChange?: (count: number) => void;
 };
 
 type CollaboratorProfile = {
@@ -235,7 +247,10 @@ export default function HomeScreen({
   adminMode = false,
   collaborationEnabled = false,
   peopleToolEnabled = false,
-  onGroupsPendingCountChange
+  onGroupsPendingCountChange,
+  notificationsOpen = false,
+  onNotificationsClose,
+  onNotificationsCountChange
 }: HomeScreenProps) {
   const [selectedDate, setSelectedDate] = useState(() => formatDateKey(new Date()));
   const [selectedRoom, setSelectedRoom] = useState<string>("");
@@ -461,11 +476,16 @@ export default function HomeScreen({
   const isAdmin = currentUser?.role === "admin" || currentUser?.role === "moderator";
   const hasNav = Boolean(currentUser);
   const collaborationAvailable = collaborationEnabled && Boolean(currentUser);
+  const notificationInbox = useNotifications(currentUser?.email);
   const effectiveView: ViewMode =
     !collaborationAvailable && (view === "groups" || view === "mySchedule")
       ? "room"
       : view;
   const scheduleDateKey = effectiveView === "live" ? todayDateKey : selectedDate;
+
+  useEffect(() => {
+    onNotificationsCountChange?.(notificationInbox.badgeCount);
+  }, [notificationInbox.badgeCount, onNotificationsCountChange]);
 
   const pinIdFor = useCallback(
     (pin: Pick<MySchedulePin, "kind" | "dateKey" | "roomId" | "startMinutes" | "durationMinutes" | "lessonId">) => {
@@ -606,7 +626,65 @@ export default function HomeScreen({
     addGroupRehearsal,
     respondToRehearsal,
     deleteGroupRehearsal
-  } = useCollaborationGroups({ email: collaborationAvailable ? currentUser?.email : undefined });
+  } = useCollaborationGroups({ email: currentUser?.email });
+
+  const handleInviteToGroup = useCallback(
+    async (groupId: string, inviteeEmail: string, groupName?: string) => {
+      const recipientEmail = inviteeEmail.trim().toLowerCase();
+      const actorEmail = (currentUser?.email || "").trim().toLowerCase();
+      if (!recipientEmail || !actorEmail) return;
+      await inviteToGroup(groupId, recipientEmail);
+      const resolvedGroupName = groupName || groups.find((group) => group.id === groupId)?.name || "הרכב";
+      await writeUserNotifications([
+        {
+          id: notificationDocumentId("group-invite", groupId, recipientEmail),
+          type: "group_invite",
+          recipientEmail,
+          actorEmail,
+          title: "הזמנה להרכב",
+          message: `${currentUser?.name || actorEmail} הזמין/ה אותך להצטרף ל-${resolvedGroupName}.`,
+          action: "group_invite",
+          groupId,
+          responseStatus: "pending",
+          createdAt: Date.now(),
+          readAt: null,
+          resolvedAt: null
+        }
+      ]);
+    },
+    [currentUser?.email, currentUser?.name, groups, inviteToGroup]
+  );
+
+  const handleGroupInviteResponse = useCallback(
+    async (groupId: string, accept: boolean, notificationId?: string) => {
+      const recipientEmail = (currentUser?.email || "").trim().toLowerCase();
+      if (!recipientEmail) return;
+      const group = groups.find((entry) => entry.id === groupId) || null;
+      await respondToInvite(groupId, accept);
+      await notificationInbox.resolve(
+        notificationId || notificationDocumentId("group-invite", groupId, recipientEmail),
+        accept ? "approved" : "declined"
+      );
+      if (group?.ownerEmail) {
+        await writeUserNotifications([
+          {
+            id: notificationDocumentId("group-response", groupId, recipientEmail, accept ? "approved" : "declined"),
+            type: "participant_response",
+            recipientEmail: group.ownerEmail,
+            actorEmail: recipientEmail,
+            title: accept ? "ההזמנה להרכב אושרה" : "ההזמנה להרכב נדחתה",
+            message: `${currentUser?.name || recipientEmail} ${accept ? "הצטרף/ה" : "דחה/תה את ההזמנה"} להרכב ${group.name}.`,
+            groupId,
+            responseStatus: accept ? "approved" : "declined",
+            createdAt: Date.now(),
+            readAt: null,
+            resolvedAt: Date.now()
+          }
+        ]);
+      }
+    },
+    [currentUser?.email, currentUser?.name, groups, notificationInbox, respondToInvite]
+  );
 
   const handleCreateGroup = useCallback(
     async (name: string, participantEmails: string[] = []) => {
@@ -623,13 +701,13 @@ export default function HomeScreen({
       if (normalizedParticipants.length) {
         await Promise.all(
           normalizedParticipants.map(async (email) => {
-            await inviteToGroup(createdGroupId, email);
+            await handleInviteToGroup(createdGroupId, email, name.trim());
           })
         );
       }
       return createdGroupId;
     },
-    [createGroup, currentUser?.email, inviteToGroup]
+    [createGroup, currentUser?.email, handleInviteToGroup]
   );
 
   const {
@@ -1079,6 +1157,236 @@ export default function HomeScreen({
     return map;
   }, [users]);
 
+  const buildReservationNotificationDrafts = useCallback(
+    (
+      reservation: Reservation,
+      event: "created" | "updated" | "cancelled",
+      previous?: Reservation | null
+    ): NotificationDraft[] => {
+      const ownerEmail = (reservation.reservedEmail || "").trim().toLowerCase();
+      const ownerLabel = (reservation.reservedBy || currentUser?.name || ownerEmail).trim();
+      const roomName = rooms.find((room) => room.id === reservation.roomId)?.name || reservation.roomId;
+      const currentParticipants = resolveReservationParticipantStates(reservation);
+      const previousParticipants = previous ? resolveReservationParticipantStates(previous) : [];
+      const previousByEmail = new Map(previousParticipants.map((participant) => [participant.email, participant]));
+      const currentByEmail = new Map(currentParticipants.map((participant) => [participant.email, participant]));
+      const nowMs = Date.now();
+      const common = {
+        actorEmail: ownerEmail,
+        reservationId: reservation.id,
+        dateKey: reservation.date,
+        roomId: reservation.roomId,
+        roomName,
+        startMinutes: reservation.time,
+        durationMinutes: reservation.durationMinutes,
+        createdAt: nowMs
+      };
+
+      if (event === "cancelled") {
+        return currentParticipants
+          .filter((participant) => participant.email !== ownerEmail && participant.status !== "declined")
+          .map((participant) => ({
+            id: notificationDocumentId("reservation-cancelled", reservation.id, participant.email),
+            type: "reservation_cancelled" as const,
+            recipientEmail: participant.email,
+            title: "השריון המשותף בוטל",
+            message: `${ownerLabel || "המארגן/ת"} ביטל/ה את השריון.`,
+            responseStatus: "declined" as const,
+            readAt: null,
+            resolvedAt: nowMs,
+            ...common
+          }));
+      }
+
+      const drafts: NotificationDraft[] = [];
+      currentParticipants.forEach((participant) => {
+        if (participant.email === ownerEmail || participant.status === "declined") return;
+        const previousParticipant = previousByEmail.get(participant.email);
+        const isNewInvitation =
+          event === "created" || !previousParticipant || previousParticipant.status === "declined";
+        if (isNewInvitation && participant.status === "pending") {
+          drafts.push({
+            id: notificationDocumentId("shared-reservation", reservation.id, participant.email),
+            type: "shared_reservation_invite",
+            recipientEmail: participant.email,
+            title: "הוזמנת לשריון משותף",
+            message: `${ownerLabel || "משתמש/ת"} הזמין/ה אותך להשתתף בשריון.`,
+            action: "shared_reservation",
+            responseStatus: "pending",
+            readAt: null,
+            resolvedAt: null,
+            ...common
+          });
+          return;
+        }
+        if (event !== "updated") return;
+        drafts.push({
+          id: participant.status === "pending"
+            ? notificationDocumentId("shared-reservation", reservation.id, participant.email)
+            : notificationDocumentId(
+                "reservation-updated",
+                reservation.id,
+                participant.email,
+                reservation.date,
+                reservation.time,
+                reservation.durationMinutes,
+                reservation.roomId
+              ),
+          type: participant.status === "pending" ? "shared_reservation_invite" : "reservation_updated",
+          recipientEmail: participant.email,
+          title: participant.status === "pending" ? "ההזמנה לשריון עודכנה" : "השריון המשותף עודכן",
+          message: `${ownerLabel || "המארגן/ת"} עדכן/ה את מועד השריון או את החדר.`,
+          ...(participant.status === "pending" ? { action: "shared_reservation" as const } : {}),
+          responseStatus: participant.status,
+          readAt: null,
+          resolvedAt: participant.status === "pending" ? null : nowMs,
+          ...common
+        });
+      });
+
+      if (event === "updated") {
+        previousParticipants.forEach((participant) => {
+          if (participant.email === ownerEmail || participant.status === "declined") return;
+          const currentParticipant = currentByEmail.get(participant.email);
+          if (currentParticipant && currentParticipant.status !== "declined") return;
+          drafts.push({
+            id: notificationDocumentId("reservation-removed", reservation.id, participant.email),
+            type: "reservation_cancelled",
+            recipientEmail: participant.email,
+            title: "הוסרת מהשריון המשותף",
+            message: `${ownerLabel || "המארגן/ת"} הסיר/ה אותך מרשימת המשתתפים.`,
+            responseStatus: "declined",
+            readAt: null,
+            resolvedAt: nowMs,
+            ...common
+          });
+        });
+      }
+      return drafts;
+    },
+    [currentUser?.name, rooms]
+  );
+
+  const notifyReservationParticipants = useCallback(
+    async (reservation: Reservation, event: "created" | "updated" | "cancelled", previous?: Reservation | null) => {
+      if (extractLinkedIdsFromReservation(reservation)) return;
+      const drafts = buildReservationNotificationDrafts(reservation, event, previous);
+      if (drafts.length) await writeUserNotifications(drafts);
+    },
+    [buildReservationNotificationDrafts]
+  );
+
+  const respondToSharedReservation = useCallback(
+    async (
+      reservationId: string,
+      status: "approved" | "declined",
+      sourceNotificationId?: string
+    ) => {
+      const participantEmail = (currentUser?.email || "").trim().toLowerCase();
+      const firestore = db;
+      if (!firestore || !participantEmail || !reservationId) return;
+      const nowMs = Date.now();
+      try {
+        await runTransaction(firestore, async (transaction) => {
+          const reservationRef = doc(firestore, "reservations", reservationId);
+          const reservationSnapshot = await transaction.get(reservationRef);
+          if (!reservationSnapshot.exists()) throw new Error("reservation-not-found");
+          const raw = reservationSnapshot.data() as Record<string, unknown>;
+          const ownerEmail = String(raw.reservedEmail || "").trim().toLowerCase();
+          if (!ownerEmail || participantEmail === ownerEmail) throw new Error("owner-cannot-respond");
+          const legacyQuotaEmails = Array.isArray(raw.quotaParticipantEmails)
+            ? raw.quotaParticipantEmails.filter((entry): entry is string => typeof entry === "string")
+            : [];
+          const rawParticipants = Array.isArray(raw.participants)
+            ? raw.participants
+                .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+                .map((entry) => ({
+                  email: typeof entry.email === "string" ? entry.email : "",
+                  status:
+                    entry.status === "approved" || entry.status === "declined" || entry.status === "pending"
+                      ? (entry.status as "approved" | "declined" | "pending")
+                      : undefined,
+                  updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : 0
+                }))
+            : [];
+          const currentParticipants = resolveReservationParticipantStates({
+            reservedEmail: ownerEmail,
+            participants: normalizeReservationParticipantList(rawParticipants, ownerEmail),
+            quotaParticipantEmails: legacyQuotaEmails
+          });
+          const currentParticipant = currentParticipants.find((entry) => entry.email === participantEmail);
+          if (!currentParticipant) throw new Error("not-a-participant");
+
+          const nextParticipants = normalizeReservationParticipantList(
+            currentParticipants.map((participant) =>
+              participant.email === participantEmail
+                ? { ...participant, status, updatedAt: nowMs }
+                : participant
+            ),
+            ownerEmail
+          );
+          transaction.update(reservationRef, {
+            participants: nextParticipants,
+            quotaParticipantEmails: getApprovedParticipantEmails(nextParticipants, ownerEmail),
+            updatedAt: serverTimestamp()
+          });
+
+          const invitationId =
+            sourceNotificationId || notificationDocumentId("shared-reservation", reservationId, participantEmail);
+          transaction.set(
+            doc(firestore, "users", participantEmail, "notifications", invitationId),
+            { readAt: nowMs, resolvedAt: nowMs, responseStatus: status },
+            { merge: true }
+          );
+
+          const actorLabel = (currentUser?.name || participantEmail).trim();
+          const responseId = notificationDocumentId(
+            "participant-response",
+            reservationId,
+            participantEmail,
+            status
+          );
+          transaction.set(doc(firestore, "users", ownerEmail, "notifications", responseId), {
+            type: "participant_response",
+            recipientEmail: ownerEmail,
+            actorEmail: participantEmail,
+            title: status === "approved" ? "השתתפות אושרה" : "השתתפות נדחתה",
+            message: `${actorLabel} ${status === "approved" ? "אישר/ה" : "דחה/תה"} השתתפות בשריון.`,
+            reservationId,
+            dateKey: typeof raw.date === "string" ? raw.date : "",
+            roomId: typeof raw.roomId === "string" ? raw.roomId : "",
+            startMinutes: typeof raw.time === "number" ? raw.time : 0,
+            durationMinutes: typeof raw.durationMinutes === "number" ? raw.durationMinutes : 60,
+            responseStatus: status,
+            createdAt: nowMs,
+            readAt: null,
+            resolvedAt: nowMs
+          });
+        });
+        setReservationDetails((current) => {
+          if (!current || current.reservation.id !== reservationId) return current;
+          if (status === "declined") return null;
+          const participants = resolveReservationParticipantStates(current.reservation).map((participant) =>
+            participant.email === participantEmail ? { ...participant, status, updatedAt: nowMs } : participant
+          );
+          return {
+            ...current,
+            reservation: {
+              ...current.reservation,
+              participants,
+              quotaParticipantEmails: getApprovedParticipantEmails(participants, current.reservation.reservedEmail)
+            }
+          };
+        });
+        showToast(status === "approved" ? "ההשתתפות אושרה." : "ההשתתפות נדחתה.", "success");
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "";
+        showToast(reason === "reservation-not-found" ? "השריון כבר אינו קיים." : "לא ניתן היה לעדכן את ההשתתפות.", "error");
+      }
+    },
+    [currentUser?.email, currentUser?.name, showToast]
+  );
+
   const collaborationDateKeys = useMemo(() => {
     const keys = buildDateKeysBetween(finderWindow.startDate, finderWindow.endDate);
     return keys.length ? keys : [formatDateKey(new Date())];
@@ -1168,10 +1476,11 @@ export default function HomeScreen({
         });
       }
 
-      if (db && membersWithoutCurrent.length) {
+      const firestore = db;
+      if (firestore && membersWithoutCurrent.length) {
         const docs = await Promise.all(
           membersWithoutCurrent.map(async (email) => {
-            const snap = await getDoc(doc(db, "users", email)).catch(() => null);
+            const snap = await getDoc(doc(firestore, "users", email)).catch(() => null);
             const raw = snap?.exists() ? (snap.data() as Record<string, unknown>) : {};
             const remotePins = Array.isArray(raw.myPins) ? (raw.myPins as MySchedulePin[]) : [];
             return {
@@ -1948,8 +2257,8 @@ export default function HomeScreen({
       dayKey: DayKey;
       startMinutes: number;
       durationMinutes: number;
-      excludeReservationId?: string;
       participantEmails?: string[];
+      excludeReservationId?: string;
     }) => {
       const alignedDuration = Math.max(30, Math.floor((input.durationMinutes || 0) / 30) * 30 || 30);
       const targetEnd = input.startMinutes + alignedDuration;
@@ -2288,6 +2597,7 @@ export default function HomeScreen({
       roomId: string;
       startMinutes: number;
       durationMinutes: number;
+      participantEmails?: string[];
       excludeReservationId?: string;
     }) => {
       if (!currentUser?.allowed || !currentUser.email) {
@@ -2674,6 +2984,7 @@ export default function HomeScreen({
           createdAt: nowMs
         };
         await addGroupRehearsal(selectedGroup.id, rehearsal);
+        await notifyRehearsalParticipants(selectedGroup, rehearsal, "created");
       }
 
       showToast("החזרה נוספה ונשלחה למשתתפים לאישור.", "success");
@@ -2702,6 +3013,119 @@ export default function HomeScreen({
     [groups]
   );
 
+  const notifyRehearsalParticipants = useCallback(
+    async (
+      group: CollaborationGroup,
+      rehearsal: GroupRehearsal,
+      event: "created" | "updated" | "cancelled",
+      previous?: GroupRehearsal | null
+    ) => {
+      const actorEmail = (currentUser?.email || rehearsal.createdBy || group.ownerEmail).trim().toLowerCase();
+      const actorLabel = (currentUser?.name || actorEmail).trim();
+      const roomName = rehearsal.roomId
+        ? rooms.find((room) => room.id === rehearsal.roomId)?.name || rehearsal.roomId
+        : "ללא חדר";
+      const nowMs = Date.now();
+      const previousByEmail = new Map((previous?.participants || []).map((participant) => [participant.email, participant]));
+      const currentByEmail = new Map(rehearsal.participants.map((participant) => [participant.email, participant]));
+      const drafts: NotificationDraft[] = [];
+      const common = {
+        actorEmail,
+        groupId: group.id,
+        rehearsalId: rehearsal.id,
+        reservationId: rehearsal.reservationId,
+        dateKey: rehearsal.dateKey,
+        roomId: rehearsal.roomId,
+        roomName,
+        startMinutes: rehearsal.startMinutes,
+        durationMinutes: rehearsal.durationMinutes,
+        createdAt: nowMs
+      };
+
+      const sourceParticipants = event === "cancelled" ? previous?.participants || rehearsal.participants : rehearsal.participants;
+      sourceParticipants.forEach((participant) => {
+        const email = participant.email.trim().toLowerCase();
+        if (!email || email === actorEmail || participant.status === "declined") return;
+        if (event === "cancelled") {
+          drafts.push({
+            id: notificationDocumentId("rehearsal-cancelled", group.id, rehearsal.id, email),
+            type: "rehearsal_cancelled",
+            recipientEmail: email,
+            title: "החזרה בוטלה",
+            message: `${actorLabel || "מארגן/ת ההרכב"} ביטל/ה את ${rehearsal.title || "החזרה"}.`,
+            responseStatus: "declined",
+            readAt: null,
+            resolvedAt: nowMs,
+            ...common
+          });
+          return;
+        }
+        const previousParticipant = previousByEmail.get(email);
+        const isNew = event === "created" || !previousParticipant || previousParticipant.status === "declined";
+        if (isNew && participant.status === "pending") {
+          drafts.push({
+            id: notificationDocumentId("rehearsal-invite", group.id, rehearsal.id, email),
+            type: "rehearsal_invite",
+            recipientEmail: email,
+            title: "חזרה חדשה לאישור",
+            message: `${actorLabel || "חבר/ת הרכב"} הזמין/ה אותך ל-${rehearsal.title || "חזרה"} של ${group.name}.`,
+            action: "rehearsal",
+            responseStatus: "pending",
+            readAt: null,
+            resolvedAt: null,
+            ...common
+          });
+          return;
+        }
+        if (event !== "updated") return;
+        drafts.push({
+          id: participant.status === "pending"
+            ? notificationDocumentId("rehearsal-invite", group.id, rehearsal.id, email)
+            : notificationDocumentId(
+                "rehearsal-updated",
+                group.id,
+                rehearsal.id,
+                email,
+                rehearsal.dateKey,
+                rehearsal.startMinutes,
+                rehearsal.durationMinutes,
+                rehearsal.roomId
+              ),
+          type: participant.status === "pending" ? "rehearsal_invite" : "rehearsal_updated",
+          recipientEmail: email,
+          title: participant.status === "pending" ? "ההזמנה לחזרה עודכנה" : "החזרה עודכנה",
+          message: `פרטי ${rehearsal.title || "החזרה"} של ${group.name} עודכנו.`,
+          ...(participant.status === "pending" ? { action: "rehearsal" as const } : {}),
+          responseStatus: participant.status,
+          readAt: null,
+          resolvedAt: participant.status === "pending" ? null : nowMs,
+          ...common
+        });
+      });
+
+      if (event === "updated" && previous) {
+        previous.participants.forEach((participant) => {
+          if (participant.status === "declined") return;
+          const next = currentByEmail.get(participant.email);
+          if (next && next.status !== "declined") return;
+          drafts.push({
+            id: notificationDocumentId("rehearsal-removed", group.id, rehearsal.id, participant.email),
+            type: "group_removed",
+            recipientEmail: participant.email,
+            title: "הוסרת מהחזרה",
+            message: `הוסרת מ-${rehearsal.title || "החזרה"} של ${group.name}.`,
+            responseStatus: "declined",
+            readAt: null,
+            resolvedAt: nowMs,
+            ...common
+          });
+        });
+      }
+      if (drafts.length) await writeUserNotifications(drafts);
+    },
+    [currentUser?.email, currentUser?.name, rooms]
+  );
+
   const findLinkedReservationForRehearsal = useCallback(
     (groupId: string, rehearsal: GroupRehearsal) => {
       const dateReservations = displayReservationMap[rehearsal.dateKey] || [];
@@ -2728,7 +3152,8 @@ export default function HomeScreen({
   );
 
   useEffect(() => {
-    if (!collaborationAvailable || !db) return;
+    const firestore = db;
+    if (!collaborationAvailable || !firestore) return;
     const pendingUpdates: Array<Promise<unknown>> = [];
     groups.forEach((group) => {
       (group.rehearsals || []).forEach((rehearsal) => {
@@ -2746,7 +3171,7 @@ export default function HomeScreen({
           desiredSorted.every((value, index) => value === currentSorted[index]);
         if (unchanged) return;
         pendingUpdates.push(
-          updateDoc(doc(db, "reservations", linkedReservation.id), {
+          updateDoc(doc(firestore, "reservations", linkedReservation.id), {
             quotaParticipantEmails: desiredParticipants,
             updatedAt: serverTimestamp()
           })
@@ -2758,13 +3183,25 @@ export default function HomeScreen({
   }, [collaborationAvailable, findLinkedReservationForRehearsal, groups]);
 
   const clearReservationLinkMetadata = useCallback(
-    async (reservationId: string) => {
+    async (
+      reservationId: string,
+      participantStates?: RehearsalParticipant[],
+      ownerEmail?: string
+    ) => {
       if (!db || !reservationId) return false;
       try {
+        const participants = participantStates?.length
+          ? normalizeReservationParticipantList(participantStates, ownerEmail)
+          : null;
         await updateDoc(doc(db, "reservations", reservationId), {
           linkedGroupId: deleteField(),
           linkedRehearsalId: deleteField(),
-          quotaParticipantEmails: deleteField(),
+          ...(participants
+            ? {
+                participants,
+                quotaParticipantEmails: getApprovedParticipantEmails(participants, ownerEmail)
+              }
+            : { quotaParticipantEmails: deleteField() }),
           updatedAt: serverTimestamp()
         });
         return true;
@@ -2818,6 +3255,7 @@ export default function HomeScreen({
     async (groupId: string, rehearsal: GroupRehearsal) => {
       const group = groups.find((entry) => entry.id === groupId) || null;
       if (!group) return;
+      const previousRehearsal = (group.rehearsals || []).find((entry) => entry.id === rehearsal.id) || null;
       let nextRehearsal = { ...rehearsal };
       const linkedReservation = findLinkedReservationForRehearsal(group.id, rehearsal);
 
@@ -2865,7 +3303,11 @@ export default function HomeScreen({
           mode: { ...nextRehearsal.mode, findRoom: true }
         };
       } else if (linkedReservation) {
-        const cleared = await clearReservationLinkMetadata(linkedReservation.id);
+        const cleared = await clearReservationLinkMetadata(
+          linkedReservation.id,
+          nextRehearsal.participants,
+          linkedReservation.reservedEmail
+        );
         if (!cleared) {
           showToast("לא ניתן היה לנתק את הקישור מהשריון.", "error");
           return;
@@ -2879,6 +3321,12 @@ export default function HomeScreen({
 
       await addGroupRehearsal(group.id, nextRehearsal);
       await syncLinkedPinsForRehearsal(group, nextRehearsal);
+      await notifyRehearsalParticipants(
+        group,
+        nextRehearsal,
+        previousRehearsal ? "updated" : "created",
+        previousRehearsal
+      );
     },
     [
       addGroupRehearsal,
@@ -2888,6 +3336,7 @@ export default function HomeScreen({
       groups,
       showToast,
       syncLinkedPinsForRehearsal,
+      notifyRehearsalParticipants,
       upsertReservation,
       validateDirectReservationByPolicy
     ]
@@ -2911,8 +3360,9 @@ export default function HomeScreen({
       };
       await addGroupRehearsal(group.id, next);
       await syncLinkedPinsForRehearsal(group, next);
+      await notifyRehearsalParticipants(group, next, "updated", rehearsal);
     },
-    [addGroupRehearsal, findGroupRehearsal, syncLinkedPinsForRehearsal]
+    [addGroupRehearsal, findGroupRehearsal, notifyRehearsalParticipants, syncLinkedPinsForRehearsal]
   );
 
   const unlinkRehearsalRoomFromReservation = useCallback(
@@ -2927,8 +3377,9 @@ export default function HomeScreen({
       delete next.reservationId;
       await addGroupRehearsal(group.id, next);
       await syncLinkedPinsForRehearsal(group, next);
+      await notifyRehearsalParticipants(group, next, "updated", rehearsal);
     },
-    [addGroupRehearsal, findGroupRehearsal, syncLinkedPinsForRehearsal]
+    [addGroupRehearsal, findGroupRehearsal, notifyRehearsalParticipants, syncLinkedPinsForRehearsal]
   );
 
   const createLinkedRehearsalFromReservation = useCallback(
@@ -2995,6 +3446,7 @@ export default function HomeScreen({
       }
 
       await syncLinkedPinsForRehearsal(group, rehearsal);
+      await notifyRehearsalParticipants(group, rehearsal, "created");
       showToast("השריון קושר להרכב ונוצרה חזרה חדשה.", "success");
       return true;
     },
@@ -3005,16 +3457,106 @@ export default function HomeScreen({
       setAuthError,
       showToast,
       syncLinkedPinsForRehearsal,
+      notifyRehearsalParticipants,
       upsertReservation
     ]
   );
 
   const applyRehearsalResponse = useCallback(
-    async (groupId: string, rehearsalId: string, status: RehearsalParticipant["status"]) => {
+    async (
+      groupId: string,
+      rehearsalId: string,
+      status: RehearsalParticipant["status"],
+      sourceNotificationId?: string
+    ) => {
       const currentEmail = (currentUser?.email || "").trim().toLowerCase();
-      if (!currentEmail) return;
-      const { group, rehearsal } = findGroupRehearsal(groupId, rehearsalId);
-      await respondToRehearsal(groupId, rehearsalId, status);
+      const firestore = db;
+      if (!currentEmail || !firestore) return;
+      const nowMs = Date.now();
+      let responseContext: { group: CollaborationGroup; rehearsal: GroupRehearsal };
+      try {
+        responseContext = await runTransaction(firestore, async (transaction) => {
+          const groupRef = doc(firestore, "collaborationGroups", groupId);
+          const groupSnapshot = await transaction.get(groupRef);
+          const group = groupSnapshot.exists()
+            ? normalizeCollaborationGroup(groupSnapshot.data(), groupSnapshot.id)
+            : null;
+          if (!group) throw new Error("group-not-found");
+          const rehearsal = (group.rehearsals || []).find((entry) => entry.id === rehearsalId) || null;
+          if (!rehearsal) throw new Error("rehearsal-not-found");
+          if (rehearsal.createdBy === currentEmail) throw new Error("owner-cannot-respond");
+          const currentParticipant = rehearsal.participants.find((participant) => participant.email === currentEmail);
+          if (!currentParticipant) throw new Error("not-a-participant");
+          const nextRehearsal: GroupRehearsal = {
+            ...rehearsal,
+            participants: rehearsal.participants.map((participant) =>
+              participant.email === currentEmail
+                ? { ...participant, status, updatedAt: nowMs }
+                : participant
+            )
+          };
+          const nextRehearsals = group.rehearsals.map((entry) =>
+            entry.id === rehearsalId ? nextRehearsal : entry
+          );
+          transaction.update(groupRef, {
+            rehearsals: nextRehearsals,
+            updatedAt: nowMs,
+            updatedAtServer: serverTimestamp()
+          });
+
+          if (nextRehearsal.reservationId) {
+            const reservationRef = doc(firestore, "reservations", nextRehearsal.reservationId);
+            transaction.update(reservationRef, {
+              quotaParticipantEmails: buildApprovedQuotaParticipantEmails(
+                nextRehearsal.participants,
+                nextRehearsal.createdBy || group.ownerEmail
+              ),
+              updatedAt: serverTimestamp()
+            });
+          }
+
+          const invitationId =
+            sourceNotificationId || notificationDocumentId("rehearsal-invite", groupId, rehearsalId, currentEmail);
+          transaction.set(
+            doc(firestore, "users", currentEmail, "notifications", invitationId),
+            { readAt: nowMs, resolvedAt: nowMs, responseStatus: status },
+            { merge: true }
+          );
+          const organizerEmail = (rehearsal.createdBy || group.ownerEmail).trim().toLowerCase();
+          transaction.set(
+            doc(
+              firestore,
+              "users",
+              organizerEmail,
+              "notifications",
+              notificationDocumentId("rehearsal-response", groupId, rehearsalId, currentEmail, status)
+            ),
+            {
+              type: "participant_response",
+              recipientEmail: organizerEmail,
+              actorEmail: currentEmail,
+              title: status === "approved" ? "השתתפות בחזרה אושרה" : "השתתפות בחזרה נדחתה",
+              message: `${currentUser?.name || currentEmail} ${status === "approved" ? "אישר/ה" : "דחה/תה"} השתתפות ב-${rehearsal.title || "חזרה"}.`,
+              groupId,
+              rehearsalId,
+              reservationId: rehearsal.reservationId || null,
+              dateKey: rehearsal.dateKey,
+              roomId: rehearsal.roomId || null,
+              startMinutes: rehearsal.startMinutes,
+              durationMinutes: rehearsal.durationMinutes,
+              responseStatus: status,
+              createdAt: nowMs,
+              readAt: null,
+              resolvedAt: nowMs
+            }
+          );
+          return { group, rehearsal: nextRehearsal };
+        });
+      } catch {
+        showToast("לא ניתן היה לעדכן את ההשתתפות בחזרה.", "error");
+        return;
+      }
+      const { group, rehearsal } = responseContext;
       await updateLinkedPinStatusForEmail(
         currentEmail,
         groupId,
@@ -3030,8 +3572,9 @@ export default function HomeScreen({
             }
           : undefined
       );
+      showToast(status === "approved" ? "ההשתתפות אושרה." : "ההשתתפות נדחתה.", "success");
     },
-    [currentUser?.email, findGroupRehearsal, respondToRehearsal, updateLinkedPinStatusForEmail]
+    [currentUser?.email, currentUser?.name, showToast, updateLinkedPinStatusForEmail]
   );
 
   const handleConfirmEdit = useCallback(
@@ -3041,20 +3584,27 @@ export default function HomeScreen({
       );
       const ok = await baseHandleConfirmEdit(pending, startMinutes, durationMinutes, privateDescription);
       if (!ok || !currentEntry) return null;
+      const linked = extractLinkedIdsFromReservation(currentEntry);
+      const participants = linked
+        ? resolveReservationParticipantStates(currentEntry)
+        : updateReservationParticipantSelection(currentEntry, pending.request.participantEmails || []);
       const updatedReservation: Reservation = {
         ...currentEntry,
         time: startMinutes,
         durationMinutes,
         privateDescription: (privateDescription || "").trim(),
-        quotaParticipantEmails: pending.request.participantEmails || currentEntry.quotaParticipantEmails || []
+        participants,
+        quotaParticipantEmails: getApprovedParticipantEmails(participants, currentEntry.reservedEmail)
       };
-      if (extractLinkedIdsFromReservation(currentEntry)) {
+      if (linked) {
         await updateLinkedRehearsalFromReservation(updatedReservation);
+      } else {
+        await notifyReservationParticipants(updatedReservation, "updated", currentEntry);
       }
       setPendingLinkedEdit(null);
       return updatedReservation;
     },
-    [baseHandleConfirmEdit, displayReservationMap, updateLinkedRehearsalFromReservation]
+    [baseHandleConfirmEdit, displayReservationMap, notifyReservationParticipants, updateLinkedRehearsalFromReservation]
   );
 
   const handleRespondToGroupRehearsal = useCallback(
@@ -3076,8 +3626,8 @@ export default function HomeScreen({
 
   const handleDeleteGroupRehearsal = useCallback(
     async (groupId: string, rehearsalId: string, options?: { releaseLinkedReservation?: boolean }) => {
-      const { rehearsal } = findGroupRehearsal(groupId, rehearsalId);
-      if (!rehearsal) return;
+      const { group, rehearsal } = findGroupRehearsal(groupId, rehearsalId);
+      if (!group || !rehearsal) return;
       const linkedReservation = findLinkedReservationForRehearsal(groupId, rehearsal);
       const releaseLinkedReservation = options?.releaseLinkedReservation !== false;
       if (linkedReservation) {
@@ -3092,7 +3642,11 @@ export default function HomeScreen({
             return;
           }
         } else {
-          const cleared = await clearReservationLinkMetadata(linkedReservation.id);
+          const cleared = await clearReservationLinkMetadata(
+            linkedReservation.id,
+            rehearsal.participants,
+            linkedReservation.reservedEmail
+          );
           if (!cleared) {
             showToast("לא ניתן היה לנתק את הקישור מהשריון.", "error");
             return;
@@ -3104,6 +3658,7 @@ export default function HomeScreen({
         groupId,
         rehearsalId
       );
+      await notifyRehearsalParticipants(group, rehearsal, "cancelled", rehearsal);
       await deleteGroupRehearsal(groupId, rehearsalId);
     },
     [
@@ -3111,6 +3666,7 @@ export default function HomeScreen({
       findGroupRehearsal,
       findLinkedReservationForRehearsal,
       isReservationInPast,
+      notifyRehearsalParticipants,
       releaseReservation,
       removeLinkedPinsForGroupRehearsal,
       showToast,
@@ -3131,7 +3687,11 @@ export default function HomeScreen({
           handledReservationIds.add(linkedReservation.id);
           if (isReservationInPast(linkedReservation)) {
             failedReleaseCount += 1;
-            const cleared = await clearReservationLinkMetadata(linkedReservation.id);
+            const cleared = await clearReservationLinkMetadata(
+              linkedReservation.id,
+              rehearsal.participants,
+              linkedReservation.reservedEmail
+            );
             if (!cleared) {
               failedUnlinkCount += 1;
             }
@@ -3140,7 +3700,11 @@ export default function HomeScreen({
           const released = await releaseReservation(rehearsal.dateKey, linkedReservation.id);
           if (!released) {
             failedReleaseCount += 1;
-            const cleared = await clearReservationLinkMetadata(linkedReservation.id);
+            const cleared = await clearReservationLinkMetadata(
+              linkedReservation.id,
+              rehearsal.participants,
+              linkedReservation.reservedEmail
+            );
             if (!cleared) {
               failedUnlinkCount += 1;
             }
@@ -3150,6 +3714,26 @@ export default function HomeScreen({
           rehearsal.participants.map((participant) => participant.email),
           group.id,
           rehearsal.id
+        );
+        await notifyRehearsalParticipants(group, rehearsal, "cancelled", rehearsal);
+      }
+      const groupRecipients = Array.from(new Set(group.memberEmails.map((entry) => entry.trim().toLowerCase())))
+        .filter((email) => email && email !== group.ownerEmail);
+      if (groupRecipients.length) {
+        const nowMs = Date.now();
+        await writeUserNotifications(
+          groupRecipients.map((recipientEmail) => ({
+            id: notificationDocumentId("group-deleted", group.id, recipientEmail),
+            type: "group_removed" as const,
+            recipientEmail,
+            actorEmail: group.ownerEmail,
+            title: "ההרכב נמחק",
+            message: `ההרכב ${group.name} נמחק.`,
+            groupId: group.id,
+            createdAt: nowMs,
+            readAt: null,
+            resolvedAt: nowMs
+          }))
         );
       }
       await deleteGroup(groupId);
@@ -3165,6 +3749,7 @@ export default function HomeScreen({
       findLinkedReservationForRehearsal,
       groups,
       isReservationInPast,
+      notifyRehearsalParticipants,
       releaseReservation,
       removeLinkedPinsForGroupRehearsal,
       showToast
@@ -3186,6 +3771,20 @@ export default function HomeScreen({
           await removeLinkedPinsForGroupRehearsal([normalizedMember], groupId, rehearsal.id);
         })
       );
+      await writeUserNotifications([
+        {
+          id: notificationDocumentId("group-member-removed", groupId, normalizedMember),
+          type: "group_removed",
+          recipientEmail: normalizedMember,
+          actorEmail: group.ownerEmail,
+          title: "הוסרת מההרכב",
+          message: `הוסרת מההרכב ${group.name}.`,
+          groupId,
+          createdAt: Date.now(),
+          readAt: null,
+          resolvedAt: Date.now()
+        }
+      ]);
     },
     [groups, removeLinkedPinsForGroupRehearsal, removeMember]
   );
@@ -3205,8 +3804,22 @@ export default function HomeScreen({
           await removeLinkedPinsForGroupRehearsal([normalizedEmail], groupId, rehearsal.id);
         })
       );
+      await writeUserNotifications([
+        {
+          id: notificationDocumentId("group-member-left", groupId, normalizedEmail),
+          type: "group_updated",
+          recipientEmail: group.ownerEmail,
+          actorEmail: normalizedEmail,
+          title: "משתתף/ת עזב/ה את ההרכב",
+          message: `${currentUser?.name || normalizedEmail} עזב/ה את ${group.name}.`,
+          groupId,
+          createdAt: Date.now(),
+          readAt: null,
+          resolvedAt: Date.now()
+        }
+      ]);
     },
-    [currentUser?.email, groups, leaveGroup, removeLinkedPinsForGroupRehearsal]
+    [currentUser?.email, currentUser?.name, groups, leaveGroup, removeLinkedPinsForGroupRehearsal]
   );
 
   const handleGroupEdit = useCallback(
@@ -3225,6 +3838,8 @@ export default function HomeScreen({
         .map((entry) => entry.trim().toLowerCase())
         .filter((entry) => Boolean(entry) && entry !== owner);
       const removedMembers = currentMembers.filter((entry) => !nextMembers.includes(entry));
+      const addedMembers = nextMembers.filter((entry) => !currentMembers.includes(entry));
+      const retainedMembers = currentMembers.filter((entry) => nextMembers.includes(entry));
       const affectedRehearsalsByMember = new Map<string, string[]>();
       if (removedMembers.length) {
         const removedSet = new Set(removedMembers);
@@ -3238,7 +3853,44 @@ export default function HomeScreen({
         });
       }
 
-      await updateGroup(groupId, { name: payload.name, memberEmails: nextMembers });
+      await updateGroup(groupId, { name: payload.name, memberEmails: retainedMembers });
+      await Promise.all(
+        addedMembers.map((memberEmail) => handleInviteToGroup(groupId, memberEmail, payload.name.trim()))
+      );
+
+      const nowMs = Date.now();
+      const informationalDrafts: NotificationDraft[] = [];
+      removedMembers.forEach((recipientEmail) => {
+        informationalDrafts.push({
+          id: notificationDocumentId("group-member-removed", groupId, recipientEmail),
+          type: "group_removed",
+          recipientEmail,
+          actorEmail: owner,
+          title: "הוסרת מההרכב",
+          message: `הוסרת מההרכב ${group.name}.`,
+          groupId,
+          createdAt: nowMs,
+          readAt: null,
+          resolvedAt: nowMs
+        });
+      });
+      if (payload.name.trim() && payload.name.trim() !== group.name) {
+        retainedMembers.forEach((recipientEmail) => {
+          informationalDrafts.push({
+            id: notificationDocumentId("group-renamed", groupId, recipientEmail, payload.name.trim()),
+            type: "group_updated",
+            recipientEmail,
+            actorEmail: owner,
+            title: "שם ההרכב עודכן",
+            message: `${group.name} נקרא כעת ${payload.name.trim()}.`,
+            groupId,
+            createdAt: nowMs,
+            readAt: null,
+            resolvedAt: nowMs
+          });
+        });
+      }
+      if (informationalDrafts.length) await writeUserNotifications(informationalDrafts);
 
       if (!removedMembers.length) return;
       await Promise.all(
@@ -3252,7 +3904,7 @@ export default function HomeScreen({
         })
       );
     },
-    [groups, removeLinkedPinsForGroupRehearsal, updateGroup]
+    [groups, handleInviteToGroup, removeLinkedPinsForGroupRehearsal, updateGroup]
   );
 
   const handleFinderDateWindowChange = useCallback((startDate: string, endDate: string) => {
@@ -3279,7 +3931,7 @@ export default function HomeScreen({
       todayDayKey={todayDayKey}
       onFinderDateWindowChange={handleFinderDateWindowChange}
       availability={effectiveAvailability}
-      groups={collaborationAvailable ? groups : []}
+      groups={groups}
       collaboratorProfiles={collaboratorProfiles}
       finderPolicyMaxDurationMinutes={finderPolicyMaxDurationMinutes}
       finderPolicyMaxDaysForward={finderPolicyMaxDaysForward}
@@ -3329,9 +3981,12 @@ export default function HomeScreen({
       directoryUsers={users}
 	      pendingInvites={collaborationAvailable ? pendingInvites : []}
 	      onGroupCreate={handleCreateGroup}
-	      onGroupInvite={(groupId, email) => { void inviteToGroup(groupId, email); }}
-	      onGroupInviteResponse={(groupId, accept) => { void respondToInvite(groupId, accept); }}
-	      onGroupRename={(groupId, name) => { void renameGroup(groupId, name); }}
+	      onGroupInvite={(groupId, email) => { void handleInviteToGroup(groupId, email); }}
+	      onGroupInviteResponse={(groupId, accept) => { void handleGroupInviteResponse(groupId, accept); }}
+	      onGroupRename={(groupId, name) => {
+        const group = groups.find((entry) => entry.id === groupId);
+        void handleGroupEdit(groupId, { name, memberEmails: group?.memberEmails || [] });
+      }}
       onGroupEdit={(groupId, payload) => { void handleGroupEdit(groupId, payload); }}
       onGroupDelete={(groupId) => { void handleDeleteGroup(groupId); }}
       onGroupLeave={(groupId) => { void handleGroupLeave(groupId); }}
@@ -3538,9 +4193,14 @@ export default function HomeScreen({
   const detailsParticipants = useMemo(() => {
     if (!detailsReservation) return [];
     const ownerEmail = (detailsReservation.reservedEmail || "").trim().toLowerCase();
-    const participantEmails = normalizeEmailList([ownerEmail, ...(detailsReservation.quotaParticipantEmails || [])]);
-    if (participantEmails.length <= 1) return [];
-    return participantEmails.map((email) => {
+    const linked = extractLinkedIdsFromReservation(detailsReservation);
+    const linkedParticipants = linked
+      ? findGroupRehearsal(linked.groupId, linked.rehearsalId).rehearsal?.participants || null
+      : null;
+    const participantStates = resolveReservationParticipantStates(detailsReservation, linkedParticipants)
+      .filter((participant) => participant.status !== "declined");
+    return participantStates.map((participant) => {
+      const email = participant.email;
       const directoryUser = usersByEmail.get(email);
       const isOwner = ownerEmail && email === ownerEmail;
       const name = isOwner
@@ -3552,9 +4212,14 @@ export default function HomeScreen({
       const pictureUrl = isOwner
         ? detailsPictureUrl || (directoryUser?.pictureUrl || "").trim()
         : (directoryUser?.pictureUrl || "").trim();
-      return { email, name, phone, pictureUrl };
+      return { email, name, phone, pictureUrl, status: participant.status };
     });
-  }, [detailsName, detailsPhone, detailsPictureUrl, detailsReservation, usersByEmail]);
+  }, [detailsName, detailsPhone, detailsPictureUrl, detailsReservation, findGroupRehearsal, usersByEmail]);
+  const detailsCurrentParticipantStatus = (() => {
+    const currentEmail = (currentUser?.email || "").trim().toLowerCase();
+    if (!currentEmail || !detailsReservation) return undefined;
+    return detailsParticipants.find((participant) => participant.email === currentEmail)?.status;
+  })();
   const reservationPinned = detailsReservation
     ? isPinned({
         kind: "reservation",
@@ -3624,6 +4289,25 @@ export default function HomeScreen({
           {toast.message}
         </div>
       ) : null}
+      <NotificationsOverlay
+        open={notificationsOpen}
+        notifications={notificationInbox.notifications}
+        ready={notificationInbox.ready}
+        onClose={() => onNotificationsClose?.()}
+        onOpened={() => { void notificationInbox.markAllRead(); }}
+        onRespondSharedReservation={(notification, status) => {
+          if (!notification.reservationId) return;
+          void respondToSharedReservation(notification.reservationId, status, notification.id);
+        }}
+        onRespondRehearsal={(notification, status) => {
+          if (!notification.groupId || !notification.rehearsalId) return;
+          void applyRehearsalResponse(notification.groupId, notification.rehearsalId, status, notification.id);
+        }}
+        onRespondGroupInvite={(notification, accept) => {
+          if (!notification.groupId) return;
+          void handleGroupInviteResponse(notification.groupId, accept, notification.id);
+        }}
+      />
       {pendingConfirm ? (
         <ReserveConfirmOverlay
           open
@@ -3710,6 +4394,8 @@ export default function HomeScreen({
                   targetLinkedGroupId,
                   rehearsalName
                 );
+              } else {
+                await notifyReservationParticipants(createdReservation, "created");
               }
               setPendingFinderAutoLinkSynced(null);
             })();
@@ -3768,6 +4454,19 @@ export default function HomeScreen({
         phone={detailsPhone}
         pictureUrl={detailsPictureUrl || undefined}
         participants={detailsParticipants}
+        currentParticipantStatus={!detailsIsMine ? detailsCurrentParticipantStatus : undefined}
+        onRespondParticipation={
+          !detailsIsMine && detailsReservation && detailsCurrentParticipantStatus
+            ? (status) => {
+                const linked = extractLinkedIdsFromReservation(detailsReservation);
+                if (linked) {
+                  void applyRehearsalResponse(linked.groupId, linked.rehearsalId, status);
+                } else {
+                  void respondToSharedReservation(detailsReservation.id, status);
+                }
+              }
+            : undefined
+        }
         privateDescription={detailsPrivateDescription || undefined}
         pinned={reservationPinned}
         onTogglePin={
@@ -3900,6 +4599,8 @@ export default function HomeScreen({
               tone: "primary",
               onClick: () => {
                 if (!pendingRelease?.linkedGroupId || !pendingRelease.linkedRehearsalId) return;
+                const linkedGroupId = pendingRelease.linkedGroupId;
+                const linkedRehearsalId = pendingRelease.linkedRehearsalId;
                 void (async () => {
                   if (!canReleaseReservationNow(pendingReleaseEntry)) return;
                   const ok = await releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
@@ -3908,8 +4609,8 @@ export default function HomeScreen({
                     return;
                   }
                   await unlinkRehearsalRoomFromReservation(
-                    pendingRelease.linkedGroupId,
-                    pendingRelease.linkedRehearsalId
+                    linkedGroupId,
+                    linkedRehearsalId
                   );
                   setPendingRelease(null);
                 })();
@@ -3920,6 +4621,8 @@ export default function HomeScreen({
               tone: "danger",
               onClick: () => {
                 if (!pendingRelease?.linkedGroupId || !pendingRelease.linkedRehearsalId) return;
+                const linkedGroupId = pendingRelease.linkedGroupId;
+                const linkedRehearsalId = pendingRelease.linkedRehearsalId;
                 void (async () => {
                   if (!canReleaseReservationNow(pendingReleaseEntry)) return;
                   const ok = await releaseReservation(pendingRelease.dateKey, pendingRelease.reservationId);
@@ -3928,8 +4631,8 @@ export default function HomeScreen({
                     return;
                   }
                   await handleDeleteGroupRehearsal(
-                    pendingRelease.linkedGroupId,
-                    pendingRelease.linkedRehearsalId,
+                    linkedGroupId,
+                    linkedRehearsalId,
                     { releaseLinkedReservation: false }
                   );
                   setPendingRelease(null);
@@ -3956,6 +4659,9 @@ export default function HomeScreen({
               if (!ok) {
                 showToast("שחרור נכשל (בדוק הגדרות Firestore).", "error");
                 return;
+              }
+              if (pendingReleaseEntry) {
+                await notifyReservationParticipants(pendingReleaseEntry, "cancelled");
               }
               setPendingRelease(null);
             })();

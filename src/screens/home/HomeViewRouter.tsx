@@ -346,6 +346,7 @@ export default function HomeViewRouter({
         currentUser={currentUser}
         pins={pins}
         onEditReservation={onEditReservation}
+        onReservationDetails={onReservationClick}
         getScheduleLessonsForDate={getLessonsForDate}
         onOpenPinned={onOpenPinned}
         onAddSlot={onMyScheduleAddSlot}

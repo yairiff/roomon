@@ -1259,9 +1259,9 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
 
   const scheduleLessons = useMemo(() => {
     const scopeSet = new Set(activeSemesterScope || []);
-    const manualLessons = lessons.map((lesson) => ({
+    const manualLessons: LessonRecord[] = lessons.map((lesson) => ({
       ...lesson,
-      syncSource: lesson.syncSource === "api" ? "api" : "manual"
+      syncSource: lesson.syncSource === "api" ? ("api" as const) : ("manual" as const)
     }));
     if (!lessonsSyncEnabled) {
       return manualLessons

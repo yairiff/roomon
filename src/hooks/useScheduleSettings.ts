@@ -624,7 +624,7 @@ export function useScheduleSettings() {
         semesters: sanitized,
         // Keep legacy field for older readers.
         semesterRanges: ranges
-      }),
+      }) as Record<string, unknown>,
       { merge: true }
     );
   };
@@ -643,7 +643,7 @@ export function useScheduleSettings() {
         reservationPolicies: sanitized,
         // Keep a mirrored legacy field for backward compatibility.
         reservationPolicy: defaultPolicy
-      }),
+      }) as Record<string, unknown>,
       { merge: true }
     );
   };
