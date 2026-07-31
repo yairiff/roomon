@@ -1,9 +1,6 @@
-import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
-import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import PersonAddAltRoundedIcon from "@mui/icons-material/PersonAddAltRounded";
 import { useState } from "react";
-import GmailIcon from "../../../components/GmailIcon";
-import { getContactLinks } from "../../../lib/contactLinks";
+import ContactActionButtons from "../../../components/ContactActionButtons";
 import type { ReservationParticipantStatus } from "../../../types/reservations";
 import { ParticipantAvatarStack, ParticipantRows, type ParticipantDisplayEntry } from "../components/ParticipantDisplay";
 
@@ -50,8 +47,6 @@ export default function ReservationDetailsOverlay({
   const [participantsExpanded, setParticipantsExpanded] = useState(false);
 
   if (!open) return null;
-
-  const ownerLinks = getContactLinks(email, phone);
 
   const initials = (() => {
     const source = (name || "").trim() || (email || "").trim();
@@ -129,36 +124,7 @@ export default function ReservationDetailsOverlay({
             </button>
           ) : null}
 
-          <div className="reserve-contact-actions" aria-label="יצירת קשר">
-            {ownerLinks.telHref ? (
-              <a className="icon-button contact" href={ownerLinks.telHref} aria-label="התקשר">
-                <PhoneInTalkRoundedIcon fontSize="small" />
-              </a>
-            ) : (
-              <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
-                <PhoneInTalkRoundedIcon fontSize="small" />
-              </button>
-            )}
-
-            {ownerLinks.whatsappHref ? (
-              <a
-                className="icon-button contact whatsapp"
-                href={ownerLinks.whatsappHref}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="WhatsApp"
-              >
-                <WhatsAppIcon fontSize="small" />
-              </a>
-            ) : (
-              <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
-                <WhatsAppIcon fontSize="small" />
-              </button>
-            )}
-            <a className="icon-button contact email gmail" href={ownerLinks.emailHref} aria-label="שליחת אימייל">
-              <GmailIcon />
-            </a>
-          </div>
+          <ContactActionButtons email={email} phone={phone} label={name || email} />
         </div>
       </div>
 

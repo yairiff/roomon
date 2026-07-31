@@ -1,7 +1,4 @@
-import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
-import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import GmailIcon from "../../../components/GmailIcon";
-import { getContactLinks } from "../../../lib/contactLinks";
+import ContactActionButtons from "../../../components/ContactActionButtons";
 import type { ReservationParticipantStatus } from "../../../types/reservations";
 
 export type ParticipantDisplayEntry = {
@@ -82,7 +79,6 @@ export function ParticipantRows({ participants }: { participants: ParticipantDis
     <div className="reservation-participants">
       {visible.map((participant) => {
         const label = (participant.name || "").trim() || participant.email;
-        const links = getContactLinks(participant.email, participant.phone);
         return (
           <div key={`reservation-participant-${participant.email}`} className="reservation-participant-row">
             <span className="groups-chat-avatar reservation-participant-avatar" aria-hidden="true">
@@ -93,29 +89,12 @@ export function ParticipantRows({ participants }: { participants: ParticipantDis
               <span className="groups-chat-subtitle">{participant.phone || participant.email}</span>
               <span className={`participant-status ${participant.status}`}>{statusLabel(participant.status)}</span>
             </span>
-            <span className="reserve-contact-actions reservation-participant-actions" aria-label="יצירת קשר">
-              {links.telHref ? (
-                <a className="icon-button contact" href={links.telHref} aria-label={`התקשר אל ${label}`}>
-                  <PhoneInTalkRoundedIcon fontSize="small" />
-                </a>
-              ) : (
-                <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
-                  <PhoneInTalkRoundedIcon fontSize="small" />
-                </button>
-              )}
-              {links.whatsappHref ? (
-                <a className="icon-button contact whatsapp" href={links.whatsappHref} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${label}`}>
-                  <WhatsAppIcon fontSize="small" />
-                </a>
-              ) : (
-                <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
-                  <WhatsAppIcon fontSize="small" />
-                </button>
-              )}
-              <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${label}`}>
-                <GmailIcon />
-              </a>
-            </span>
+            <ContactActionButtons
+              email={participant.email}
+              phone={participant.phone}
+              label={label}
+              className="reservation-participant-actions"
+            />
           </div>
         );
       })}

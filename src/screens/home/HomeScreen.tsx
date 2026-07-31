@@ -3773,6 +3773,7 @@ export default function HomeScreen({
         durationMinutes: reservation.durationMinutes,
         roomId: reservation.roomId,
         reservationId: reservation.id,
+        participants: resolveReservationParticipantStates(reservation),
         mode: { ...rehearsal.mode, findRoom: true }
       };
       await addGroupRehearsal(group.id, next);
@@ -4139,9 +4140,10 @@ export default function HomeScreen({
       );
       if (!ok || !currentEntry) return null;
       const linked = extractLinkedIdsFromReservation(currentEntry);
-      const participants = linked
-        ? resolveReservationParticipantStates(currentEntry)
-        : updateReservationParticipantSelection(currentEntry, pending.request.participantEmails || []);
+      const participants = updateReservationParticipantSelection(
+        currentEntry,
+        pending.request.participantEmails || []
+      );
       const updatedReservation: Reservation = {
         ...currentEntry,
         time: startMinutes,
@@ -4918,10 +4920,13 @@ export default function HomeScreen({
                     ?.members?.map((member) => member.email) || []
                 : [];
               const linkedReservationTarget = Boolean(linkedGroupIdForQuota);
+              const editingLinkedReservation = pendingConfirm.mode === "edit" && Boolean(pendingConfirmLinkedIds);
               const shouldUseSharedParticipants = peopleToolEnabled && !linkedReservationTarget;
               const requestWithParticipants: ReserveRequest = {
                 ...pendingConfirm.request,
-                participantEmails: linkedReservationTarget
+                participantEmails: editingLinkedReservation && peopleToolEnabled
+                  ? normalizedParticipants
+                  : linkedReservationTarget
                   ? normalizeEmailList(
                       linkedGroupQuotaParticipants.length
                         ? linkedGroupQuotaParticipants

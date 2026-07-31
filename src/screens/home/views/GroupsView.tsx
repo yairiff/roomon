@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import PhoneInTalkRoundedIcon from "@mui/icons-material/PhoneInTalkRounded";
-import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
-import GmailIcon from "../../../components/GmailIcon";
+import ContactActionButtons from "../../../components/ContactActionButtons";
 import {
   AddIcon,
   ApproveIcon,
@@ -22,7 +20,6 @@ import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey } from ".
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import type { DirectoryUser } from "../../../types/admin";
-import { getContactLinks } from "../../../lib/contactLinks";
 import {
   getPeopleCategoryLabel,
   matchesPeopleCategory,
@@ -574,7 +571,6 @@ export default function GroupsView({
                   const selected = selectedPeopleSet.has(email);
                   const label = (user.name || "").trim() || user.email;
                   const pictureUrl = (user.pictureUrl || "").trim();
-                  const { emailHref, telHref, whatsappHref } = getContactLinks(user.email, user.phone);
                   return (
                     <li key={`person-${email}`}>
                       <div className={`groups-chat-item people-row ${selected ? "active" : ""}`}>
@@ -609,35 +605,12 @@ export default function GroupsView({
                             <span className="groups-chat-subtitle">{getPeopleCategoryLabel(user)}</span>
                           </button>
                         </span>
-                        <span className="reserve-contact-actions people-contact-actions" aria-label="יצירת קשר">
-                          {telHref ? (
-                            <a className="icon-button contact" href={telHref} aria-label={`התקשר אל ${label}`}>
-                              <PhoneInTalkRoundedIcon fontSize="small" />
-                            </a>
-                          ) : (
-                            <button className="icon-button contact" type="button" aria-label="אין טלפון" disabled>
-                              <PhoneInTalkRoundedIcon fontSize="small" />
-                            </button>
-                          )}
-                          {whatsappHref ? (
-                            <a
-                              className="icon-button contact whatsapp"
-                              href={whatsappHref}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-label={`WhatsApp ${label}`}
-                            >
-                              <WhatsAppIcon fontSize="small" />
-                            </a>
-                          ) : (
-                            <button className="icon-button contact whatsapp" type="button" aria-label="אין WhatsApp" disabled>
-                              <WhatsAppIcon fontSize="small" />
-                            </button>
-                          )}
-                          <a className="icon-button contact email gmail" href={emailHref} aria-label={`שליחת אימייל אל ${label}`}>
-                            <GmailIcon />
-                          </a>
-                        </span>
+                        <ContactActionButtons
+                          email={user.email}
+                          phone={user.phone}
+                          label={label}
+                          className="people-contact-actions"
+                        />
                       </div>
                     </li>
                   );
@@ -1142,7 +1115,6 @@ export default function GroupsView({
                 const user = usersByEmail.get(participant.email);
                 const name = displayName(participant.email, usersByEmail);
                 const pictureUrl = (user?.pictureUrl || "").trim();
-                const links = getContactLinks(participant.email, user?.phone);
                 return (
                   <li key={`${detailsRehearsal.id}-${participant.email}`} className="groups-rehearsal-member-row">
                     <div className="groups-chat-avatar">
@@ -1155,21 +1127,13 @@ export default function GroupsView({
                     <span className={`groups-rehearsal-member-status ${participant.status}`}>
                       {participant.status === "approved" ? "משתתף" : participant.status === "declined" ? "דחה" : "משתתף"}
                     </span>
-                    <span className="reserve-contact-actions groups-rehearsal-member-contacts" aria-label="יצירת קשר">
-                      {links.telHref ? (
-                        <a className="icon-button contact" href={links.telHref} aria-label={`התקשר אל ${name}`}>
-                          <PhoneInTalkRoundedIcon fontSize="small" />
-                        </a>
-                      ) : null}
-                      {links.whatsappHref ? (
-                        <a className="icon-button contact whatsapp" href={links.whatsappHref} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${name}`}>
-                          <WhatsAppIcon fontSize="small" />
-                        </a>
-                      ) : null}
-                      <a className="icon-button contact email gmail" href={links.emailHref} aria-label={`שליחת אימייל אל ${name}`}>
-                        <GmailIcon />
-                      </a>
-                    </span>
+                    <ContactActionButtons
+                      email={participant.email}
+                      phone={user?.phone}
+                      label={name}
+                      className="groups-rehearsal-member-contacts"
+                      showUnavailable={false}
+                    />
                   </li>
                 );
               })}

@@ -687,12 +687,68 @@ button.participant-avatar-stack {
 }
 
 .auth-menu.authenticated {
-  width: min(390px, calc(100vw - 32px));
+  width: min(430px, calc(100vw - 32px));
   max-height: calc(100dvh - 112px);
   padding: 12px;
   gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+
+.auth-menu-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.auth-menu-section {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-solid);
+}
+
+.auth-section-title {
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.auth-section-rows {
+  display: grid;
+  min-width: 0;
+}
+
+.auth-menu.authenticated .auth-section-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.auth-menu.authenticated .auth-section-row:last-child {
+  border-bottom: 0;
 }
 
 .auth-menu-close {
@@ -701,10 +757,11 @@ button.participant-avatar-stack {
 
 .auth-notifications-embed {
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: 8px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
+  border-radius: 0;
   overflow: hidden;
-  background: var(--surface-solid);
+  background: transparent;
 }
 
 .auth-notifications-header {
@@ -772,11 +829,11 @@ button.participant-avatar-stack {
 
 .auth-profile-capsule {
   min-width: 0;
-  padding: 10px;
+  padding: 12px;
   display: grid;
-  gap: 10px;
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: 8px;
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
   background: color-mix(in srgb, var(--surface-solid) 96%, var(--accent) 4%);
 }
 
@@ -791,19 +848,28 @@ button.participant-avatar-stack {
 .auth-profile-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0;
+  margin: 0 -12px -12px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
 }
 
-.auth-profile-actions button {
+.auth-menu.authenticated .auth-profile-actions button {
   min-width: 0;
-  min-height: 40px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   white-space: nowrap;
+  box-shadow: none;
+  background: transparent;
+}
+
+.auth-menu.authenticated .auth-profile-actions button + button {
+  border-inline-start: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
 }
 
 .auth-profile-actions button svg {
@@ -812,8 +878,33 @@ button.participant-avatar-stack {
 }
 
 .auth-profile-actions .auth-signout-button {
-  border-radius: 8px;
+  border-radius: 0;
   justify-content: center;
+}
+
+.auth-menu-section.auth-quotas {
+  padding: 0;
+  display: block;
+  border-radius: 8px;
+  background: var(--surface-solid);
+}
+
+.auth-menu-section .auth-quotas-title {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.auth-menu-section .auth-quotas-list {
+  padding: 11px 12px 12px;
+  gap: 10px;
+}
+
+.auth-options-section .auth-install-hint {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface-solid) 92%, var(--accent) 8%);
 }
 
 @media (max-width: 520px) {
@@ -858,13 +949,12 @@ button.participant-avatar-stack {
     border-radius: 0;
     box-shadow: none;
     padding: calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    grid-template-rows: 44px minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .auth-menu-close {
-    position: sticky;
-    top: 0;
+    position: relative;
     z-index: 3;
     display: grid;
     place-items: center;
@@ -875,8 +965,10 @@ button.participant-avatar-stack {
     background: color-mix(in srgb, var(--surface-solid) 92%, var(--line));
   }
 
-  .auth-menu.authenticated .auth-profile-capsule {
-    margin-top: auto;
+  .auth-menu-content {
+    width: min(100%, 480px);
+    padding-inline: 2px;
+    padding-bottom: 2px;
   }
 }
 
@@ -2369,7 +2461,7 @@ body,
   align-items: center;
   gap: 10px;
   flex: 0 0 auto;
-  direction: rtl;
+  direction: ltr;
 }
 
 .reservation-participants {

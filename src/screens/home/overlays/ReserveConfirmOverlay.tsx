@@ -236,7 +236,7 @@ export default function ReserveConfirmOverlay({
     setSharedDescription(initialSharedDescription);
     setInfoOpen(false);
     const initialPeople = normalizeEmails(request.participantEmails || []);
-    const startsWithGroup = Boolean(initialLinkToGroup || initialGroupId);
+    const startsWithGroup = !linkedGroupName && Boolean(initialLinkToGroup || initialGroupId);
     setParticipantTarget(startsWithGroup ? "group" : initialPeople.length ? "people" : "self");
     setParticipantPickerTab(startsWithGroup || !peopleSelectionEnabled ? "groups" : "people");
     setSelectedGroupId(initialGroupId || groupOptions[0]?.id || "");
@@ -257,6 +257,7 @@ export default function ReserveConfirmOverlay({
     initialPrivateDescription,
     initialSharedDescription,
     initialStart,
+    linkedGroupName,
     open,
     peopleSelectionEnabled,
     request.participantEmails
@@ -558,13 +559,18 @@ export default function ReserveConfirmOverlay({
         </div>
 
         <p className="reserve-duration">משך: {formatDurationLabelHe(durationMinutes)}</p>
-        {!linkedGroupName && (peopleSelectionEnabled || groupOptions.length) ? (
+        {(!linkedGroupName && (peopleSelectionEnabled || groupOptions.length)) ||
+        (mode === "edit" && peopleSelectionEnabled) ? (
           <button
             type="button"
             className="secondary reserve-people-selector"
             onClick={() => {
               setParticipantPickerTab(
-                participantTarget === "group" || !peopleSelectionEnabled ? "groups" : "people"
+                linkedGroupName
+                  ? "people"
+                  : participantTarget === "group" || !peopleSelectionEnabled
+                    ? "groups"
+                    : "people"
               );
               setParticipantPickerOpen(true);
             }}
@@ -573,7 +579,7 @@ export default function ReserveConfirmOverlay({
               {participantTarget === "group" ? <GroupsIcon /> : <UserIcon />}
             </span>
             <span className="reserve-group-selector-text">
-              <strong>הוספת משתתפים</strong>
+              <strong>{mode === "edit" ? "עריכת משתתפים" : "הוספת משתתפים"}</strong>
               <span>{targetSummary}</span>
             </span>
             {participantTarget === "group" && selectedGroupMembersPreview.length ? (
@@ -701,7 +707,7 @@ export default function ReserveConfirmOverlay({
         <div className="groups-overlay-backdrop reserve-group-picker-layer" role="presentation" onClick={() => setParticipantPickerOpen(false)}>
           <div className="groups-overlay finder-group-picker-overlay reserve-participant-picker-overlay" role="dialog" onClick={(event) => event.stopPropagation()}>
             <p className="groups-overlay-title">הוספת משתתפים</p>
-            {peopleSelectionEnabled && groupOptions.length ? (
+            {peopleSelectionEnabled && groupOptions.length && !linkedGroupName ? (
               <div className="reserve-participant-tabs" role="tablist" aria-label="סוג משתתפים">
                 <button
                   type="button"
@@ -821,14 +827,16 @@ export default function ReserveConfirmOverlay({
               </>
             )}
             <div className="groups-overlay-actions">
-              <button type="button" className="chip ghost" onClick={() => {
-                setParticipantTarget("self");
-                setSelectedParticipantEmails([]);
-                setSelectedGroupId("");
-                setParticipantPickerOpen(false);
-              }}>
-                רק אני
-              </button>
+              {!linkedGroupName ? (
+                <button type="button" className="chip ghost" onClick={() => {
+                  setParticipantTarget("self");
+                  setSelectedParticipantEmails([]);
+                  setSelectedGroupId("");
+                  setParticipantPickerOpen(false);
+                }}>
+                  רק אני
+                </button>
+              ) : <span />}
               {participantPickerTab === "people" && peopleSelectionEnabled ? (
                 <button type="button" className="chip active" onClick={() => setParticipantPickerOpen(false)}>
                   שמירה

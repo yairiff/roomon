@@ -465,168 +465,153 @@ export default function AuthMenu({
             <button type="button" className="icon-button auth-menu-close" onClick={onClose} aria-label="סגירת תפריט הפרופיל">
               <CloseIcon />
             </button>
-            <section className="auth-notifications-embed" aria-label="התראות">
-              <header className="auth-notifications-header">
-                <span className="auth-notifications-title">
-                  <NotificationsRoundedIcon fontSize="small" />
-                  <strong>התראות</strong>
-                </span>
-                {notificationCount > 0 ? (
-                  <span className="auth-notifications-count">{notificationCount > 99 ? "99+" : notificationCount}</span>
-                ) : null}
-              </header>
-              <NotificationsList
-                notifications={notifications}
-                ready={notificationsReady}
-                className="auth-notifications-list"
-                respondSharedReservation={respondSharedReservation}
-                respondRehearsal={respondRehearsal}
-                respondGroupInvite={respondGroupInvite}
-                respondReservationJoinRequest={respondReservationJoinRequest}
-              />
-            </section>
-            {quotaRows.length ? (
-              <div className="auth-quotas" aria-label="מכסות שריונים">
-                <p className="auth-quotas-title">מכסות שריונים</p>
-                <ul className="auth-quotas-list">
-                  {quotaRows.map((row) => (
-                    <li key={row.label} className="auth-quotas-row">
-                      <div className="quota-progress-row">
-                        <div className="quota-progress-head">
-                          <span className="auth-quotas-label">{row.label}</span>
-                          <span className="quota-progress-inline-value">{row.summaryLabel}</span>
-                        </div>
-                        <span className="quota-progress-wrap" aria-hidden="true">
-                          <span className="quota-progress-track">
-                            <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+            <div className="auth-menu-content">
+              <section className="auth-menu-section auth-profile-section" aria-labelledby="auth-profile-title">
+                <h2 id="auth-profile-title" className="auth-section-title">פרופיל</h2>
+                <div className="auth-profile-capsule">
+                  <div className="auth-user">
+                    <button
+                      type="button"
+                      className={`auth-user-avatar${pictureUrl ? " clickable" : ""}`}
+                      aria-label={pictureUrl ? "הצג תמונת פרופיל" : undefined}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!pictureUrl) return;
+                        setZoomOpen(true);
+                      }}
+                      disabled={!pictureUrl}
+                    >
+                      {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
+                    </button>
+                    <div className="auth-user-text">
+                      <p className="auth-user-name">{user.name}</p>
+                      <span className="auth-user-email">{profileCategoryLabel}</span>
+                    </div>
+                  </div>
+                  <div className="auth-profile-actions">
+                    <button className="secondary" type="button" onClick={openProfileEditor}>
+                      <UserIcon />
+                      <span>עריכת פרופיל</span>
+                    </button>
+                    <button className="secondary auth-signout-button" onClick={onSignOut} type="button">
+                      <LogoutIcon />
+                      <span>התנתק</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              {quotaRows.length ? (
+                <section className="auth-menu-section auth-quotas" aria-labelledby="auth-quotas-title">
+                  <h2 id="auth-quotas-title" className="auth-section-title auth-quotas-title">מכסות שריונים</h2>
+                  <ul className="auth-quotas-list">
+                    {quotaRows.map((row) => (
+                      <li key={row.label} className="auth-quotas-row">
+                        <div className="quota-progress-row">
+                          <div className="quota-progress-head">
+                            <span className="auth-quotas-label">{row.label}</span>
+                            <span className="quota-progress-inline-value">{row.summaryLabel}</span>
+                          </div>
+                          <span className="quota-progress-wrap" aria-hidden="true">
+                            <span className="quota-progress-track">
+                              <span className="quota-progress-fill" style={{ width: `${row.percent}%` }} />
+                            </span>
                           </span>
+                          {row.resetLabel ? <span className="quota-progress-reset-date">{row.resetLabel}</span> : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              {user.role === "admin" || user.role === "moderator" ? (
+                <section className="auth-menu-section" aria-labelledby="auth-management-title">
+                  <h2 id="auth-management-title" className="auth-section-title">ניהול</h2>
+                  <div className="auth-section-rows">
+                    {user.role === "admin" ? (
+                      <button
+                        className="secondary auth-section-row auth-reservations-button"
+                        type="button"
+                        onClick={() => {
+                          window.location.href = "/admin";
+                        }}
+                      >
+                        <AdminIcon />
+                        <span>דשבורד ניהול</span>
+                      </button>
+                    ) : null}
+                    <button className="secondary auth-section-row auth-admin-button" type="button" onClick={() => onToggleAdminMode?.()}>
+                      <span className="auth-admin-label">
+                        {user.role === "admin" ? <EditIcon /> : <AdminIcon />}
+                        <span>מצב עריכה</span>
+                      </span>
+                      <span className="auth-admin-switch" aria-hidden="true">
+                        <span className={`toggle-switch${adminMode ? " on" : ""}`}>
+                          <span className="toggle-dot" />
                         </span>
-                        {row.resetLabel ? (
-                          <span className="quota-progress-reset-date">{row.resetLabel}</span>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {user.role === "admin" ? (
-              <>
-                <button
-                  className="secondary auth-reservations-button"
-                  type="button"
-                  onClick={() => {
-                    window.location.href = "/admin";
-                  }}
-                >
-                  <AdminIcon />
-                  <span>דשבורד ניהול</span>
-                </button>
-                <div className="auth-admin-row">
-                  <button className="secondary auth-admin-button" type="button" onClick={() => onToggleAdminMode?.()}>
+                      </span>
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
+              <section className="auth-menu-section auth-options-section" aria-labelledby="auth-options-title">
+                <h2 id="auth-options-title" className="auth-section-title">אפשרויות</h2>
+                <div className="auth-section-rows">
+                  <button
+                    className="secondary auth-section-row auth-admin-button"
+                    type="button"
+                    onClick={() => onToggleDarkMode?.()}
+                  >
                     <span className="auth-admin-label">
-                      <EditIcon />
-                      <span>מצב עריכה</span>
+                      <DarkModeIcon />
+                      <span>מצב כהה</span>
                     </span>
                     <span className="auth-admin-switch" aria-hidden="true">
-                      <span className={`toggle-switch${adminMode ? " on" : ""}`}>
+                      <span className={`toggle-switch${darkMode ? " on" : ""}`}>
                         <span className="toggle-dot" />
                       </span>
                     </span>
                   </button>
+                  {!isStandalone ? (
+                    <button className="secondary auth-section-row auth-install-button" type="button" onClick={handleInstall}>
+                      <ShortcutIcon />
+                      <span>{installAvailable ? "התקן אפליקציה" : "הוספה למסך הבית"}</span>
+                    </button>
+                  ) : null}
                 </div>
-              </>
-            ) : null}
-            {user.role === "moderator" ? (
-              <div className="auth-admin-row">
-                <button className="secondary auth-admin-button" type="button" onClick={() => onToggleAdminMode?.()}>
-                  <span className="auth-admin-label">
-                    <AdminIcon />
-                    <span>מצב עריכה</span>
-                  </span>
-                  <span className="auth-admin-switch" aria-hidden="true">
-                    <span className={`toggle-switch${adminMode ? " on" : ""}`}>
-                      <span className="toggle-dot" />
-                    </span>
-                  </span>
-                </button>
-              </div>
-            ) : null}
-            <div className="auth-admin-row">
-              <button
-                className="secondary auth-admin-button"
-                type="button"
-                onClick={() => onToggleDarkMode?.()}
-              >
-                <span className="auth-admin-label">
-                  <DarkModeIcon />
-                  <span>מצב כהה</span>
-                </span>
-                <span className="auth-admin-switch" aria-hidden="true">
-                  <span className={`toggle-switch${darkMode ? " on" : ""}`}>
-                    <span className="toggle-dot" />
-                  </span>
-                </span>
-              </button>
-            </div>
-            {!isStandalone ? (
-              <>
-                <button
-                  className="secondary auth-install-button"
-                  type="button"
-                  onClick={handleInstall}
-                >
-                  <ShortcutIcon />
-                  <span>{installAvailable ? "התקן אפליקציה" : "הוספה למסך הבית"}</span>
-                </button>
-                {installHelpOpen && !installAvailable ? (
+                {installHelpOpen && !installAvailable && !isStandalone ? (
                   <div className="auth-install-hint" role="note" aria-label="התקנה">
                     <div className="auth-install-hint-title">{installHintTitle}</div>
                     <ol className="auth-install-hint-steps">
-                      {installHintBody.map((line) => (
-                        <li key={line}>{line}</li>
-                      ))}
+                      {installHintBody.map((line) => <li key={line}>{line}</li>)}
                     </ol>
-                    {isIOS ? (
-                      <div className="auth-install-hint-foot">
-                        אם לא מופיע, ודאו שאתם לא במצב גלישה פרטית.
-                      </div>
-                    ) : null}
+                    {isIOS ? <div className="auth-install-hint-foot">אם לא מופיע, ודאו שאתם לא במצב גלישה פרטית.</div> : null}
                   </div>
                 ) : null}
-              </>
-            ) : null}
-            <section className="auth-profile-capsule">
-              <div className="auth-user">
-                <button
-                  type="button"
-                  className={`auth-user-avatar${pictureUrl ? " clickable" : ""}`}
-                  aria-label={pictureUrl ? "הצג תמונת פרופיל" : undefined}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!pictureUrl) return;
-                    setZoomOpen(true);
-                  }}
-                  disabled={!pictureUrl}
-                >
-                  {pictureUrl ? <img src={pictureUrl} alt="" loading="lazy" /> : <span aria-hidden="true">{initials}</span>}
-                </button>
-                <div className="auth-user-text">
-                  <p className="auth-user-name">{user.name}</p>
-                  <span className="auth-user-email">{profileCategoryLabel}</span>
+                <div className="auth-notifications-embed" aria-label="התראות">
+                  <header className="auth-notifications-header">
+                    <span className="auth-notifications-title">
+                      <NotificationsRoundedIcon fontSize="small" />
+                      <strong>התראות</strong>
+                    </span>
+                    {notificationCount > 0 ? (
+                      <span className="auth-notifications-count">{notificationCount > 99 ? "99+" : notificationCount}</span>
+                    ) : null}
+                  </header>
+                  <NotificationsList
+                    notifications={notifications}
+                    ready={notificationsReady}
+                    className="auth-notifications-list"
+                    respondSharedReservation={respondSharedReservation}
+                    respondRehearsal={respondRehearsal}
+                    respondGroupInvite={respondGroupInvite}
+                    respondReservationJoinRequest={respondReservationJoinRequest}
+                  />
                 </div>
-              </div>
-              <div className="auth-profile-actions">
-                <button className="secondary" type="button" onClick={openProfileEditor}>
-                  <UserIcon />
-                  <span>עריכת פרופיל</span>
-                </button>
-                <button className="secondary auth-signout-button" onClick={onSignOut} type="button">
-                  <LogoutIcon />
-                  <span>התנתק</span>
-                </button>
-              </div>
-            </section>
+              </section>
+            </div>
           </>
         ) : (
           <>
