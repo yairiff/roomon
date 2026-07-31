@@ -115,6 +115,7 @@ export default function ReservationDetailsOverlay({
               type="button"
               className={`reservation-participant-summary${participantsExpanded ? " expanded" : ""}`}
               aria-expanded={participantsExpanded}
+              aria-label={`${participantsExpanded ? "הסתרת" : "הצגת"} ${visibleParticipants.length} משתתפים`}
               onClick={() => setParticipantsExpanded((value) => !value)}
             >
               <span className="reservation-participant-count">{visibleParticipants.length} משתתפים</span>
