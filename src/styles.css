@@ -759,11 +759,6 @@ button.participant-avatar-stack {
 
 .auth-notifications-embed {
   min-width: 0;
-  border: 0;
-  border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
-  border-radius: 0;
-  overflow: hidden;
-  background: transparent;
 }
 
 .auth-notifications-header {

@@ -501,6 +501,27 @@ export default function AuthMenu({
                 </div>
               </section>
 
+              <section className="auth-menu-section auth-notifications-embed" aria-labelledby="auth-notifications-title">
+                <header className="auth-notifications-header">
+                  <span className="auth-notifications-title">
+                    <NotificationsRoundedIcon fontSize="small" />
+                    <strong id="auth-notifications-title">התראות</strong>
+                  </span>
+                  {notificationCount > 0 ? (
+                    <span className="auth-notifications-count">{notificationCount > 99 ? "99+" : notificationCount}</span>
+                  ) : null}
+                </header>
+                <NotificationsList
+                  notifications={notifications}
+                  ready={notificationsReady}
+                  className="auth-notifications-list"
+                  respondSharedReservation={respondSharedReservation}
+                  respondRehearsal={respondRehearsal}
+                  respondGroupInvite={respondGroupInvite}
+                  respondReservationJoinRequest={respondReservationJoinRequest}
+                />
+              </section>
+
               {quotaRows.length ? (
                 <section className="auth-menu-section auth-quotas" aria-labelledby="auth-quotas-title">
                   <h2 id="auth-quotas-title" className="auth-section-title auth-quotas-title">מכסות שריונים</h2>
@@ -522,37 +543,6 @@ export default function AuthMenu({
                       </li>
                     ))}
                   </ul>
-                </section>
-              ) : null}
-
-              {user.role === "admin" || user.role === "moderator" ? (
-                <section className="auth-menu-section" aria-labelledby="auth-management-title">
-                  <h2 id="auth-management-title" className="auth-section-title">ניהול</h2>
-                  <div className="auth-section-rows">
-                    {user.role === "admin" ? (
-                      <button
-                        className="secondary auth-section-row auth-reservations-button"
-                        type="button"
-                        onClick={() => {
-                          window.location.href = "/admin";
-                        }}
-                      >
-                        <AdminIcon />
-                        <span>דשבורד ניהול</span>
-                      </button>
-                    ) : null}
-                    <button className="secondary auth-section-row auth-admin-button" type="button" onClick={() => onToggleAdminMode?.()}>
-                      <span className="auth-admin-label">
-                        {user.role === "admin" ? <EditIcon /> : <AdminIcon />}
-                        <span>מצב עריכה</span>
-                      </span>
-                      <span className="auth-admin-switch" aria-hidden="true">
-                        <span className={`toggle-switch${adminMode ? " on" : ""}`}>
-                          <span className="toggle-dot" />
-                        </span>
-                      </span>
-                    </button>
-                  </div>
                 </section>
               ) : null}
 
@@ -590,27 +580,38 @@ export default function AuthMenu({
                     {isIOS ? <div className="auth-install-hint-foot">אם לא מופיע, ודאו שאתם לא במצב גלישה פרטית.</div> : null}
                   </div>
                 ) : null}
-                <div className="auth-notifications-embed" aria-label="התראות">
-                  <header className="auth-notifications-header">
-                    <span className="auth-notifications-title">
-                      <NotificationsRoundedIcon fontSize="small" />
-                      <strong>התראות</strong>
-                    </span>
-                    {notificationCount > 0 ? (
-                      <span className="auth-notifications-count">{notificationCount > 99 ? "99+" : notificationCount}</span>
-                    ) : null}
-                  </header>
-                  <NotificationsList
-                    notifications={notifications}
-                    ready={notificationsReady}
-                    className="auth-notifications-list"
-                    respondSharedReservation={respondSharedReservation}
-                    respondRehearsal={respondRehearsal}
-                    respondGroupInvite={respondGroupInvite}
-                    respondReservationJoinRequest={respondReservationJoinRequest}
-                  />
-                </div>
               </section>
+
+              {user.role === "admin" || user.role === "moderator" ? (
+                <section className="auth-menu-section" aria-labelledby="auth-management-title">
+                  <h2 id="auth-management-title" className="auth-section-title">ניהול</h2>
+                  <div className="auth-section-rows">
+                    {user.role === "admin" ? (
+                      <button
+                        className="secondary auth-section-row auth-reservations-button"
+                        type="button"
+                        onClick={() => {
+                          window.location.href = "/admin";
+                        }}
+                      >
+                        <AdminIcon />
+                        <span>דשבורד ניהול</span>
+                      </button>
+                    ) : null}
+                    <button className="secondary auth-section-row auth-admin-button" type="button" onClick={() => onToggleAdminMode?.()}>
+                      <span className="auth-admin-label">
+                        {user.role === "admin" ? <EditIcon /> : <AdminIcon />}
+                        <span>מצב עריכה</span>
+                      </span>
+                      <span className="auth-admin-switch" aria-hidden="true">
+                        <span className={`toggle-switch${adminMode ? " on" : ""}`}>
+                          <span className="toggle-dot" />
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                </section>
+              ) : null}
             </div>
           </>
         ) : (
