@@ -729,6 +729,7 @@ button.participant-avatar-stack {
   max-width: 100%;
   margin-inline: auto;
   display: grid;
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 10px;
   overflow-x: hidden;
