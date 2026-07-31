@@ -1,5 +1,7 @@
 import PersonAddAltRoundedIcon from "@mui/icons-material/PersonAddAltRounded";
-import { useState } from "react";
+import PersonRemoveRoundedIcon from "@mui/icons-material/PersonRemoveRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import { useEffect, useState } from "react";
 import ContactActionButtons from "../../../components/ContactActionButtons";
 import type { ReservationParticipantStatus } from "../../../types/reservations";
 import { ParticipantAvatarStack, ParticipantRows, type ParticipantDisplayEntry } from "../components/ParticipantDisplay";
@@ -21,6 +23,7 @@ export type ReservationDetailsOverlayProps = {
   sharedDescription?: string;
   joinRequestState?: "available" | "pending";
   onJoinRequest?: () => void;
+  onCancelJoinRequest?: () => void;
   onClose: () => void;
 };
 
@@ -41,12 +44,28 @@ export default function ReservationDetailsOverlay({
   sharedDescription,
   joinRequestState,
   onJoinRequest,
+  onCancelJoinRequest,
   onClose
 }: ReservationDetailsOverlayProps) {
   const [zoomOpen, setZoomOpen] = useState(false);
   const [participantsExpanded, setParticipantsExpanded] = useState(false);
 
+  useEffect(() => {
+    if (!open) return;
+    setZoomOpen(false);
+    setParticipantsExpanded(false);
+  }, [dateLine, email, open, timeLine]);
+
   if (!open) return null;
+
+  const visibleParticipants = participants.filter((participant) => participant.status !== "declined");
+  const hasMultipleParticipants = visibleParticipants.length > 1;
+  const canRespondParticipation = Boolean(
+    onRespondParticipation && currentParticipantStatus && currentParticipantStatus !== "declined"
+  );
+  const hasJoinAction = Boolean(onJoinRequest && joinRequestState);
+  const showGeneralContactActions = !hasMultipleParticipants;
+  const showFooterActions = canRespondParticipation || hasJoinAction || showGeneralContactActions;
 
   const initials = (() => {
     const source = (name || "").trim() || (email || "").trim();
@@ -91,41 +110,44 @@ export default function ReservationDetailsOverlay({
           {!name ? <p className="reserve-detail">{title}</p> : null}
           {privateDescription ? <p className="reserve-detail">תיאור אישי: {privateDescription}</p> : null}
           {sharedDescription ? <p className="reserve-detail">תיאור משותף: {sharedDescription}</p> : null}
-          {participants.length > 1 ? (
-            <div className="reservation-participant-summary">
+          {hasMultipleParticipants ? (
+            <button
+              type="button"
+              className={`reservation-participant-summary${participantsExpanded ? " expanded" : ""}`}
+              aria-expanded={participantsExpanded}
+              onClick={() => setParticipantsExpanded((value) => !value)}
+            >
+              <span className="reservation-participant-count">{visibleParticipants.length} משתתפים</span>
               <ParticipantAvatarStack
-                participants={participants}
-                interactive
-                expanded={participantsExpanded}
-                onClick={() => setParticipantsExpanded((value) => !value)}
+                participants={visibleParticipants}
                 maxVisible={6}
               />
-              <span>{participants.length} משתתפים</span>
-            </div>
+              <ExpandMoreRoundedIcon className="reservation-participant-chevron" fontSize="small" />
+            </button>
           ) : null}
-          {participantsExpanded ? <ParticipantRows participants={participants} /> : null}
+          {participantsExpanded ? <ParticipantRows participants={visibleParticipants} /> : null}
         </div>
-        <div className="reserve-actions reserve-actions-details">
-          {onRespondParticipation && currentParticipantStatus && currentParticipantStatus !== "declined" ? (
+        {showFooterActions ? <div className="reserve-actions reserve-actions-details">
+          {canRespondParticipation ? (
             <div className="reservation-response-actions">
-              <button className="secondary danger" type="button" onClick={() => onRespondParticipation("declined")}>דחיית השתתפות</button>
+              <button className="secondary danger" type="button" onClick={() => onRespondParticipation?.("declined")}>דחיית השתתפות</button>
             </div>
           ) : null}
           {onJoinRequest && joinRequestState ? (
             <button
               type="button"
-              className="secondary reserve-pin-action"
-              aria-label={joinRequestState === "pending" ? "בקשת ההצטרפות ממתינה לאישור" : "בקשת הצטרפות לשריון"}
-              onClick={onJoinRequest}
-              disabled={joinRequestState === "pending"}
+              className={`secondary reserve-pin-action${joinRequestState === "pending" ? " danger" : ""}`}
+              aria-label={joinRequestState === "pending" ? "ביטול בקשת הצטרפות" : "בקשת הצטרפות לשריון"}
+              onClick={joinRequestState === "pending" ? onCancelJoinRequest : onJoinRequest}
+              disabled={joinRequestState === "pending" && !onCancelJoinRequest}
             >
-              <PersonAddAltRoundedIcon fontSize="small" />
-              <span>{joinRequestState === "pending" ? "ממתין לאישור" : "הצטרף"}</span>
+              {joinRequestState === "pending" ? <PersonRemoveRoundedIcon fontSize="small" /> : <PersonAddAltRoundedIcon fontSize="small" />}
+              <span>{joinRequestState === "pending" ? "ביטול בקשת הצטרפות" : "הצטרף"}</span>
             </button>
           ) : null}
 
-          <ContactActionButtons email={email} phone={phone} label={name || email} />
-        </div>
+          {showGeneralContactActions ? <ContactActionButtons email={email} phone={phone} label={name || email} /> : null}
+        </div> : null}
       </div>
 
       <div

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import { formatShortDate, getDayKeyFromDateKey } from "../../../lib/date";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { parseTimeInput, toTimeInput } from "../../../lib/timeInput";
-import { CloseIcon, ClosedIcon, ExamTypeIcon, LessonTypeIcon, ReservationIcon, SpecialIcon } from "../../../components/Icons";
+import { getPeopleCategoryLabel } from "../../../lib/peopleDirectory";
+import { ChevronLeftIcon, CloseIcon, ClosedIcon, ExamTypeIcon, LessonTypeIcon, ReservationIcon, SpecialIcon, UserIcon } from "../../../components/Icons";
 import type { DirectoryUser } from "../../../types/admin";
 import type { Room, WeekDay } from "../../../types/schedule";
 import type { AdminDraft } from "../adminDraft";
@@ -45,6 +46,8 @@ export default function AdminEditOverlay({
 }: AdminEditOverlayProps) {
   const [userQuery, setUserQuery] = useState("");
   const [userOpen, setUserOpen] = useState(false);
+  const [participantEditorOpen, setParticipantEditorOpen] = useState(false);
+  const [participantQuery, setParticipantQuery] = useState("");
   const lastValidUser = useRef<{ label: string; email: string; name: string } | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -64,6 +67,11 @@ export default function AdminEditOverlay({
     }
   }, [draft]);
 
+  useEffect(() => {
+    setParticipantEditorOpen(false);
+    setParticipantQuery("");
+  }, [draft?.mode, draft?.type, draft?.type === "reservation" ? draft.reservationId : undefined]);
+
   const findUserMatch = (value: string) => {
     const raw = value.trim().toLowerCase();
     if (!raw) return null;
@@ -77,6 +85,26 @@ export default function AdminEditOverlay({
     if (!query) return users;
     return users.filter((u) => formatUserLabel(u.name || "", u.email).toLowerCase().includes(query));
   }, [userQuery, users]);
+
+  const participantOptions = useMemo(() => {
+    if (!draft || draft.type !== "reservation") return [];
+    const ownerEmail = draft.reservedEmail.trim().toLowerCase();
+    const selected = new Set(draft.participantEmails.map((email) => email.trim().toLowerCase()));
+    const query = participantQuery.trim().toLowerCase();
+    return users
+      .filter((user) => user.email.trim().toLowerCase() !== ownerEmail)
+      .filter((user) => {
+        if (!query) return true;
+        const label = `${user.name || ""} ${user.email} ${user.phone || ""} ${getPeopleCategoryLabel(user)}`.toLowerCase();
+        return label.includes(query);
+      })
+      .sort((a, b) => {
+        const aSelected = selected.has(a.email.trim().toLowerCase());
+        const bSelected = selected.has(b.email.trim().toLowerCase());
+        if (aSelected !== bSelected) return aSelected ? -1 : 1;
+        return (a.name || a.email).localeCompare(b.name || b.email, "he");
+      });
+  }, [draft, participantQuery, users]);
 
   if (!draft) return null;
 
@@ -312,81 +340,154 @@ export default function AdminEditOverlay({
               />
             </label>
           ) : draft.type === "reservation" ? (
-            <label>
-              משתמש
-              <div className="admin-user-select">
-                <input
-                  type="text"
-                  placeholder="חיפוש לפי שם או אימייל"
-                  value={userQuery}
-                  onFocus={() => setUserOpen(true)}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setUserQuery(next);
-                    const match = findUserMatch(next);
-                    if (match) {
-                      const label = formatUserLabel(match.name || "", match.email);
-                      lastValidUser.current = { label, email: match.email, name: match.name || "" };
-                      setDraft((prev) =>
-                        prev && prev.type === "reservation"
-                          ? { ...prev, reservedEmail: match.email, reservedBy: match.name || "" }
-                          : prev
-                      );
-                    }
-                  }}
-                  onBlur={() => {
-                    const match = findUserMatch(userQuery);
-                    if (match) {
-                      const label = formatUserLabel(match.name || "", match.email);
-                      lastValidUser.current = { label, email: match.email, name: match.name || "" };
-                      setUserQuery(label);
-                      setDraft((prev) =>
-                        prev && prev.type === "reservation"
-                          ? { ...prev, reservedEmail: match.email, reservedBy: match.name || "" }
-                          : prev
-                      );
-                    } else if (lastValidUser.current) {
-                      setUserQuery(lastValidUser.current.label);
-                      setDraft((prev) =>
-                        prev && prev.type === "reservation"
-                          ? { ...prev, reservedEmail: lastValidUser.current!.email, reservedBy: lastValidUser.current!.name }
-                          : prev
-                      );
-                    } else {
-                      setUserQuery("");
-                    }
-                    setUserOpen(false);
-                  }}
-                />
-                {userOpen && filteredUsers.length ? (
-                  <div className="admin-user-options">
-                    {filteredUsers.map((u) => {
-                      const label = formatUserLabel(u.name || "", u.email);
-                      return (
-                        <button
-                          type="button"
-                          key={u.email}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => {
-                            lastValidUser.current = { label, email: u.email, name: u.name || "" };
-                            setUserQuery(label);
-                            setDraft((prev) =>
-                              prev && prev.type === "reservation"
-                                ? { ...prev, reservedEmail: u.email, reservedBy: u.name || "" }
-                                : prev
-                            );
-                            setUserOpen(false);
-                          }}
-                        >
-                          <span className="admin-user-name">{u.name || "ללא שם"}</span>
-                          <span className="admin-user-email">{u.email}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            </label>
+            <>
+              <label>
+                משתמש
+                <div className="admin-user-select">
+                  <input
+                    type="text"
+                    placeholder="חיפוש לפי שם או אימייל"
+                    value={userQuery}
+                    onFocus={() => setUserOpen(true)}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setUserQuery(next);
+                      const match = findUserMatch(next);
+                      if (match) {
+                        const label = formatUserLabel(match.name || "", match.email);
+                        lastValidUser.current = { label, email: match.email, name: match.name || "" };
+                        setDraft((prev) =>
+                          prev && prev.type === "reservation"
+                            ? { ...prev, reservedEmail: match.email, reservedBy: match.name || "" }
+                            : prev
+                        );
+                      }
+                    }}
+                    onBlur={() => {
+                      const match = findUserMatch(userQuery);
+                      if (match) {
+                        const label = formatUserLabel(match.name || "", match.email);
+                        lastValidUser.current = { label, email: match.email, name: match.name || "" };
+                        setUserQuery(label);
+                        setDraft((prev) =>
+                          prev && prev.type === "reservation"
+                            ? { ...prev, reservedEmail: match.email, reservedBy: match.name || "" }
+                            : prev
+                        );
+                      } else if (lastValidUser.current) {
+                        setUserQuery(lastValidUser.current.label);
+                        setDraft((prev) =>
+                          prev && prev.type === "reservation"
+                            ? { ...prev, reservedEmail: lastValidUser.current!.email, reservedBy: lastValidUser.current!.name }
+                            : prev
+                        );
+                      } else {
+                        setUserQuery("");
+                      }
+                      setUserOpen(false);
+                    }}
+                  />
+                  {userOpen && filteredUsers.length ? (
+                    <div className="admin-user-options">
+                      {filteredUsers.map((u) => {
+                        const label = formatUserLabel(u.name || "", u.email);
+                        return (
+                          <button
+                            type="button"
+                            key={u.email}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              lastValidUser.current = { label, email: u.email, name: u.name || "" };
+                              setUserQuery(label);
+                              setDraft((prev) =>
+                                prev && prev.type === "reservation"
+                                  ? { ...prev, reservedEmail: u.email, reservedBy: u.name || "" }
+                                  : prev
+                              );
+                              setUserOpen(false);
+                            }}
+                          >
+                            <span className="admin-user-name">{u.name || "ללא שם"}</span>
+                            <span className="admin-user-email">{u.email}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              </label>
+
+              {draft.mode === "edit" ? (
+                <div className={`admin-participant-editor${participantEditorOpen ? " open" : ""}`}>
+                  <button
+                    type="button"
+                    className="secondary admin-participant-editor-toggle"
+                    onClick={() => setParticipantEditorOpen((value) => !value)}
+                    aria-expanded={participantEditorOpen}
+                  >
+                    <span className="admin-participant-editor-label">
+                      <UserIcon />
+                      <span>עריכת משתתפים</span>
+                    </span>
+                    <span className="admin-participant-editor-meta">
+                      <strong>{draft.participantEmails.length}</strong>
+                      <ChevronLeftIcon />
+                    </span>
+                  </button>
+                  {participantEditorOpen ? (
+                    <div className="admin-participant-editor-panel">
+                      <input
+                        type="search"
+                        value={participantQuery}
+                        placeholder="חיפוש משתתפים"
+                        onChange={(event) => setParticipantQuery(event.target.value)}
+                      />
+                      <div className="admin-participant-options">
+                        {participantOptions.map((user) => {
+                          const email = user.email.trim().toLowerCase();
+                          const selected = draft.participantEmails.some(
+                            (entry) => entry.trim().toLowerCase() === email
+                          );
+                          const label = (user.name || "").trim() || user.email;
+                          return (
+                            <button
+                              type="button"
+                              key={`admin-participant-${email}`}
+                              className={selected ? "active" : ""}
+                              onClick={() => {
+                                setDraft((prev) => {
+                                  if (!prev || prev.type !== "reservation") return prev;
+                                  const current = prev.participantEmails
+                                    .map((entry) => entry.trim().toLowerCase())
+                                    .filter(Boolean);
+                                  return {
+                                    ...prev,
+                                    participantEmails: selected
+                                      ? current.filter((entry) => entry !== email)
+                                      : [...current, email]
+                                  };
+                                });
+                              }}
+                            >
+                              <span className={`admin-participant-check${selected ? " active" : ""}`} aria-hidden="true">
+                                {selected ? "✓" : ""}
+                              </span>
+                              <span className="groups-chat-avatar admin-participant-avatar">
+                                {(user.pictureUrl || "").trim() ? <img src={user.pictureUrl} alt="" loading="lazy" /> : label.slice(0, 1)}
+                              </span>
+                              <span className="groups-chat-text">
+                                <span className="groups-chat-title">{label}</span>
+                                <span className="groups-chat-subtitle">{getPeopleCategoryLabel(user)}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : draft.mode === "create" ? (
             <p className="admin-meta" style={{ textAlign: "center" }}>
               בחר סוג רשומה למעלה כדי להמשיך.

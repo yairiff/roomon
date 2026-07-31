@@ -2,8 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { getDayKeyFromDateKey } from "../../../lib/date";
 import type { RoomMeta } from "../../../types/admin";
 import type { User } from "../../../types/auth";
-import type { Reservation, ReservationMap, ReserveRequest } from "../../../types/reservations";
+import type { Reservation, ReservationMap, ReservationParticipant, ReserveRequest } from "../../../types/reservations";
 import type { DayKey, Lesson } from "../../../types/schedule";
+import {
+  getApprovedParticipantEmails,
+  resolveReservationParticipantStates,
+  updateReservationParticipantSelection
+} from "../../../lib/reservationParticipants";
 import type {
   AdminClosedDraft,
   AdminDraft,
@@ -30,6 +35,18 @@ type UseAdminDraftFlowArgs = {
   addReservation: (reservation: Reservation) => Promise<boolean>;
   upsertReservation: (reservation: Reservation) => Promise<boolean>;
   releaseReservation: (dateKey: string, reservationId: string) => Promise<boolean>;
+  onReservationSaved?: (reservation: Reservation, previous: Reservation | null) => Promise<void>;
+  resolveParticipantStates?: (reservation: Reservation) => ReservationParticipant[];
+};
+
+const getAdditionalParticipantEmails = (
+  reservation: Reservation,
+  participants = resolveReservationParticipantStates(reservation)
+) => {
+  const ownerEmail = (reservation.reservedEmail || "").trim().toLowerCase();
+  return participants
+    .filter((participant) => participant.status !== "declined" && participant.email !== ownerEmail)
+    .map((participant) => participant.email);
 };
 
 export function useAdminDraftFlow({
@@ -42,7 +59,9 @@ export function useAdminDraftFlow({
   addOverride,
   addReservation,
   upsertReservation,
-  releaseReservation
+  releaseReservation,
+  onReservationSaved,
+  resolveParticipantStates
 }: UseAdminDraftFlowArgs) {
   const [adminDraft, setAdminDraft] = useState<AdminDraft | null>(null);
   const [adminError, setAdminError] = useState("");
@@ -108,6 +127,7 @@ export function useAdminDraftFlow({
       String(draft.durationMinutes),
       (draft as any).reservationId || "",
       (draft as any).targetLessonId || "",
+      draft.type === "reservation" ? [...draft.participantEmails].sort().join(",") : "",
       source?.kind || "",
       (source as any)?.lessonId || "",
       (source as any)?.reservationId || ""
@@ -221,12 +241,40 @@ export function useAdminDraftFlow({
 
     const reservationIdFromSource = source?.kind === "reservation" ? source.reservationId : "";
     const isConversionFromLesson = adminDraft.mode === "edit" && source?.kind === "lesson";
+    const previousReservation = reservationIdFromSource
+      ? Object.values(reservationMap)
+          .flat()
+          .find((entry) => entry.id === reservationIdFromSource) || null
+      : null;
     const id =
       (!isConversionFromLesson && adminDraft.reservationId) ||
       (!isConversionFromLesson && reservationIdFromSource) ||
       (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `res-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
+    const participantEmails = adminDraft.type === "reservation"
+      ? adminDraft.participantEmails.filter(
+          (email) => email.trim().toLowerCase() !== adminDraft.reservedEmail.trim().toLowerCase()
+        )
+      : [];
+    const participants = adminDraft.type === "reservation"
+      ? updateReservationParticipantSelection(
+          previousReservation
+            ? {
+                ...previousReservation,
+                reservedEmail: adminDraft.reservedEmail,
+                participants: resolveParticipantStates?.(previousReservation) ||
+                  resolveReservationParticipantStates(previousReservation)
+              }
+            : {
+                reservedEmail: adminDraft.reservedEmail,
+                participants: [],
+                quotaParticipantEmails: []
+              },
+          participantEmails
+        )
+      : [];
     const reservation: Reservation = {
+      ...(adminDraft.type === "reservation" && previousReservation ? previousReservation : {}),
       id,
       date: adminDraft.dateKey,
       time: adminDraft.startMinutes,
@@ -241,6 +289,12 @@ export function useAdminDraftFlow({
               ? adminDraft.label || "סגור זמנית"
               : adminDraft.reservedBy || "אדמין",
       reservedEmail: adminDraft.type === "reservation" ? adminDraft.reservedEmail || "" : "",
+      ...(adminDraft.type === "reservation"
+        ? {
+            participants,
+            quotaParticipantEmails: getApprovedParticipantEmails(participants, adminDraft.reservedEmail)
+          }
+        : {}),
       ...(adminDraft.type === "special"
         ? { kind: "special" as const }
         : adminDraft.type === "exam"
@@ -268,6 +322,13 @@ export function useAdminDraftFlow({
         setAdminError("שמירה נכשלה (בדוק הגדרות Firestore).");
         return;
       }
+      if (adminDraft.type === "reservation") {
+        try {
+          await onReservationSaved?.(reservation, null);
+        } catch {
+          // The reservation itself is already saved; live listeners will reconcile auxiliary UI.
+        }
+      }
       setAdminDraft(null);
       return;
     }
@@ -285,6 +346,13 @@ export function useAdminDraftFlow({
         return;
       }
     }
+    if (adminDraft.type === "reservation") {
+      try {
+        await onReservationSaved?.(reservation, previousReservation);
+      } catch {
+        // The reservation itself is already saved; live listeners will reconcile auxiliary UI.
+      }
+    }
     setAdminDraft(null);
   }, [
     addOverride,
@@ -294,7 +362,10 @@ export function useAdminDraftFlow({
     collisionConfirm,
     currentUser?.email,
     enabled,
+    onReservationSaved,
     releaseReservation,
+    reservationMap,
+    resolveParticipantStates,
     upsertReservation
   ]);
 
@@ -433,10 +504,20 @@ export function useAdminDraftFlow({
       durationMinutes: adminDraft.durationMinutes,
       reservedBy: (adminDraft as any).reservedBy || (adminDraft as any).label || "",
       reservedEmail: (adminDraft as any).reservedEmail || "",
+      participantEmails: (() => {
+        if (adminDraft.type === "reservation") return adminDraft.participantEmails;
+        if (source?.kind !== "reservation") return [];
+        const sourceReservation = Object.values(reservationMap)
+          .flat()
+          .find((entry) => entry.id === source.reservationId);
+        return sourceReservation
+          ? getAdditionalParticipantEmails(sourceReservation, resolveParticipantStates?.(sourceReservation))
+          : [];
+      })(),
       ...(source?.kind === "reservation" ? { reservationId: source.reservationId } : {}),
       source
     });
-  }, [adminDraft]);
+  }, [adminDraft, reservationMap, resolveParticipantStates]);
 
   const handleAdminSlotClick = useCallback(
     (request: ReserveRequest) => {
@@ -544,11 +625,12 @@ export function useAdminDraftFlow({
         durationMinutes: reservation.durationMinutes,
         reservedBy: reservation.reservedBy,
         reservedEmail: reservation.reservedEmail,
+        participantEmails: getAdditionalParticipantEmails(reservation, resolveParticipantStates?.(reservation)),
         reservationId: reservation.id,
         source: { kind: "reservation", reservationId: reservation.id }
       });
     },
-    [enabled, reservationMap]
+    [enabled, reservationMap, resolveParticipantStates]
   );
 
   return {

@@ -28,6 +28,7 @@ export type AdminReservationDraft = {
   durationMinutes: number;
   reservedBy: string;
   reservedEmail: string;
+  participantEmails: string[];
   reservationId?: string;
   source?: AdminDraftSource;
 };

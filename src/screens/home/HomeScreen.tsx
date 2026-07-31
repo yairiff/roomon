@@ -1554,7 +1554,7 @@ export default function HomeScreen({
     async (reservation: Reservation) => {
       const requesterEmail = (currentUser?.email || "").trim().toLowerCase();
       const firestore = db;
-      if (!firestore || !requesterEmail || !reservation.id) return;
+      if (!firestore || !requesterEmail || !reservation.id) return false;
       const nowMs = Date.now();
       try {
         const pendingPin = await runTransaction(firestore, async (transaction) => {
@@ -1659,6 +1659,7 @@ export default function HomeScreen({
           pendingPin
         ]);
         showToast("בקשת ההצטרפות נשלחה והשריון נוסף למערכת שלך.", "success");
+        return true;
       } catch (error) {
         const reason = error instanceof Error ? error.message : "";
         showToast(
@@ -1669,9 +1670,66 @@ export default function HomeScreen({
               : "לא ניתן היה לשלוח את בקשת ההצטרפות.",
           "error"
         );
+        return false;
       }
     },
     [currentUser?.email, currentUser?.name, rooms, setMyPins, showToast]
+  );
+
+  const cancelReservationJoin = useCallback(
+    async (reservation: Reservation) => {
+      const requesterEmail = (currentUser?.email || "").trim().toLowerCase();
+      const firestore = db;
+      if (!firestore || !requesterEmail || !reservation.id) return false;
+      try {
+        const nextPins = await runTransaction(firestore, async (transaction) => {
+          const reservationRef = doc(firestore, "reservations", reservation.id);
+          const requesterRef = doc(firestore, "users", requesterEmail);
+          const reservationSnapshot = await transaction.get(reservationRef);
+          const requesterSnapshot = await transaction.get(requesterRef);
+          const raw = reservationSnapshot.exists()
+            ? (reservationSnapshot.data() as Record<string, unknown>)
+            : {};
+          const ownerEmail = String(raw.reservedEmail || reservation.reservedEmail || "").trim().toLowerCase();
+          if (!ownerEmail || ownerEmail === requesterEmail) throw new Error("request-not-found");
+          const requesterRaw = requesterSnapshot.exists()
+            ? (requesterSnapshot.data() as Record<string, unknown>)
+            : {};
+          const existingPins = Array.isArray(requesterRaw.myPins)
+            ? (requesterRaw.myPins.filter((entry) => Boolean(entry) && typeof entry === "object") as MySchedulePin[])
+            : [];
+          const hasPendingRequest = existingPins.some(
+            (pin) => pin.joinRequestReservationId === reservation.id || pin.id === `join-request:${reservation.id}`
+          );
+          if (!hasPendingRequest) throw new Error("request-not-found");
+          const filteredPins = existingPins.filter(
+            (pin) => pin.joinRequestReservationId !== reservation.id && pin.id !== `join-request:${reservation.id}`
+          );
+          transaction.set(
+            requesterRef,
+            { email: requesterEmail, myPins: filteredPins, myPinsUpdatedAt: serverTimestamp() },
+            { merge: true }
+          );
+          transaction.delete(
+            doc(
+              firestore,
+              "users",
+              ownerEmail,
+              "notifications",
+              notificationDocumentId("reservation-join-request", reservation.id, requesterEmail)
+            )
+          );
+          return filteredPins;
+        });
+        setMyPins(nextPins);
+        showToast("בקשת ההצטרפות בוטלה.", "success");
+        return true;
+      } catch {
+        showToast("לא ניתן היה לבטל את בקשת ההצטרפות.", "error");
+        return false;
+      }
+    },
+    [currentUser?.email, setMyPins, showToast]
   );
 
   const respondToReservationJoinRequest = useCallback(
@@ -1695,7 +1753,13 @@ export default function HomeScreen({
           );
           const reservationSnapshot = await transaction.get(reservationRef);
           const requesterSnapshot = await transaction.get(requesterRef);
+          const requestNotificationSnapshot = await transaction.get(requestNotificationRef);
           if (!reservationSnapshot.exists()) throw new Error("reservation-not-found");
+          if (!requestNotificationSnapshot.exists()) throw new Error("request-resolved");
+          const requestNotificationData = requestNotificationSnapshot.data() as Record<string, unknown>;
+          if (requestNotificationData.resolvedAt || requestNotificationData.responseStatus !== "pending") {
+            throw new Error("request-resolved");
+          }
           const raw = reservationSnapshot.data() as Record<string, unknown>;
           const ownerEmail = String(raw.reservedEmail || "").trim().toLowerCase();
           if (ownerEmail !== organizerEmail) throw new Error("not-organizer");
@@ -1827,7 +1891,11 @@ export default function HomeScreen({
       } catch (error) {
         const reason = error instanceof Error ? error.message : "";
         showToast(
-          reason === "reservation-not-found" ? "השריון כבר אינו קיים." : "לא ניתן היה לעדכן את בקשת ההצטרפות.",
+          reason === "reservation-not-found"
+            ? "השריון כבר אינו קיים."
+            : reason === "request-resolved"
+              ? "בקשת ההצטרפות כבר טופלה."
+              : "לא ניתן היה לעדכן את בקשת ההצטרפות.",
           "error"
         );
       }
@@ -2245,31 +2313,6 @@ export default function HomeScreen({
     () => Object.keys(pendingReservationIdsMap),
     [pendingReservationIdsMap]
   );
-
-  const {
-    adminDraft,
-    setAdminDraft,
-    adminError,
-    collisionConfirm,
-    handleAdminSlotClick,
-    handleAdminLessonClick,
-    handleAdminReservationClick,
-    handleAdminSave,
-    handleAdminDeleteLesson,
-    handleAdminDeleteReservation,
-    switchAdminType
-  } = useAdminDraftFlow({
-    enabled: effectiveAdminMode,
-    currentUser,
-    config,
-    roomMeta,
-    reservationMap,
-    getLessonsForDate,
-    addOverride,
-    addReservation,
-    upsertReservation,
-    releaseReservation
-  });
 
   const handleReservationDetails = (reservationId: string, dateKey: string) => {
     const reservation = (displayReservationMap[dateKey] || []).find((entry) => entry.id === reservationId);
@@ -3783,6 +3826,55 @@ export default function HomeScreen({
     [addGroupRehearsal, findGroupRehearsal, notifyRehearsalParticipants, syncLinkedPinsForRehearsal]
   );
 
+  const handleAdminReservationSaved = useCallback(
+    async (reservation: Reservation, previous: Reservation | null) => {
+      if (extractLinkedIdsFromReservation(reservation)) {
+        await updateLinkedRehearsalFromReservation(reservation);
+        return;
+      }
+      await notifyReservationParticipants(reservation, previous ? "updated" : "created", previous);
+    },
+    [notifyReservationParticipants, updateLinkedRehearsalFromReservation]
+  );
+
+  const resolveAdminParticipantStates = useCallback(
+    (reservation: Reservation) => {
+      const linked = extractLinkedIdsFromReservation(reservation);
+      const linkedParticipants = linked
+        ? findGroupRehearsal(linked.groupId, linked.rehearsalId).rehearsal?.participants || null
+        : null;
+      return resolveReservationParticipantStates(reservation, linkedParticipants);
+    },
+    [findGroupRehearsal]
+  );
+
+  const {
+    adminDraft,
+    setAdminDraft,
+    adminError,
+    collisionConfirm,
+    handleAdminSlotClick,
+    handleAdminLessonClick,
+    handleAdminReservationClick,
+    handleAdminSave,
+    handleAdminDeleteLesson,
+    handleAdminDeleteReservation,
+    switchAdminType
+  } = useAdminDraftFlow({
+    enabled: effectiveAdminMode,
+    currentUser,
+    config,
+    roomMeta,
+    reservationMap,
+    getLessonsForDate,
+    addOverride,
+    addReservation,
+    upsertReservation,
+    releaseReservation,
+    onReservationSaved: handleAdminReservationSaved,
+    resolveParticipantStates: resolveAdminParticipantStates
+  });
+
   const unlinkRehearsalRoomFromReservation = useCallback(
     async (groupId: string, rehearsalId: string) => {
       const { group, rehearsal } = findGroupRehearsal(groupId, rehearsalId);
@@ -5052,7 +5144,20 @@ export default function HomeScreen({
         }
         onJoinRequest={
           reservationCanRequestJoin && detailsReservation
-            ? () => { void requestReservationJoin(detailsReservation); }
+            ? () => {
+                void requestReservationJoin(detailsReservation).then((sent) => {
+                  if (sent) setReservationDetails(null);
+                });
+              }
+            : undefined
+        }
+        onCancelJoinRequest={
+          reservationCanRequestJoin && reservationJoinPending && detailsReservation
+            ? () => {
+                void cancelReservationJoin(detailsReservation).then((cancelled) => {
+                  if (cancelled) setReservationDetails(null);
+                });
+              }
             : undefined
         }
         onClose={() => setReservationDetails(null)}

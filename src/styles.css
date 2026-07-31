@@ -281,14 +281,40 @@ button.participant-avatar-stack {
 }
 
 .reservation-participant-summary {
+  width: 100%;
+  min-height: 48px;
   margin-top: 10px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-solid) 92%, var(--accent) 8%);
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 700;
+  cursor: pointer;
+  text-align: start;
+}
+
+.reservation-participant-summary:hover {
+  border-color: color-mix(in srgb, var(--accent-strong) 48%, var(--line));
+}
+
+.reservation-participant-count {
+  min-width: 74px;
+  color: var(--ink);
+}
+
+.reservation-participant-chevron {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.reservation-participant-summary.expanded .reservation-participant-chevron {
+  transform: rotate(180deg);
 }
 
 .participant-status {
@@ -2414,6 +2440,10 @@ body,
   text-align: center;
   direction: rtl;
   position: relative;
+  max-height: calc(100dvh - 32px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: overlayPopIn 220ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
 }
 
@@ -2463,8 +2493,13 @@ body,
 
 .reservation-participants {
   display: grid;
-  gap: 6px;
+  gap: 0;
   margin-top: 10px;
+  max-height: min(42dvh, 340px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-radius: 8px;
 }
 
 .reservation-participant-row {
@@ -2472,8 +2507,13 @@ body,
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
-  padding: 7px 0;
+  padding: 9px 10px;
   border-top: 1px solid color-mix(in srgb, var(--line) 54%, transparent);
+  text-align: start;
+}
+
+.reservation-participant-row:first-child {
+  border-top: 0;
 }
 
 .reservation-participant-avatar {
@@ -2489,6 +2529,14 @@ body,
 
 .reservation-participant-actions {
   gap: 6px;
+}
+
+.reservation-participant-actions .icon-button.contact {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  flex-basis: 34px;
 }
 
 .icon-button.contact {
@@ -9186,6 +9234,129 @@ select,
 .admin-user-email {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+.admin-participant-editor {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-solid);
+}
+
+.admin-participant-editor-toggle {
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.admin-participant-editor-label,
+.admin-participant-editor-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-participant-editor-label svg,
+.admin-participant-editor-meta svg {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-participant-editor-meta strong {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface-solid));
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.admin-participant-editor-meta svg {
+  transition: transform 160ms ease;
+}
+
+.admin-participant-editor.open .admin-participant-editor-meta svg {
+  transform: rotate(-90deg);
+}
+
+.admin-participant-editor-panel {
+  min-width: 0;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-participant-options {
+  max-height: 230px;
+  display: grid;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+}
+
+.admin-participant-options > button {
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 24px 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 56%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+}
+
+.admin-participant-options > button:last-child {
+  border-bottom: 0;
+}
+
+.admin-participant-options > button.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-solid));
+}
+
+.admin-participant-check {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: transparent;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.admin-participant-check.active {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--text-on-accent);
+}
+
+.admin-participant-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 0.76rem;
 }
 
 .admin-form-grid input,
