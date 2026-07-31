@@ -2369,7 +2369,7 @@ body,
   align-items: center;
   gap: 10px;
   flex: 0 0 auto;
-  direction: ltr;
+  direction: rtl;
 }
 
 .reservation-participants {

@@ -575,10 +575,13 @@ export default function BookingFinder({
   const policyDurationCap = typeof policyMaxDurationMinutes === "number" && Number.isFinite(policyMaxDurationMinutes)
     ? policyMaxDurationMinutes
     : undefined;
+  const quotaParticipantMultiplier = findCommonTime
+    ? Math.max(1, totalGroupParticipants)
+    : 1;
   const maxPolicyDurationMinutes = policyDurationCap
     ? Math.max(
         DURATION_STEP_MINUTES,
-        Math.floor(policyDurationCap / DURATION_STEP_MINUTES) * DURATION_STEP_MINUTES
+        Math.floor((policyDurationCap * quotaParticipantMultiplier) / DURATION_STEP_MINUTES) * DURATION_STEP_MINUTES
       )
     : maxScheduleDurationMinutes;
   const maxDurationMinutes = Math.max(
