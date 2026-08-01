@@ -384,6 +384,7 @@ export default function HomeScreen({
   });
   const [finderPrefilledGroupId, setFinderPrefilledGroupId] = useState<string>("");
   const [finderPrefilledPeopleEmails, setFinderPrefilledPeopleEmails] = useState<string[]>([]);
+  const [finderSelectedPeopleEmails, setFinderSelectedPeopleEmails] = useState<string[]>([]);
   const [pendingFinderAutoLink, setPendingFinderAutoLink] = useState<{ groupId?: string } | null>(null);
   const pendingFinderAutoLinkRef = useRef<{ groupId?: string } | null>(null);
   const setPendingFinderAutoLinkSynced = useCallback((value: { groupId?: string } | null) => {
@@ -1991,7 +1992,10 @@ export default function HomeScreen({
   useEffect(() => {
     const currentEmail = (currentUser?.email || "").trim().toLowerCase();
     const groupMembers = groupsEnabled ? groups.flatMap((group) => group.memberEmails || []) : [];
-    const peopleMembers = finderPrefilledPeopleEmails;
+    const peopleMembers = normalizeEmailList([
+      ...finderPrefilledPeopleEmails,
+      ...finderSelectedPeopleEmails
+    ]);
     if (!currentEmail && !groupMembers.length && !peopleMembers.length) {
       setCollaboratorProfiles((prev) => (prev.length ? [] : prev));
       return;
@@ -2063,6 +2067,7 @@ export default function HomeScreen({
     buildCollaboratorEvents,
     currentUser?.email,
     finderPrefilledPeopleEmails,
+    finderSelectedPeopleEmails,
     myPins,
     groupsEnabled,
     usersByEmail
@@ -4587,6 +4592,19 @@ export default function HomeScreen({
     });
   }, []);
 
+  const handleFinderPeopleSelectionChange = useCallback((participantEmails: string[]) => {
+    const normalizedEmails = normalizeEmailList(participantEmails);
+    setFinderSelectedPeopleEmails((previous) => {
+      if (
+        previous.length === normalizedEmails.length &&
+        previous.every((email, index) => email === normalizedEmails[index])
+      ) {
+        return previous;
+      }
+      return normalizedEmails;
+    });
+  }, []);
+
   const viewNode = (
     <HomeViewRouter
       view={effectiveView}
@@ -4610,6 +4628,7 @@ export default function HomeScreen({
       finderPolicyMaxDaysForward={finderPolicyMaxDaysForward}
       finderPrefilledGroupId={groupsEnabled ? finderPrefilledGroupId : ""}
       finderPrefilledPeopleEmails={finderPrefilledPeopleEmails}
+      onFinderPeopleSelectionChange={handleFinderPeopleSelectionChange}
       onFinderSchedule={handleFinderSchedule}
       onCreateGroup={handleCreateGroup}
       myScheduleMode={myScheduleMode}

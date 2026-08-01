@@ -65,6 +65,7 @@ export type HomeViewRouterProps = {
   finderPolicyMaxDurationMinutes?: number;
   finderPolicyMaxDaysForward?: number;
   finderPrefilledPeopleEmails?: string[];
+  onFinderPeopleSelectionChange?: (participantEmails: string[]) => void;
 
   // My schedule
   myScheduleMode: "day" | "week" | "agenda";
@@ -180,6 +181,7 @@ export default function HomeViewRouter({
   finderPolicyMaxDurationMinutes,
   finderPolicyMaxDaysForward,
   finderPrefilledPeopleEmails = [],
+  onFinderPeopleSelectionChange,
   myScheduleMode,
   onMyScheduleModeChange,
   myScheduleAgendaDays,
@@ -273,6 +275,7 @@ export default function HomeViewRouter({
       isActive={isFinderView}
       resetToken={finderResetToken}
       onCreateGroup={onCreateGroup}
+      onPeopleSelectionChange={onFinderPeopleSelectionChange}
       onSchedule={onFinderSchedule}
     />
   );

@@ -52,6 +52,7 @@ export type BookingFinderProps = {
   isActive?: boolean;
   resetToken?: number;
   onCreateGroup?: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
+  onPeopleSelectionChange?: (participantEmails: string[]) => void;
   onSchedule: (selection: {
     dateKey: string;
     dayKey: DayKey;
@@ -245,6 +246,7 @@ export default function BookingFinder({
   isActive = true,
   resetToken,
   onCreateGroup,
+  onPeopleSelectionChange,
   onSchedule
 }: BookingFinderProps) {
   const normalizedPrefilledPeopleEmails = useMemo(
@@ -399,6 +401,12 @@ export default function BookingFinder({
       setDurationMinutes(DEFAULT_SELF_DURATION_MINUTES);
     }
   }, [durationTouched, targetType]);
+
+  useEffect(() => {
+    onPeopleSelectionChange?.(
+      collaborationEnabled && targetType === "people" ? selectedPeopleEmails : []
+    );
+  }, [collaborationEnabled, onPeopleSelectionChange, selectedPeopleEmails, targetType]);
 
   const rehearsalSuitableRoomIds = useMemo(
     () => rooms.filter((room) => room.rehearsalSuitable).map((room) => room.id),
@@ -614,6 +622,13 @@ export default function BookingFinder({
   );
   const hasFinderModeSelection = Boolean(targetType && placeType);
   const hasCompleteCommonProfiles = participantEmails.length > 0 && participantProfiles.length === participantEmails.length;
+  const commonTargetStatusMessage = targetType === "people"
+    ? participantEmails.length > 1
+      ? "טוען זמינות משתתפים..."
+      : "בחר אנשים כדי להציג תוצאות."
+    : selectedGroup
+      ? "טוען זמינות משתתפים..."
+      : "בחר הרכב כדי להציג תוצאות.";
   const canComputeResults = Boolean(
     hasFinderModeSelection &&
     (
@@ -1408,7 +1423,7 @@ export default function BookingFinder({
             <div className="finder-results finder-results-inline">
               {!canComputeResults && findCommonTime ? (
                 <p className="finder-inline-note">
-                  {targetType === "people" ? "בחר אנשים כדי להציג תוצאות." : "בחר הרכב כדי להציג תוצאות."}
+                  {commonTargetStatusMessage}
                 </p>
               ) : visibleResults.length ? (
                 <ul className="finder-result-list">
@@ -1547,7 +1562,7 @@ export default function BookingFinder({
         initialTab={participantPickerTab}
         peopleEnabled={collaborationEnabled}
         groupsEnabled={groupsEnabled}
-        peopleHint="עובד הכי טוב כשכולם מגדירים חלונות זמינות בקמפוס ומוסיפים שיעורים ללוח האישי."
+        peopleHint="עובד הכי טוב כשכולם מגדירים חלונות זמינות בקמפוס ומוסיפים שיעורים ללו״ז האישי."
         directoryUsers={directoryUsers}
         currentEmail={currentEmail}
         selectedPeopleEmails={selectedPeopleEmails}
