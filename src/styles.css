@@ -3628,6 +3628,17 @@ select,
   padding: 8px;
 }
 
+.availability-edit-caption {
+  flex: 0 0 auto;
+  margin: 0 2px 4px;
+  color: color-mix(in srgb, var(--ink) 88%, transparent);
+  direction: rtl;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: right;
+}
+
 @media (max-height: 720px) {
   .schedule {
     padding: 8px;
@@ -3847,25 +3858,22 @@ select,
 }
 
 .availability-header-button {
-  display: inline-flex;
+  display: grid;
+  place-items: center;
   align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  font-size: 0.49rem;
+  justify-content: center;
+  font-size: 0.52rem;
   line-height: 1;
   color: color-mix(in srgb, var(--muted) 92%, transparent);
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-solid) 90%, transparent);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   direction: rtl;
   pointer-events: auto;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 4px 6px;
+  padding: 3px 0;
   width: 100%;
   min-width: 0;
-  min-height: 20px;
+  min-height: 22px;
   cursor: pointer;
   position: relative;
   z-index: 3;
@@ -3891,16 +3899,15 @@ select,
 
 .availability-header-button.active {
   color: color-mix(in srgb, var(--ink) 82%, var(--status-idle-dot));
-  border-color: color-mix(in srgb, var(--status-idle-dot) 46%, var(--line));
-  background: color-mix(in srgb, var(--status-idle-dot) 12%, var(--surface-solid));
+  background: transparent;
 }
 
 .availability-header-check {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--status-idle-dot) 52%, var(--line));
   background: transparent;
@@ -3913,13 +3920,6 @@ select,
 .availability-header-check.active {
   background: color-mix(in srgb, var(--status-idle-dot) 88%, transparent);
   color: color-mix(in srgb, var(--surface-solid) 96%, transparent);
-}
-
-.availability-header-label {
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-inline-start: 1px;
 }
 
 .grid-header-main-button {
@@ -3960,6 +3960,19 @@ select,
 .schedule.compact .time-header {
   min-height: var(--header-height);
   height: var(--header-height);
+}
+
+.time-header.availability-campus-header {
+  color: color-mix(in srgb, var(--muted) 90%, transparent);
+  direction: rtl;
+  font-size: 0.48rem;
+  font-weight: 800;
+  justify-content: center;
+  padding: 0;
+}
+
+.time-header.availability-campus-header::before {
+  content: none;
 }
 
 .time-column {

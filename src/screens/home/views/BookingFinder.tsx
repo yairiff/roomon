@@ -1562,7 +1562,7 @@ export default function BookingFinder({
         initialTab={participantPickerTab}
         peopleEnabled={collaborationEnabled}
         groupsEnabled={groupsEnabled}
-        peopleHint="עובד הכי טוב כשכולם מגדירים חלונות זמינות בקמפוס ומוסיפים שיעורים ללו״ז האישי."
+        peopleHint="עובד הכי טוב כשכולם מגדירים מתי הם זמינים ומוסיפים שיעורים ללו״ז האישי."
         directoryUsers={directoryUsers}
         currentEmail={currentEmail}
         selectedPeopleEmails={selectedPeopleEmails}

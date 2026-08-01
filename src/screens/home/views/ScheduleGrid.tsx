@@ -1292,6 +1292,9 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
 
   return (
     <section className={`schedule${compact ? " compact" : ""}${availabilityEditMode ? " availability-edit" : ""}`}>
+      {availabilityEditMode ? (
+        <p className="availability-edit-caption">מתי אפשר לקבוע איתי</p>
+      ) : null}
       <div className={`schedule-shell${showHeaders ? " has-headers" : ""}`}>
         {showHeaders ? (
           <>
@@ -1348,12 +1351,11 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                             onAvailabilityDayUpdate(day.key, { enabled: !weekdayEnabled });
                           }}
                           aria-pressed={weekdayEnabled}
-                          aria-label="זמינות"
+                          aria-label={`${day.label}: ${weekdayEnabled ? "זמין בקמפוס" : "לא זמין בקמפוס"}`}
                         >
                           <span className={`availability-header-check ${weekdayEnabled ? "active" : ""}`} aria-hidden="true">
                             ✓
                           </span>
-                          <span className="availability-header-label">בקמפוס</span>
                         </button>
                       </div>
                     ) : null}
@@ -1361,7 +1363,9 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                 );
               })}
             </div>
-            <div className="time-header" aria-hidden="true" />
+            <div className={`time-header${availabilityEditMode ? " availability-campus-header" : ""}`} aria-hidden="true">
+              {availabilityEditMode ? "בקמפוס" : null}
+            </div>
           </>
         ) : null}
         <div
