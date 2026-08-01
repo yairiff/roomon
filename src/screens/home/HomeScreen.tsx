@@ -80,6 +80,7 @@ export type HomeScreenProps = {
   onRequestedViewHandled?: () => void;
   navReselectView?: ViewMode | null;
   navReselectToken?: number;
+  availabilityEditRequestToken?: number;
   adminMode?: boolean;
   collaborationEnabled?: boolean;
   groupsEnabled?: boolean;
@@ -314,6 +315,7 @@ export default function HomeScreen({
   onRequestedViewHandled,
   navReselectView,
   navReselectToken,
+  availabilityEditRequestToken,
   adminMode = false,
   collaborationEnabled = false,
   groupsEnabled = false,
@@ -398,6 +400,7 @@ export default function HomeScreen({
   const [finderViewResetToken, setFinderViewResetToken] = useState(0);
   const [groupsViewResetToken, setGroupsViewResetToken] = useState(0);
   const lastHandledNavReselectTokenRef = useRef(0);
+  const lastHandledAvailabilityEditRequestTokenRef = useRef(0);
   const [roomZoomResetToken, setRoomZoomResetToken] = useState(0);
   const [myScheduleZoomResetToken, setMyScheduleZoomResetToken] = useState(0);
   const [availabilityDraft, setAvailabilityDraft] = useState<UserAvailability | null>(null);
@@ -1073,6 +1076,26 @@ export default function HomeScreen({
     }
     onRequestedViewHandled?.();
   }, [collaborationAvailable, onRequestedViewHandled, onViewChange, requestedView]);
+
+  useEffect(() => {
+    if (!availabilityEditRequestToken) return;
+    if (lastHandledAvailabilityEditRequestTokenRef.current === availabilityEditRequestToken) return;
+    lastHandledAvailabilityEditRequestTokenRef.current = availabilityEditRequestToken;
+    if (!collaborationAvailable) return;
+    onViewChange("mySchedule");
+    setSelectedDate(todayDateKey);
+    setMyScheduleModeSynced("week");
+    setMyScheduleAgendaDays(14);
+    setMyScheduleAddDraft(null);
+    handleStartAvailabilityEditMode();
+  }, [
+    availabilityEditRequestToken,
+    collaborationAvailable,
+    handleStartAvailabilityEditMode,
+    onViewChange,
+    setMyScheduleModeSynced,
+    todayDateKey
+  ]);
 
   useEffect(() => {
     if (!navReselectToken) return;

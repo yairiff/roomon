@@ -970,6 +970,14 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                   .filter((avatar) => avatar.email !== (block.reservedEmail || "").trim().toLowerCase())
                   .map((avatar) => avatar.fallbackLabel)
               : [];
+          const participantLineMinHeight = compact
+            ? hasRoomLine
+              ? 76
+              : 64
+            : hasRoomLine
+              ? 82
+              : 68;
+          const showParticipantNames = otherParticipantNames.length > 0 && height >= participantLineMinHeight;
           // If there's not enough vertical space for a dedicated meta line, render it inline to avoid clipping.
           // (Font sizes are fixed, so a fixed px threshold is more stable than a duration heuristic.)
           const canShowSecondLine = height >= 48;
@@ -1085,6 +1093,12 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                     ) : null}
                   </div>
                   {!showInlineMeta && hasMeta ? <p className="cell-meta">{primaryMeta}</p> : null}
+                  {showParticipantNames ? (
+                    <p className="schedule-participant-line">
+                      <span className="schedule-participant-label">משתתפים:</span>
+                      <span className="schedule-participant-list">{otherParticipantNames.join(", ")}</span>
+                    </p>
+                  ) : null}
                   {hasRoomLine ? <p className="cell-room">{roomLine}</p> : null}
                   {showPendingRehearsalActions ? (
                     <div className="block-rehearsal-actions">
@@ -1128,6 +1142,12 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                     ) : null}
                   </div>
                   {showCompactMeta ? <div className="compact-sub compact-sub-primary">{primaryMeta}</div> : null}
+                  {showParticipantNames ? (
+                    <div className="schedule-participant-line compact">
+                      <span className="schedule-participant-label">משתתפים:</span>
+                      <span className="schedule-participant-list">{otherParticipantNames.join(", ")}</span>
+                    </div>
+                  ) : null}
                   {showCompactMeta && hasRoomLine ? <div className="compact-sub compact-sub-room">{roomLine}</div> : null}
                   {showPendingRehearsalActions ? (
                     <div className="block-rehearsal-actions compact">
@@ -1149,9 +1169,6 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
               ) : null}
               {showBottomAvatar ? (
                 <div className={`schedule-block-avatar-anchor${compact ? " compact" : ""}`} aria-hidden="true">
-                  {!compact && height >= 68 && otherParticipantNames.length ? (
-                    <span className="schedule-participant-names">{otherParticipantNames.join(" · ")}</span>
-                  ) : null}
                   {hasRehearsalStack ? (
                     <div className={`schedule-avatar-stack${compact ? " compact" : ""}`}>
                       {displayedRehearsalAvatars.map((avatar, index) => (

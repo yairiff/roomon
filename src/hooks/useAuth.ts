@@ -102,7 +102,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
         }
         setRoleResolvedEmail(email);
         setUser((prev) =>
-          prev ? { ...prev, role: "pending", allowed: false, betaUser: false } : prev
+          prev ? { ...prev, name: "", role: "pending", allowed: false, betaUser: false } : prev
         );
         return;
       }
@@ -142,6 +142,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
           ? raw.themePreference
           : undefined;
       const betaUser = raw.betaUser === true;
+      const directoryName = typeof raw.name === "string" ? raw.name.trim() : "";
 
       // If we only have a Google hotlink, copy a cached version into Storage (once in a while).
       // This dramatically reduces 429s from Google profile image rate limits.
@@ -168,7 +169,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
         const effectivePicture = pictureRemoved ? "" : (persistentPictureUrl || fallbackPicture);
         const next: User = {
           ...prev,
-          name: data.name || prev.name,
+          name: directoryName,
           role,
           allowed,
           betaUser,
@@ -276,7 +277,7 @@ export function useAuth({ clientId, darkMode = false }: { clientId?: string; dar
               ? ""
               : directoryPersistentPicture || googlePicture || "";
             setUser({
-              name: directoryUser?.name || profile.name || profile.given_name || "משתמש",
+              name: typeof directoryUser?.name === "string" ? directoryUser.name.trim() : "",
               email,
               picture: initialPicture,
               pictureRemoved: directoryPictureRemoved,

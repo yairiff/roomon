@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import type { User } from "../types/auth";
@@ -17,6 +17,7 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
   const [grade, setGrade] = useState<"A" | "B" | "C" | "STAFF">("A");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const nameEditedRef = useRef(false);
 
   const cohortStartYear = useMemo(
     () => (grade === "STAFF" ? undefined : cohortStartYearFromGrade(grade)),
@@ -28,7 +29,13 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
   );
 
   useEffect(() => {
-    if (!user) return;
+    nameEditedRef.current = false;
+    if (!user) {
+      setName("");
+      setPhone("");
+      return;
+    }
+    if (!open) return;
     setName(user.name || "");
     setPhone(user.phone || "");
     if (user.cohortStartYear) {
@@ -36,7 +43,12 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
     } else {
       setGrade("STAFF");
     }
-  }, [user]);
+  }, [open, user?.email]);
+
+  useEffect(() => {
+    if (!open || !user || nameEditedRef.current) return;
+    setName(user.name || "");
+  }, [open, user?.name]);
 
   if (!open || !user) return null;
 
@@ -83,8 +95,17 @@ export default function SignupOverlay({ open, user, onSignOut }: SignupOverlayPr
         </p>
         <div className="signup-form">
           <label>
-            שם מלא
-            <input value={name} onChange={(event) => setName(event.target.value)} />
+            שם מלא בעברית
+            <input
+              value={name}
+              placeholder="שם מלא בעברית"
+              autoComplete="off"
+              dir="rtl"
+              onChange={(event) => {
+                nameEditedRef.current = true;
+                setName(event.target.value);
+              }}
+            />
           </label>
           <label>
             טלפון

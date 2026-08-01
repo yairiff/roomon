@@ -62,6 +62,7 @@ export default function App() {
   const [requestedView, setRequestedView] = useState<ViewMode | null>(null);
   const [view, setView] = useState<ViewMode>("live");
   const [groupsPendingCount, setGroupsPendingCount] = useState(0);
+  const [availabilityEditRequestToken, setAvailabilityEditRequestToken] = useState(0);
   const notificationInbox = useNotifications(user?.email);
   const notificationActionsRef = useRef<NotificationResponseActions | null>(null);
   const handleNotificationActionsChange = useCallback((actions: NotificationResponseActions | null) => {
@@ -256,6 +257,11 @@ export default function App() {
         onProfileUpdated={(updates) =>
           setUser((prev) => (prev ? { ...prev, ...updates } : prev))
         }
+        onEditAvailability={() => {
+          setAuthOpen(false);
+          setView("mySchedule");
+          setAvailabilityEditRequestToken((token) => token + 1);
+        }}
         adminMode={adminMode}
         onToggleAdminMode={() => setAdminMode((prev) => !prev)}
         darkMode={darkMode}
@@ -301,6 +307,7 @@ export default function App() {
           onRequestedViewHandled={() => setRequestedView(null)}
           navReselectView={navReselect.view}
           navReselectToken={navReselect.token}
+          availabilityEditRequestToken={availabilityEditRequestToken}
           adminMode={adminMode}
           collaborationEnabled={collaborationEnabled}
           groupsEnabled={groupsEnabled}

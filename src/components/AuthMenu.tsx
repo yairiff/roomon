@@ -8,7 +8,7 @@ import { db, functions } from "../lib/firebase";
 import { isPersistentProfileUrl } from "../lib/profilePhoto";
 import { addDays, formatDateKey, formatShortDate, getDayKeyFromDateKey, getWeekStart, parseDateKey } from "../lib/date";
 import { getReservationUsageShareForEmail } from "../lib/quotaUsage";
-import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon, CloseIcon } from "./Icons";
+import { AdminIcon, ShortcutIcon, DarkModeIcon, EditIcon, UploadIcon, UserIcon, ReleaseIcon, LogoutIcon, CloseIcon, CalendarIcon } from "./Icons";
 import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
 import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
 import DataUsageRoundedIcon from "@mui/icons-material/DataUsageRounded";
@@ -25,6 +25,7 @@ export type AuthMenuProps = {
   onLoginClick: () => void;
   getGoogleIdToken?: () => string;
   onProfileUpdated?: (updates: Partial<User>) => void;
+  onEditAvailability?: () => void;
   adminMode?: boolean;
   onToggleAdminMode?: () => void;
   darkMode?: boolean;
@@ -50,6 +51,7 @@ export default function AuthMenu({
   onLoginClick,
   getGoogleIdToken,
   onProfileUpdated,
+  onEditAvailability,
   adminMode = false,
   onToggleAdminMode,
   darkMode = false,
@@ -739,6 +741,18 @@ export default function AuthMenu({
               טלפון
               <input value={profilePhone} onChange={(event) => setProfilePhone(event.target.value)} />
             </label>
+            <button
+              className="secondary profile-edit-availability"
+              type="button"
+              onClick={() => {
+                setProfileOpen(false);
+                onClose();
+                onEditAvailability?.();
+              }}
+            >
+              <CalendarIcon />
+              <span>ערוך זמינות בקמפוס</span>
+            </button>
             {profileError ? <p className="profile-edit-error">{profileError}</p> : null}
             {profileStatus ? <p className="profile-edit-success">{profileStatus}</p> : null}
             <div className="profile-edit-actions">

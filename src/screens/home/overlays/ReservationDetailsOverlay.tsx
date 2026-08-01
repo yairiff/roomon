@@ -133,6 +133,7 @@ export default function ReservationDetailsOverlay({
             </button>
           ) : null}
 
+          {hasMultipleParticipants ? <span className="reserve-actions-spacer" aria-hidden="true" /> : null}
           {hasMultipleParticipants ? (
             <button
               type="button"

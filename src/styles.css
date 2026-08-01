@@ -2517,6 +2517,15 @@ body,
   gap: 8px;
 }
 
+.reserve-actions.reserve-actions-details.multi-participant .reserve-actions-spacer {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.reserve-actions.reserve-actions-details.multi-participant .reservation-participant-summary {
+  flex: 0 0 auto;
+}
+
 .reserve-actions.reserve-actions-details.multi-participant .reserve-pin-action,
 .reserve-actions.reserve-actions-details.multi-participant .reservation-response-actions {
   min-width: 0;
@@ -4581,11 +4590,13 @@ select,
   bottom: 3px;
 }
 
-.schedule-participant-names {
+.schedule-participant-line {
   display: none;
-  position: absolute;
-  right: 0;
-  left: 76px;
+  align-items: baseline;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
   color: color-mix(in srgb, var(--ink) 78%, transparent);
   font-size: 0.58rem;
   font-weight: 700;
@@ -4594,12 +4605,27 @@ select,
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.schedule-participant-line.compact {
+  font-size: 0.47rem;
+  line-height: 1.05;
+}
+
+.schedule-participant-label {
+  color: var(--accent-strong);
+  flex: 0 0 auto;
+}
+
+.schedule-participant-list {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
 @container (min-width: 150px) {
-  .schedule-participant-names {
-    display: block;
+  .schedule-participant-line {
+    display: flex;
   }
 }
 
@@ -10588,6 +10614,20 @@ select,
   font-family: inherit;
   background: var(--card);
   color: var(--ink);
+}
+
+.profile-edit-availability {
+  width: 100%;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.profile-edit-availability svg {
+  width: 19px;
+  height: 19px;
 }
 
 .profile-edit-actions {
