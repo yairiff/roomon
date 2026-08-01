@@ -12,6 +12,7 @@ import {
 import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { AddIcon, ChevronLeftIcon, CloseIcon, GroupsIcon, MicIcon, RemoveIcon, RoomIcon, ScheduleIcon, TuneIcon, UserIcon } from "../../../components/Icons";
 import GroupCreateOverlay from "../components/GroupCreateOverlay";
+import ParticipantPickerOverlay, { type ParticipantPickerTab } from "../components/ParticipantPickerOverlay";
 import { allWeekDays, defaultWeekDayKeys } from "../../../config";
 import type { ReservationPolicyWindow } from "../../../lib/reservationPolicyWindows";
 import type { DirectoryUser, RoomMeta } from "../../../types/admin";
@@ -278,8 +279,10 @@ export default function BookingFinder({
   const [visibleCount, setVisibleCount] = useState(20);
   const [selectedGroupId, setSelectedGroupId] = useState(hasInitialGroup ? prefilledGroupId || "" : "");
   const [selectedPeopleEmails, setSelectedPeopleEmails] = useState<string[]>(normalizedPrefilledPeopleEmails);
-  const [groupPickerOpen, setGroupPickerOpen] = useState(false);
-  const [groupPickerSearch, setGroupPickerSearch] = useState("");
+  const [participantPickerOpen, setParticipantPickerOpen] = useState(false);
+  const [participantPickerTab, setParticipantPickerTab] = useState<ParticipantPickerTab>(
+    hasInitialGroup ? "groups" : "people"
+  );
   const [roomChoiceResult, setRoomChoiceResult] = useState<FinderResult | null>(null);
   const [createGroupOverlayOpen, setCreateGroupOverlayOpen] = useState(false);
   const [createGroupPendingName, setCreateGroupPendingName] = useState("");
@@ -310,8 +313,8 @@ export default function BookingFinder({
     setVisibleCount(20);
     setSelectedGroupId(hasPrefilledGroup ? prefilledGroupId || "" : "");
     setSelectedPeopleEmails(hasPrefilledPeople ? normalizedPrefilledPeopleEmails : []);
-    setGroupPickerOpen(false);
-    setGroupPickerSearch("");
+    setParticipantPickerOpen(false);
+    setParticipantPickerTab(hasPrefilledGroup ? "groups" : "people");
     setRoomChoiceResult(null);
     setCreateGroupOverlayOpen(false);
     setCreateGroupPendingName("");
@@ -350,7 +353,7 @@ export default function BookingFinder({
     setPlaceType("room");
     setSelectedGroupId("");
     setSelectedPeopleEmails([]);
-    setGroupPickerOpen(false);
+    setParticipantPickerOpen(false);
     setCreateGroupOverlayOpen(false);
     setCreateGroupPendingName("");
     setMinParticipantsFilterOn(false);
@@ -361,7 +364,6 @@ export default function BookingFinder({
     if (groupsEnabled) return;
     if (targetType === "group") setTargetType(selectedPeopleEmails.length ? "people" : "");
     setSelectedGroupId("");
-    setGroupPickerOpen(false);
     setCreateGroupOverlayOpen(false);
     setCreateGroupPendingName("");
   }, [groupsEnabled, selectedPeopleEmails.length, targetType]);
@@ -477,11 +479,6 @@ export default function BookingFinder({
     if (count <= 1) return "בחר אנשים";
     return formatMembersCount(count);
   }, [currentEmailNormalized, selectedPeopleEmails]);
-  const filteredGroups = useMemo(() => {
-    const q = groupPickerSearch.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter((group) => group.name.toLowerCase().includes(q));
-  }, [groupPickerSearch, groups]);
   const usersByEmail = useMemo(() => {
     const map = new Map<string, DirectoryUser>();
     directoryUsers.forEach((user) => map.set(user.email.toLowerCase(), user));
@@ -1014,7 +1011,13 @@ export default function BookingFinder({
     }
     return `${selectedRooms.length} חדרים`;
   }, [collaborationEnabled, recordingSuitableRoomIds, rehearsalSuitableRoomIds, rooms, selectedRooms]);
-  const groupSelectionSummary = selectedGroup?.name || "בחר הרכב";
+  const sharedTargetSummary = targetType === "group"
+    ? selectedGroup?.name || "בחר הרכב"
+    : targetType === "people"
+      ? selectedPeopleSummary
+      : groupsEnabled
+        ? "בחר אנשים או הרכב"
+        : "בחר אנשים";
   const updateDurationByStep = (direction: -1 | 1) => {
     if (durationOptionIndex < 0) return;
     const next = durationOptions[durationOptionIndex + direction];
@@ -1060,28 +1063,42 @@ export default function BookingFinder({
 
   const closeCreateGroupOverlay = () => setCreateGroupOverlayOpen(false);
 
-  const chooseGroupTarget = () => {
-    if (!collaborationEnabled || !groupsEnabled) return;
-    setTargetType("group");
-    setSelectedPeopleEmails([]);
-    setPlaceType("room");
-    setRoomSelectionTouched(false);
-    setShowSpecificRoomsList(false);
-    setPlacePickerOpen(false);
-    setGroupPickerOpen(true);
+  const openParticipantTargetPicker = () => {
+    if (!collaborationEnabled) return;
+    setParticipantPickerTab(targetType === "group" && groupsEnabled ? "groups" : "people");
+    setParticipantPickerOpen(true);
     setRoomChoiceResult(null);
   };
 
-  const choosePeopleTarget = () => {
-    if (!collaborationEnabled || !selectedPeopleEmails.length) return;
-    setTargetType("people");
-    setSelectedGroupId("");
+  const prepareSharedTarget = () => {
     setPlaceType("room");
     setRoomSelectionTouched(false);
     setShowSpecificRoomsList(false);
     setPlacePickerOpen(false);
-    setGroupPickerOpen(false);
     setRoomChoiceResult(null);
+  };
+
+  const toggleFinderParticipant = (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || normalized === currentEmailNormalized) return;
+    setSelectedPeopleEmails((previous) => (
+      previous.includes(normalized)
+        ? previous.filter((entry) => entry !== normalized)
+        : normalizeEmailList([...previous, normalized])
+    ));
+  };
+
+  const confirmPeopleTarget = () => {
+    setTargetType("people");
+    setSelectedGroupId("");
+    prepareSharedTarget();
+  };
+
+  const selectGroupTarget = (groupId: string) => {
+    setTargetType("group");
+    setSelectedGroupId(groupId);
+    setSelectedPeopleEmails([]);
+    prepareSharedTarget();
   };
 
   const chooseSelfTarget = () => {
@@ -1092,7 +1109,7 @@ export default function BookingFinder({
     setSelectedRooms([]);
     setShowSpecificRoomsList(false);
     setPlacePickerOpen(false);
-    setGroupPickerOpen(false);
+    setParticipantPickerOpen(false);
     setRoomChoiceResult(null);
   };
 
@@ -1103,16 +1120,17 @@ export default function BookingFinder({
           <>
             <p className="field-label finder-section-label">בשביל מי?</p>
             <div className="finder-intents-grid">
-              {groupsEnabled ? <div
-                className={`finder-intent-card ${targetType === "group" ? "active" : ""}`}
+              <div
+                className={`finder-intent-card ${targetType === "group" || targetType === "people" ? "active" : ""}`}
                 role="button"
                 tabIndex={0}
-                aria-pressed={targetType === "group"}
-                onClick={chooseGroupTarget}
+                aria-pressed={targetType === "group" || targetType === "people"}
+                aria-label="בחירת משתתפים"
+                onClick={openParticipantTargetPicker}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    chooseGroupTarget();
+                    openParticipantTargetPicker();
                   }
                 }}
               >
@@ -1121,15 +1139,15 @@ export default function BookingFinder({
                     <GroupsIcon />
                   </span>
                   <div className="finder-intent-card-text">
-                    <span className="finder-intent-card-title">הרכב</span>
-                    <span className="finder-intent-card-selector-value finder-intent-static-value">זמן שכולם יכולים</span>
+                    <span className="finder-intent-card-title">עם משתתפים</span>
+                    <span className="finder-intent-card-selector-value finder-intent-static-value">זמן משותף</span>
                   </div>
                 </div>
                 <span className="finder-intent-card-selection finder-intent-card-selection-row">
                   <span className="finder-intent-card-selection-label">עבור</span>
-                  <span className="finder-intent-card-selection-value">{groupSelectionSummary}</span>
+                  <span className="finder-intent-card-selection-value">{sharedTargetSummary}</span>
                 </span>
-              </div> : null}
+              </div>
               <div
                 className={`finder-intent-card finder-intent-card-secondary ${targetType === "self" ? "active" : ""}`}
                 role="button"
@@ -1153,33 +1171,6 @@ export default function BookingFinder({
                   </div>
                 </div>
               </div>
-              {selectedPeopleEmails.length ? (
-                <div
-                  className={`finder-intent-card finder-intent-card-secondary ${targetType === "people" ? "active" : ""}`}
-                  role="button"
-                  tabIndex={0}
-                  aria-pressed={targetType === "people"}
-                  onClick={choosePeopleTarget}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      choosePeopleTarget();
-                    }
-                  }}
-                >
-                  <div className="finder-intent-card-main">
-                    <span className="finder-intent-card-icon" aria-hidden="true">
-                      <UserIcon />
-                    </span>
-                    <div className="finder-intent-card-text">
-                      <span className="finder-intent-card-title">עם אנשים</span>
-                      <span className="finder-intent-card-selector-value finder-intent-static-value">
-                        {selectedPeopleSummary}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
             </div>
           </>
         ) : null}
@@ -1550,96 +1541,24 @@ export default function BookingFinder({
         </div>
       ) : null}
 
-      {collaborationEnabled && groupsEnabled && groupPickerOpen ? (
-        <div className="groups-overlay-backdrop" role="presentation" onClick={() => setGroupPickerOpen(false)}>
-          <div className="groups-overlay finder-group-picker-overlay" role="dialog" onClick={(event) => event.stopPropagation()}>
-            <p className="groups-overlay-title">בחירת הרכב</p>
-            <label className="finder-group-search-field">
-              <input
-                type="search"
-                value={groupPickerSearch}
-                placeholder="חיפוש הרכב"
-                onChange={(event) => setGroupPickerSearch(event.target.value)}
-              />
-            </label>
-            <ul className="groups-chat-list finder-group-picker-list">
-              <li key="finder-group-create">
-                <button
-                  type="button"
-                  className="groups-chat-item finder-group-picker-item finder-group-picker-item-create"
-                  onClick={() => {
-                    setGroupPickerOpen(false);
-                    openCreateGroupOverlay();
-                  }}
-                >
-                  <span className="groups-chat-avatar groups-chat-avatar-group finder-group-create-avatar" aria-hidden="true">
-                    <AddIcon />
-                  </span>
-                  <div className="groups-chat-text">
-                    <p className="groups-chat-title">הרכב חדש</p>
-                    <p className="groups-chat-subtitle finder-group-create-subtitle-placeholder">placeholder</p>
-                  </div>
-                </button>
-              </li>
-              {filteredGroups.map((group) => (
-                <li key={`finder-group-${group.id}`}>
-                  <button
-                    type="button"
-                    className={`groups-chat-item finder-group-picker-item finder-group-picker-item-group ${group.id === selectedGroupId ? "active" : ""}`}
-                    onClick={() => {
-                      setSelectedGroupId(group.id);
-                      setTargetType("group");
-                      setGroupPickerOpen(false);
-                    }}
-                  >
-                    <span className="groups-chat-avatar groups-chat-avatar-group reserve-group-selector-icon" aria-hidden="true">
-                      <GroupsIcon />
-                    </span>
-                    <div className="groups-chat-text">
-                      <p className="groups-chat-title">{group.name}</p>
-                      <p className="groups-chat-subtitle">{formatMembersCount(group.memberEmails.length)}</p>
-                    </div>
-                    <span className="groups-members-stack reserve-group-selector-stack" aria-hidden="true">
-                      {Array.from(
-                        new Set(
-                          [group.ownerEmail, ...group.memberEmails]
-                            .map((email) => email.trim().toLowerCase())
-                            .filter(Boolean)
-                        )
-                      )
-                        .slice(0, 4)
-                        .map((email, index) => {
-                          const user = usersByEmail.get(email);
-                          const label = displayLabelForEmail(email);
-                          const pictureUrl = (user?.pictureUrl || "").trim();
-                          return (
-                            <span
-                              key={`finder-group-member-${group.id}-${email}`}
-                              className="groups-members-stack-item"
-                              style={{ zIndex: index + 1 }}
-                            >
-                              {pictureUrl ? (
-                                <img src={pictureUrl} alt="" loading="lazy" />
-                              ) : (
-                                <span>{initialsForLabel(label)}</span>
-                              )}
-                            </span>
-                          );
-                        })}
-                    </span>
-                    <ChevronLeftIcon />
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <div className="groups-overlay-actions">
-              <button type="button" className="chip ghost" onClick={() => setGroupPickerOpen(false)}>
-                סגור
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ParticipantPickerOverlay
+        open={collaborationEnabled && participantPickerOpen}
+        title="בחירת משתתפים"
+        initialTab={participantPickerTab}
+        peopleEnabled={collaborationEnabled}
+        groupsEnabled={groupsEnabled}
+        directoryUsers={directoryUsers}
+        currentEmail={currentEmail}
+        selectedPeopleEmails={selectedPeopleEmails}
+        selectedGroupId={targetType === "group" ? selectedGroupId : ""}
+        groups={groups}
+        onTogglePerson={toggleFinderParticipant}
+        onConfirmPeople={confirmPeopleTarget}
+        onSelectGroup={selectGroupTarget}
+        onChooseSelf={chooseSelfTarget}
+        onCreateGroup={groupsEnabled ? openCreateGroupOverlay : undefined}
+        onClose={() => setParticipantPickerOpen(false)}
+      />
 
       {placePickerOpen ? (
         <div className="groups-overlay-backdrop" role="presentation" onClick={() => setPlacePickerOpen(false)}>
@@ -1803,12 +1722,11 @@ export default function BookingFinder({
           memberSubtitle={memberYearSubtitle}
           onCreated={(groupId, name) => {
             if (groupId) {
-              setSelectedGroupId(groupId);
-              setTargetType("group");
+              selectGroupTarget(groupId);
             } else {
               setCreateGroupPendingName(name);
             }
-            setGroupPickerOpen(false);
+            setParticipantPickerOpen(false);
             closeCreateGroupOverlay();
           }}
         />

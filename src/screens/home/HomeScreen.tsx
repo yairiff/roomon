@@ -5000,6 +5000,7 @@ export default function HomeScreen({
           directoryUsers={users}
           currentEmail={currentUser?.email}
           peopleSelectionEnabled={collaborationAvailable}
+          groupsSelectionEnabled={groupsEnabled}
           resolveCommonQuotaCapacity={(startMinutes, participantEmails) =>
             getCommonQuotaCapacityMinutes(
               pendingConfirm.request.date,

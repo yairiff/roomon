@@ -4,15 +4,10 @@ import { formatMinutes } from "../../../lib/scheduleBuilder";
 import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import type { ReserveRequest } from "../../../types/reservations";
 import type { DirectoryUser } from "../../../types/admin";
-import {
-  getPeopleCategoryLabel,
-  matchesPeopleCategory,
-  peopleCategoryOptions,
-  type PeopleCategory
-} from "../../../lib/peopleDirectory";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import { AddIcon, ChevronLeftIcon, GroupsIcon, UserIcon } from "../../../components/Icons";
+import { ChevronLeftIcon, GroupsIcon, UserIcon } from "../../../components/Icons";
 import GroupCreateOverlay from "../components/GroupCreateOverlay";
+import ParticipantPickerOverlay from "../components/ParticipantPickerOverlay";
 
 const initialsFromLabel = (label: string) => {
   const parts = label.trim().split(/\s+/).filter(Boolean);
@@ -57,6 +52,7 @@ export type ReserveConfirmOverlayProps = {
   directoryUsers?: DirectoryUser[];
   currentEmail?: string;
   peopleSelectionEnabled?: boolean;
+  groupsSelectionEnabled?: boolean;
   resolveCommonQuotaCapacity?: (startMinutes: number, participantEmails: string[]) => number;
   onCreateGroup?: (name: string, participantEmails?: string[]) => Promise<string | void> | string | void;
   linkedGroupName?: string;
@@ -99,6 +95,7 @@ export default function ReserveConfirmOverlay({
   directoryUsers = [],
   currentEmail,
   peopleSelectionEnabled = false,
+  groupsSelectionEnabled = false,
   resolveCommonQuotaCapacity,
   onCreateGroup,
   linkedGroupName,
@@ -207,13 +204,10 @@ export default function ReserveConfirmOverlay({
   const [participantTarget, setParticipantTarget] = useState<"self" | "people" | "group">("self");
   const [participantPickerTab, setParticipantPickerTab] = useState<"people" | "groups">("people");
   const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [groupPickerSearch, setGroupPickerSearch] = useState("");
   const [createGroupOverlayOpen, setCreateGroupOverlayOpen] = useState(false);
   const [createGroupPendingName, setCreateGroupPendingName] = useState("");
   const [rehearsalName, setRehearsalName] = useState("");
   const [participantPickerOpen, setParticipantPickerOpen] = useState(false);
-  const [participantSearch, setParticipantSearch] = useState("");
-  const [participantCategory, setParticipantCategory] = useState<PeopleCategory>("all");
   const [selectedParticipantEmails, setSelectedParticipantEmails] = useState<string[]>([]);
   const currentEmailNormalized = (currentEmail || "").trim().toLowerCase();
   const normalizeEmails = (values: string[]) => {
@@ -240,13 +234,10 @@ export default function ReserveConfirmOverlay({
     setParticipantTarget(startsWithGroup ? "group" : initialPeople.length ? "people" : "self");
     setParticipantPickerTab(startsWithGroup || !peopleSelectionEnabled ? "groups" : "people");
     setSelectedGroupId(initialGroupId || groupOptions[0]?.id || "");
-    setGroupPickerSearch("");
     setCreateGroupOverlayOpen(false);
     setCreateGroupPendingName("");
     setRehearsalName("");
     setParticipantPickerOpen(false);
-    setParticipantSearch("");
-    setParticipantCategory("all");
     setSelectedParticipantEmails(initialPeople);
   }, [
     currentEmailNormalized,
@@ -281,11 +272,6 @@ export default function ReserveConfirmOverlay({
     () => groupOptions.find((group) => group.id === selectedGroupId) || null,
     [groupOptions, selectedGroupId]
   );
-  const filteredGroups = useMemo(() => {
-    const q = groupPickerSearch.trim().toLowerCase();
-    if (!q) return groupOptions;
-    return groupOptions.filter((group) => group.name.toLowerCase().includes(q));
-  }, [groupOptions, groupPickerSearch]);
   const selectedGroupMembersPreview = useMemo(() => {
     if (!selectedGroup?.members?.length) return [];
     return selectedGroup.members
@@ -296,28 +282,6 @@ export default function ReserveConfirmOverlay({
       }))
       .filter((member) => Boolean(member.email));
   }, [selectedGroup?.members]);
-
-  const participantOptions = useMemo(() => {
-    const q = participantSearch.trim().toLowerCase();
-    const selected = new Set(selectedParticipantEmails);
-    return directoryUsers
-      .filter((user) => user.email.toLowerCase() !== currentEmailNormalized)
-      .filter((user) => matchesPeopleCategory(user, participantCategory))
-      .filter((user) => {
-        if (!q) return true;
-        const name = (user.name || "").trim().toLowerCase();
-        const email = user.email.toLowerCase();
-        const phone = (user.phone || "").trim().toLowerCase();
-        const category = getPeopleCategoryLabel(user).toLowerCase();
-        return name.includes(q) || email.includes(q) || phone.includes(q) || category.includes(q);
-      })
-      .sort((a, b) => {
-        const aSelected = selected.has(a.email.toLowerCase());
-        const bSelected = selected.has(b.email.toLowerCase());
-        if (aSelected !== bSelected) return aSelected ? -1 : 1;
-        return ((a.name || a.email).trim()).localeCompare((b.name || b.email).trim(), "he");
-      });
-  }, [currentEmailNormalized, directoryUsers, participantCategory, participantSearch, selectedParticipantEmails]);
 
   const selectedParticipantPreview = useMemo(() => {
     const byEmail = new Map(directoryUsers.map((user) => [user.email.toLowerCase(), user]));
@@ -559,7 +523,7 @@ export default function ReserveConfirmOverlay({
         </div>
 
         <p className="reserve-duration">משך: {formatDurationLabelHe(durationMinutes)}</p>
-        {(!linkedGroupName && (peopleSelectionEnabled || groupOptions.length)) ||
+        {(!linkedGroupName && (peopleSelectionEnabled || groupsSelectionEnabled)) ||
         (mode === "edit" && peopleSelectionEnabled) ? (
           <button
             type="button"
@@ -703,149 +667,38 @@ export default function ReserveConfirmOverlay({
           </div>
         </div>
       </div>
-      {participantPickerOpen ? (
-        <div className="groups-overlay-backdrop reserve-group-picker-layer" role="presentation" onClick={() => setParticipantPickerOpen(false)}>
-          <div className="groups-overlay finder-group-picker-overlay reserve-participant-picker-overlay" role="dialog" onClick={(event) => event.stopPropagation()}>
-            <p className="groups-overlay-title">הוספת משתתפים</p>
-            {peopleSelectionEnabled && groupOptions.length && !linkedGroupName ? (
-              <div className="reserve-participant-tabs" role="tablist" aria-label="סוג משתתפים">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={participantPickerTab === "people"}
-                  className={participantPickerTab === "people" ? "active" : ""}
-                  onClick={() => setParticipantPickerTab("people")}
-                >
-                  <UserIcon />
-                  <span>אנשים</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={participantPickerTab === "groups"}
-                  className={participantPickerTab === "groups" ? "active" : ""}
-                  onClick={() => setParticipantPickerTab("groups")}
-                >
-                  <GroupsIcon />
-                  <span>הרכבים</span>
-                </button>
-              </div>
-            ) : null}
-            {participantPickerTab === "people" && peopleSelectionEnabled ? (
-              <>
-                <div className="reserve-participant-filter-row">
-                  <label className="finder-group-search-field">
-                    <input
-                      type="search"
-                      value={participantSearch}
-                      placeholder="חיפוש אנשים"
-                      onChange={(event) => setParticipantSearch(event.target.value)}
-                    />
-                  </label>
-                  <select
-                    className="reserve-participant-category"
-                    aria-label="סינון לפי שנתון"
-                    value={participantCategory}
-                    onChange={(event) => setParticipantCategory(event.target.value as PeopleCategory)}
-                  >
-                    {peopleCategoryOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <ul className="groups-chat-list finder-group-picker-list">
-                  {participantOptions.map((user) => {
-                    const email = user.email.toLowerCase();
-                    const selected = selectedParticipantEmails.includes(email);
-                    const label = (user.name || "").trim() || user.email;
-                    return (
-                      <li key={`reserve-participant-${email}`}>
-                        <button
-                          type="button"
-                          className={`groups-chat-item finder-group-picker-item reserve-person-picker-row ${selected ? "active" : ""}`}
-                          onClick={() => {
-                            setParticipantTarget("people");
-                            setSelectedGroupId("");
-                            toggleParticipant(email);
-                          }}
-                        >
-                          <span className={`finder-member-check ${selected ? "active" : ""}`} aria-hidden="true">
-                            {selected ? "✓" : ""}
-                          </span>
-                          <span className="groups-chat-avatar">
-                            {(user.pictureUrl || "").trim() ? <img src={String(user.pictureUrl)} alt="" loading="lazy" /> : label.slice(0, 1)}
-                          </span>
-                          <span className="groups-chat-text">
-                            <span className="groups-chat-title">{label}</span>
-                            <span className="groups-chat-subtitle">{getPeopleCategoryLabel(user)}</span>
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {!participantOptions.length ? <p className="finder-inline-note">לא נמצאו משתמשים.</p> : null}
-              </>
-            ) : (
-              <>
-                <label className="finder-group-search-field">
-                  <input
-                    type="search"
-                    value={groupPickerSearch}
-                    placeholder="חיפוש הרכב"
-                    onChange={(event) => setGroupPickerSearch(event.target.value)}
-                  />
-                </label>
-                <ul className="groups-chat-list finder-group-picker-list">
-                  <li key="reserve-group-create">
-                    <button type="button" className="groups-chat-item finder-group-picker-item finder-group-picker-item-create" onClick={openCreateGroupOverlay}>
-                      <span className="groups-chat-avatar groups-chat-avatar-group finder-group-create-avatar" aria-hidden="true"><AddIcon /></span>
-                      <span className="groups-chat-text"><span className="groups-chat-title">הרכב חדש</span></span>
-                    </button>
-                  </li>
-                  {filteredGroups.map((group) => (
-                    <li key={`reserve-group-${group.id}`}>
-                      <button
-                        type="button"
-                        className={`groups-chat-item finder-group-picker-item finder-group-picker-item-group ${participantTarget === "group" && group.id === selectedGroupId ? "active" : ""}`}
-                        onClick={() => {
-                          setSelectedGroupId(group.id);
-                          setParticipantTarget("group");
-                          setSelectedParticipantEmails([]);
-                          setParticipantPickerOpen(false);
-                        }}
-                      >
-                        <span className="groups-chat-avatar groups-chat-avatar-group reserve-group-selector-icon" aria-hidden="true"><GroupsIcon /></span>
-                        <span className="groups-chat-text">
-                          <span className="groups-chat-title">{group.name}</span>
-                          <span className="groups-chat-subtitle">{`${group.memberCount || 0} משתתפים`}</span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            <div className="groups-overlay-actions">
-              {!linkedGroupName ? (
-                <button type="button" className="chip ghost" onClick={() => {
-                  setParticipantTarget("self");
-                  setSelectedParticipantEmails([]);
-                  setSelectedGroupId("");
-                  setParticipantPickerOpen(false);
-                }}>
-                  רק אני
-                </button>
-              ) : <span />}
-              {participantPickerTab === "people" && peopleSelectionEnabled ? (
-                <button type="button" className="chip active" onClick={() => setParticipantPickerOpen(false)}>
-                  שמירה
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ParticipantPickerOverlay
+        open={participantPickerOpen}
+        initialTab={participantPickerTab}
+        peopleEnabled={peopleSelectionEnabled}
+        groupsEnabled={groupsSelectionEnabled && !linkedGroupName}
+        directoryUsers={directoryUsers}
+        currentEmail={currentEmail}
+        selectedPeopleEmails={selectedParticipantEmails}
+        selectedGroupId={participantTarget === "group" ? selectedGroupId : ""}
+        groups={groupOptions}
+        onTogglePerson={(email) => {
+          setParticipantTarget("people");
+          setSelectedGroupId("");
+          toggleParticipant(email);
+        }}
+        onConfirmPeople={() => {
+          setParticipantTarget(linkedGroupName || selectedParticipantEmails.length ? "people" : "self");
+          setSelectedGroupId("");
+        }}
+        onSelectGroup={(groupId) => {
+          setSelectedGroupId(groupId);
+          setParticipantTarget("group");
+          setSelectedParticipantEmails([]);
+        }}
+        onChooseSelf={!linkedGroupName ? () => {
+          setParticipantTarget("self");
+          setSelectedParticipantEmails([]);
+          setSelectedGroupId("");
+        } : undefined}
+        onCreateGroup={groupsSelectionEnabled && !linkedGroupName ? openCreateGroupOverlay : undefined}
+        onClose={() => setParticipantPickerOpen(false)}
+      />
       <GroupCreateOverlay
         open={createGroupOverlayOpen}
         users={directoryUsers}

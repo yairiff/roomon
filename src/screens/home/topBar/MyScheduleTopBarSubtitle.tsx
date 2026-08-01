@@ -169,7 +169,7 @@ export default function MyScheduleTopBarSubtitle({
               >
                 <span className="my-schedule-edit-round-content">
                   <EditIcon />
-                  <span className="my-schedule-edit-round-text">עריכה</span>
+                  <span className="my-schedule-edit-round-text">זמינות</span>
                 </span>
               </button>
             </div>

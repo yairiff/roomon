@@ -688,7 +688,7 @@ button.participant-avatar-stack {
 
 .reserve-participant-picker-overlay .finder-group-picker-item-group {
   direction: rtl;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr) auto;
 }
 
 .reserve-participant-picker-overlay .groups-chat-text,
@@ -4234,10 +4234,6 @@ select,
   container-type: inline-size;
 }
 
-.schedule-block.has-bottom-avatar {
-  padding-bottom: 30px;
-}
-
 .schedule-block.lesson {
   background: var(--schedule-block-lesson-bg);
   border: 1px solid var(--status-lesson-border);
@@ -4371,10 +4367,6 @@ select,
   align-content: start;
   justify-items: start;
   align-items: start;
-}
-
-.schedule-block.compact.has-bottom-avatar {
-  padding-bottom: 22px;
 }
 
 .schedule-block.compact.lesson {
