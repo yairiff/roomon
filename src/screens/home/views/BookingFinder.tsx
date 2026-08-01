@@ -1547,6 +1547,7 @@ export default function BookingFinder({
         initialTab={participantPickerTab}
         peopleEnabled={collaborationEnabled}
         groupsEnabled={groupsEnabled}
+        peopleHint="עובד הכי טוב כשכולם מגדירים חלונות זמינות בקמפוס ומוסיפים שיעורים ללוח האישי."
         directoryUsers={directoryUsers}
         currentEmail={currentEmail}
         selectedPeopleEmails={selectedPeopleEmails}

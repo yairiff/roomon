@@ -644,6 +644,16 @@ button.participant-avatar-stack {
   min-width: 0;
 }
 
+.participant-picker-people-hint {
+  grid-column: 1 / -1;
+  margin: 0 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.45;
+  text-align: right;
+}
+
 .reserve-participant-category,
 .people-category-filter {
   width: 100%;

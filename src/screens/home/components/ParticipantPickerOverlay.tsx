@@ -25,6 +25,7 @@ type ParticipantPickerOverlayProps = {
   initialTab?: ParticipantPickerTab;
   peopleEnabled?: boolean;
   groupsEnabled?: boolean;
+  peopleHint?: string;
   directoryUsers: DirectoryUser[];
   currentEmail?: string;
   selectedPeopleEmails: string[];
@@ -50,6 +51,7 @@ export default function ParticipantPickerOverlay({
   initialTab = "people",
   peopleEnabled = true,
   groupsEnabled = false,
+  peopleHint,
   directoryUsers,
   currentEmail,
   selectedPeopleEmails,
@@ -195,6 +197,7 @@ export default function ParticipantPickerOverlay({
         {activeTab === "people" && peopleEnabled ? (
           <>
             <div className="reserve-participant-filter-row">
+              {peopleHint ? <p className="participant-picker-people-hint">{peopleHint}</p> : null}
               <label className="finder-group-search-field">
                 <input
                   type="search"
