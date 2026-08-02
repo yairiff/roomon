@@ -1293,7 +1293,7 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
   return (
     <section className={`schedule${compact ? " compact" : ""}${availabilityEditMode ? " availability-edit" : ""}`}>
       {availabilityEditMode ? (
-        <p className="availability-edit-caption">מתי אפשר לקבוע איתי</p>
+        <p className="availability-edit-caption">מתי אפשר לקבוע איתי בקמפוס?</p>
       ) : null}
       <div className={`schedule-shell${showHeaders ? " has-headers" : ""}`}>
         {showHeaders ? (
@@ -1363,9 +1363,7 @@ const buildReservationBlocks = (dateKey: string, roomId: string): ReservationBlo
                 );
               })}
             </div>
-            <div className={`time-header${availabilityEditMode ? " availability-campus-header" : ""}`} aria-hidden="true">
-              {availabilityEditMode ? "בקמפוס" : null}
-            </div>
+            <div className="time-header" aria-hidden="true" />
           </>
         ) : null}
         <div
