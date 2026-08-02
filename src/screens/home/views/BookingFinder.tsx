@@ -1002,21 +1002,13 @@ export default function BookingFinder({
     if (placeType !== "room") return "";
     if (showSpecificRoomsList) return "specific";
     if (recordingSuitableRoomIds.length && hasSameIds(selectedRooms, recordingSuitableRoomIds)) return "recording";
-    if (
-      collaborationEnabled &&
-      rehearsalSuitableRoomIds.length &&
-      hasSameIds(selectedRooms, rehearsalSuitableRoomIds)
-    ) {
+    if (rehearsalSuitableRoomIds.length && hasSameIds(selectedRooms, rehearsalSuitableRoomIds)) {
       return "rehearsal";
     }
     return "all";
-  }, [collaborationEnabled, placeType, recordingSuitableRoomIds, rehearsalSuitableRoomIds, selectedRooms, showSpecificRoomsList]);
+  }, [placeType, recordingSuitableRoomIds, rehearsalSuitableRoomIds, selectedRooms, showSpecificRoomsList]);
   const roomSelectionSummary = useMemo(() => {
-    if (
-      collaborationEnabled &&
-      rehearsalSuitableRoomIds.length &&
-      hasSameIds(selectedRooms, rehearsalSuitableRoomIds)
-    ) {
+    if (rehearsalSuitableRoomIds.length && hasSameIds(selectedRooms, rehearsalSuitableRoomIds)) {
       return "מתאים להרכבים";
     }
     if (recordingSuitableRoomIds.length && hasSameIds(selectedRooms, recordingSuitableRoomIds)) return "מתאים להקלטות";
@@ -1025,7 +1017,7 @@ export default function BookingFinder({
       return rooms.find((room) => room.id === selectedRooms[0])?.name || "חדר";
     }
     return `${selectedRooms.length} חדרים`;
-  }, [collaborationEnabled, recordingSuitableRoomIds, rehearsalSuitableRoomIds, rooms, selectedRooms]);
+  }, [recordingSuitableRoomIds, rehearsalSuitableRoomIds, rooms, selectedRooms]);
   const sharedTargetSummary = targetType === "group"
     ? selectedGroup?.name || "בחר הרכב"
     : targetType === "people"
@@ -1602,7 +1594,7 @@ export default function BookingFinder({
                   </div>
                 </button>
               </li>
-              {groupsEnabled ? (
+              {rehearsalSuitableRoomIds.length ? (
                 <li key="finder-room-rehearsal-suitable">
                   <button
                     type="button"
