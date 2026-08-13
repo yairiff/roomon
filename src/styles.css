@@ -376,6 +376,8 @@ button.participant-avatar-stack {
   position: absolute;
   top: -4px;
   left: -5px;
+  right: auto;
+  width: max-content;
   min-width: 20px;
   height: 20px;
   padding: 0 5px;
