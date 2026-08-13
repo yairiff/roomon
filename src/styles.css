@@ -6889,6 +6889,15 @@ select,
   padding: 2px 2px 8px;
 }
 
+.groups-view.people-tool-view {
+  align-content: stretch;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.groups-view.people-tool-view.people-tool-view-with-tabs {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
 .groups-panel,
 .groups-list-panel {
   height: auto;
@@ -7038,6 +7047,10 @@ select,
 .people-panel {
   padding: 0;
   overflow: hidden;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .people-search-field {
@@ -7045,8 +7058,17 @@ select,
 }
 
 .people-list {
-  max-height: min(58vh, 520px);
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y proximity;
+}
+
+.people-list > li {
+  scroll-snap-align: start;
 }
 
 .people-row {

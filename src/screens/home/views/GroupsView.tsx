@@ -510,7 +510,11 @@ export default function GroupsView({
 
   if (!selectedGroup) {
     return (
-      <section className="finder groups-view groups-whatsapp">
+      <section
+        className={`finder groups-view groups-whatsapp${activeTool === "people" ? " people-tool-view" : ""}${
+          activeTool === "people" && groupsEnabled ? " people-tool-view-with-tabs" : ""
+        }`}
+      >
         {groupsEnabled ? (
           <div className="groups-tool-switch" role="tablist" aria-label="כלי שיתוף">
             <button
