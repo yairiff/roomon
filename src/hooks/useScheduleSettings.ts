@@ -155,6 +155,12 @@ const clampConcurrency = (value: unknown, fallback: number) => {
   return Math.max(1, Math.min(32, Math.round(numeric)));
 };
 
+const clampReservationGapMinutes = (value: unknown, fallback: number) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(7 * 24 * 60, Math.round(numeric)));
+};
+
 const API_SYNC_ENTITY_KEYS: ApiSyncEntityKey[] = ["rooms", "lessons", "semesters", "holidays"];
 
 const clampIntervalMinutes = (value: unknown, fallback: number) => {
@@ -203,6 +209,14 @@ const sanitizePolicy = (policy?: Partial<ReservationPolicy>): ReservationPolicy 
     policy?.maxConcurrentReservations,
     DEFAULT_RESERVATION_POLICY.maxConcurrentReservations
   ),
+  minMinutesBetweenReservationsPerRoom: clampReservationGapMinutes(
+    policy?.minMinutesBetweenReservationsPerRoom,
+    DEFAULT_RESERVATION_POLICY.minMinutesBetweenReservationsPerRoom
+  ),
+  minMinutesBetweenReservationsTotal: clampReservationGapMinutes(
+    policy?.minMinutesBetweenReservationsTotal,
+    DEFAULT_RESERVATION_POLICY.minMinutesBetweenReservationsTotal
+  ),
   minLeadMode:
     policy?.minLeadMode === "day_before_time" || policy?.minLeadMode === "hours_before"
       ? policy.minLeadMode
@@ -240,6 +254,18 @@ const sanitizePartialPolicyRules = (rulesRaw: Record<string, unknown>) => {
     rules.maxConcurrentReservations = clampConcurrency(
       rulesRaw.maxConcurrentReservations,
       DEFAULT_RESERVATION_POLICY.maxConcurrentReservations
+    );
+  }
+  if (rulesRaw.minMinutesBetweenReservationsPerRoom !== undefined) {
+    rules.minMinutesBetweenReservationsPerRoom = clampReservationGapMinutes(
+      rulesRaw.minMinutesBetweenReservationsPerRoom,
+      0
+    );
+  }
+  if (rulesRaw.minMinutesBetweenReservationsTotal !== undefined) {
+    rules.minMinutesBetweenReservationsTotal = clampReservationGapMinutes(
+      rulesRaw.minMinutesBetweenReservationsTotal,
+      0
     );
   }
   if (rulesRaw.minLeadMode === "hours_before" || rulesRaw.minLeadMode === "day_before_time") {

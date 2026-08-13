@@ -37,6 +37,8 @@ export type ReservationPolicy = {
   maxHoursPerWeekTotal: number;
   maxDaysForward: number;
   maxConcurrentReservations: number;
+  minMinutesBetweenReservationsPerRoom: number;
+  minMinutesBetweenReservationsTotal: number;
   minLeadMode: ReservationCutoffMode; // legacy
   minLeadHours: number;
   minLeadDayBeforeEnabled: boolean;
@@ -88,6 +90,8 @@ export const DEFAULT_RESERVATION_POLICY: ReservationPolicy = {
   maxHoursPerWeekTotal: 12,
   maxDaysForward: 30,
   maxConcurrentReservations: 1,
+  minMinutesBetweenReservationsPerRoom: 0,
+  minMinutesBetweenReservationsTotal: 0,
   minLeadMode: "hours_before",
   minLeadHours: 0,
   minLeadDayBeforeEnabled: false,

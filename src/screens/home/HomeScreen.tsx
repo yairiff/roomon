@@ -29,6 +29,7 @@ import { formatDurationLabelHe } from "../../lib/formatDurationHe";
 import { applyLessonOverrides } from "../../lib/lessonOverrides";
 import { buildApprovedQuotaParticipantEmails, getReservationUsageShareForEmail, normalizeEmailList } from "../../lib/quotaUsage";
 import { calculateReservationQuotaAdjustment } from "../../lib/reservationQuotaAdjustment";
+import { findReservationGapViolation } from "../../lib/reservationGap";
 import {
   deriveActiveHoursFromReservationPolicyWindows,
   isReservationPolicySlotAllowed
@@ -3100,7 +3101,8 @@ export default function HomeScreen({
       const { dateKey, roomId, startMinutes, durationMinutes, excludeReservationId } = input;
       const endMinutes = startMinutes + durationMinutes;
       const currentEmail = (currentUser.email || "").trim().toLowerCase();
-      const participantCount = Math.max(1, normalizeEmailList([currentEmail, ...(input.participantEmails || [])]).length);
+      const commonQuotaParticipantEmails = normalizeEmailList([currentEmail, ...(input.participantEmails || [])]);
+      const participantCount = Math.max(1, commonQuotaParticipantEmails.length);
       const quotaRequiredMinutes = durationMinutes / participantCount;
       if (!policyDayKeySet.has(input.dayKey)) {
         showToast("לא ניתן לשריין ביום הזה לפי מדיניות המערכת.", "error");
@@ -3232,6 +3234,28 @@ export default function HomeScreen({
         return false;
       }
 
+      const gapViolation = findReservationGapViolation({
+        reservationMap: displayReservationMap,
+        dateKey,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        participantEmails: commonQuotaParticipantEmails,
+        minMinutesPerRoom: effectivePolicy.minMinutesBetweenReservationsPerRoom,
+        minMinutesTotal: effectivePolicy.minMinutesBetweenReservationsTotal,
+        excludeReservationId
+      });
+      if (gapViolation) {
+        const policySuffix = firstMatched?.name ? ` לפי מדיניות "${firstMatched.name}"` : "";
+        showToast(
+          gapViolation.scope === "room"
+            ? `נדרש מרווח של לפחות ${gapViolation.minMinutes} דקות בין שריונים באותו חדר${policySuffix}.`
+            : `נדרש מרווח של לפחות ${gapViolation.minMinutes} דקות בין שריונים של המארגן או המשתתפים${policySuffix}.`,
+          "error"
+        );
+        return false;
+      }
+
       const maxConcurrentReservations = Math.max(1, Math.round(Number(effectivePolicy.maxConcurrentReservations) || 1));
       const overlappingUserReservationCount = dayReservations.filter((entry) => {
         if (entry.id === excludeReservationId) return false;
@@ -3249,7 +3273,6 @@ export default function HomeScreen({
         return false;
       }
 
-      const commonQuotaParticipantEmails = normalizeEmailList([currentEmail, ...(input.participantEmails || [])]);
       const commonQuotaAdjustment = calculateReservationQuotaAdjustment({
         reservation: {
           id: excludeReservationId || "__direct-policy-draft__",

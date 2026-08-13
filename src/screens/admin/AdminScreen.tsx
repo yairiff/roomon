@@ -67,6 +67,9 @@ type ScopedPolicyDraft = {
   useMaxDaysForward: boolean;
   maxDaysForward: string;
   maxConcurrentReservations: string;
+  useMinimumReservationGap: boolean;
+  minMinutesBetweenReservationsPerRoom: string;
+  minMinutesBetweenReservationsTotal: string;
   useMinLeadHours: boolean;
   useMinLeadDayBefore: boolean;
   minLeadHours: string;
@@ -304,6 +307,9 @@ const createEmptyScopedPolicyDraft = (): ScopedPolicyDraft => ({
   useMaxDaysForward: false,
   maxDaysForward: "",
   maxConcurrentReservations: "1",
+  useMinimumReservationGap: false,
+  minMinutesBetweenReservationsPerRoom: "",
+  minMinutesBetweenReservationsTotal: "",
   useMinLeadHours: false,
   useMinLeadDayBefore: false,
   minLeadHours: "0",
@@ -348,6 +354,15 @@ const toScopedPolicyDraft = (policy: ReservationScopedPolicy): ScopedPolicyDraft
   useMaxDaysForward: Number(policy.rules.maxDaysForward || 0) > 0,
   maxDaysForward: parseOptionalLimitDraft(policy.rules.maxDaysForward),
   maxConcurrentReservations: String(Math.max(1, Math.round(Number(policy.rules.maxConcurrentReservations) || 1))),
+  useMinimumReservationGap:
+    Number(policy.rules.minMinutesBetweenReservationsPerRoom || 0) > 0 ||
+    Number(policy.rules.minMinutesBetweenReservationsTotal || 0) > 0,
+  minMinutesBetweenReservationsPerRoom: parseOptionalLimitDraft(
+    policy.rules.minMinutesBetweenReservationsPerRoom
+  ),
+  minMinutesBetweenReservationsTotal: parseOptionalLimitDraft(
+    policy.rules.minMinutesBetweenReservationsTotal
+  ),
   useMinLeadHours: Number(policy.rules.minLeadHours || 0) > 0,
   useMinLeadDayBefore:
     policy.rules.minLeadDayBeforeEnabled === true ||
@@ -406,7 +421,13 @@ const toScopedPolicy = (draft: ScopedPolicyDraft): ReservationScopedPolicy => {
     maxHoursPerDayTotal: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerDayTotal) : 0,
     maxHoursPerWeekTotal: draft.useHourQuota ? parseLimitNumber(draft.maxHoursPerWeekTotal) : 0,
     maxDaysForward: draft.useMaxDaysForward ? parseLimitNumber(draft.maxDaysForward) : 0,
-    maxConcurrentReservations: Math.max(1, Math.round(parseOptionalNumber(draft.maxConcurrentReservations) || 1))
+    maxConcurrentReservations: Math.max(1, Math.round(parseOptionalNumber(draft.maxConcurrentReservations) || 1)),
+    minMinutesBetweenReservationsPerRoom: draft.useMinimumReservationGap
+      ? Math.round(parseLimitNumber(draft.minMinutesBetweenReservationsPerRoom))
+      : 0,
+    minMinutesBetweenReservationsTotal: draft.useMinimumReservationGap
+      ? Math.round(parseLimitNumber(draft.minMinutesBetweenReservationsTotal))
+      : 0
   };
 
   rules.minLeadMode = draft.useMinLeadDayBefore ? "day_before_time" : "hours_before";
@@ -441,6 +462,14 @@ const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
   pushLimit(policy.rules.maxHoursPerWeekTotal, (numeric) => `עד ${numeric} שעות בשבוע`);
   pushLimit(policy.rules.maxDaysForward, (numeric) => `עד ${numeric} ימים מראש`);
   pushLimit(policy.rules.maxConcurrentReservations, (numeric) => `עד ${numeric} שריונים במקביל`);
+  pushLimit(
+    policy.rules.minMinutesBetweenReservationsPerRoom,
+    (numeric) => `לפחות ${numeric} דקות בין שריונים בחדר`
+  );
+  pushLimit(
+    policy.rules.minMinutesBetweenReservationsTotal,
+    (numeric) => `לפחות ${numeric} דקות בין שריוני משתתף`
+  );
 
   if ((policy.rules.minLeadHours || 0) > 0) {
     parts.push(`לפחות ${policy.rules.minLeadHours} שעות מראש`);
@@ -2370,6 +2399,67 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                             />
                           </label>
                         </div>
+                      </div>
+
+                      <div className="admin-policy-setting-block">
+                        <label className="admin-policy-toggle">
+                          <input
+                            type="checkbox"
+                            checked={policyEditorDraft.useMinimumReservationGap}
+                            onChange={(event) =>
+                              setPolicyEditorDraft((prev) => ({
+                                ...prev,
+                                useMinimumReservationGap: event.target.checked,
+                                minMinutesBetweenReservationsPerRoom: event.target.checked
+                                  ? prev.minMinutesBetweenReservationsPerRoom
+                                  : "",
+                                minMinutesBetweenReservationsTotal: event.target.checked
+                                  ? prev.minMinutesBetweenReservationsTotal
+                                  : ""
+                              }))
+                            }
+                          />
+                          מרווח מינימלי בין שריונים
+                        </label>
+                        {policyEditorDraft.useMinimumReservationGap ? (
+                          <div className="admin-form-row">
+                            <label>
+                              דקות לחדר
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.minMinutesBetweenReservationsPerRoom}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    minMinutesBetweenReservationsPerRoom: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              דקות סה״כ למשתתף
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                placeholder="ללא מגבלה"
+                                value={policyEditorDraft.minMinutesBetweenReservationsTotal}
+                                onChange={(event) =>
+                                  setPolicyEditorDraft((prev) => ({
+                                    ...prev,
+                                    minMinutesBetweenReservationsTotal: normalizeUnlimitedInput(event.target.value)
+                                  }))
+                                }
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+                        <p className="admin-meta hint">
+                          לחדר חל על כל השריונים בחדר; סה״כ חל על כל שריון של המארגן או המשתתפים.
+                        </p>
                       </div>
 
                       <div className="admin-policy-setting-block">

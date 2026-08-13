@@ -11,6 +11,7 @@ import { formatDurationLabelHe } from "../../../lib/formatDurationHe";
 import { isFirebaseStorageDownloadUrl } from "../../../lib/profilePhoto";
 import { getReservationUsageShareForEmail, normalizeEmailList } from "../../../lib/quotaUsage";
 import { calculateReservationQuotaAdjustment } from "../../../lib/reservationQuotaAdjustment";
+import { findReservationGapViolation } from "../../../lib/reservationGap";
 import { defaultWeekDayKeys } from "../../../config";
 import {
   buildReservationPolicyWindowsForDays,
@@ -576,6 +577,36 @@ export function useReserveFlow({
     [getConcurrentReservationCount, getPolicyContext]
   );
 
+  const getReservationGapViolationMessage = useCallback(
+    (
+      dateKey: string,
+      roomId: string,
+      startMinutes: number,
+      durationMinutes: number,
+      participantEmails?: string[],
+      excludeReservationId?: string
+    ) => {
+      const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
+      const violation = findReservationGapViolation({
+        reservationMap,
+        dateKey,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        participantEmails: getDraftParticipantEmails(participantEmails),
+        minMinutesPerRoom: effectivePolicy.minMinutesBetweenReservationsPerRoom,
+        minMinutesTotal: effectivePolicy.minMinutesBetweenReservationsTotal,
+        excludeReservationId
+      });
+      if (!violation) return null;
+      const policySuffix = appliedPolicyName ? ` לפי מדיניות "${appliedPolicyName}"` : "";
+      return violation.scope === "room"
+        ? `נדרש מרווח של לפחות ${violation.minMinutes} דקות בין שריונים באותו חדר${policySuffix}.`
+        : `נדרש מרווח של לפחות ${violation.minMinutes} דקות בין שריונים של המארגן או המשתתפים${policySuffix}.`;
+    },
+    [getDraftParticipantEmails, getPolicyContext, reservationMap]
+  );
+
   const getCutoffViolationMessage = useCallback(
     (dateKey: string, roomId: string, startMinutes: number) => {
       const now = new Date();
@@ -744,6 +775,18 @@ export function useReserveFlow({
         return;
       }
 
+      const gapMessage = getReservationGapViolationMessage(
+        request.date,
+        request.roomId,
+        request.time,
+        requestedDuration,
+        request.participantEmails
+      );
+      if (gapMessage) {
+        showToast(gapMessage);
+        return;
+      }
+
       const requestedLimitMessage = getLimitViolationMessage(
         request.date,
         request.roomId,
@@ -814,6 +857,7 @@ export function useReserveFlow({
       getDraftParticipantEmails,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,
+      getReservationGapViolationMessage,
       openRoomDay,
       setAuthError,
       showToast,
@@ -892,6 +936,18 @@ export function useReserveFlow({
       });
       if (overlapsReservation) {
         showToast("קיים שריון חופף.");
+        return null;
+      }
+
+      const gapMessage = getReservationGapViolationMessage(
+        date,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        draft.participantEmails
+      );
+      if (gapMessage) {
+        showToast(gapMessage);
         return null;
       }
 
@@ -994,6 +1050,7 @@ export function useReserveFlow({
       getLessonsForDate,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,
+      getReservationGapViolationMessage,
       checkExternalAvailability,
       onOptimisticCreate,
       onOptimisticPendingClear,
@@ -1244,6 +1301,19 @@ export function useReserveFlow({
         return false;
       }
 
+      const gapMessage = getReservationGapViolationMessage(
+        date,
+        roomId,
+        startMinutes,
+        durationMinutes,
+        pending.request.participantEmails,
+        reservationId
+      );
+      if (gapMessage) {
+        showToast(gapMessage);
+        return false;
+      }
+
       const participants = updateReservationParticipantSelection(
         currentEntry,
         pending.request.participantEmails || []
@@ -1335,6 +1405,7 @@ export function useReserveFlow({
       getLessonsForDate,
       getLimitViolationMessage,
       getPolicyWindowViolationMessage,
+      getReservationGapViolationMessage,
       reservationMap,
       roomMeta,
       checkExternalAvailability,
