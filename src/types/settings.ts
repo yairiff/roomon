@@ -37,8 +37,8 @@ export type ReservationPolicy = {
   maxHoursPerWeekTotal: number;
   maxDaysForward: number;
   maxConcurrentReservations: number;
-  minMinutesBetweenReservationsPerRoom: number;
-  minMinutesBetweenReservationsTotal: number;
+  minMinutesBetweenReservationsPerRoom: number; // Same reserver, same room.
+  minMinutesBetweenReservationsTotal: number; // Same reserver, any room.
   minLeadMode: ReservationCutoffMode; // legacy
   minLeadHours: number;
   minLeadDayBeforeEnabled: boolean;

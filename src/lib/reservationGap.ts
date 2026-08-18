@@ -1,12 +1,13 @@
 import type { Reservation, ReservationMap } from "../types/reservations";
 import { parseDateKey } from "./date";
-import { getReservationUsageShareForEmail, normalizeEmailList } from "./quotaUsage";
 
 export type ReservationGapViolation = {
-  scope: "room" | "total";
+  scope: "same-room" | "any-room";
   minMinutes: number;
   conflictingReservation: Reservation;
 };
+
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
 
 const toAbsoluteMinutes = (dateKey: string, minutes: number) =>
   Math.floor(parseDateKey(dateKey).getTime() / 60000) + minutes;
@@ -25,9 +26,9 @@ export const findReservationGapViolation = ({
   roomId,
   startMinutes,
   durationMinutes,
-  participantEmails,
-  minMinutesPerRoom,
-  minMinutesTotal,
+  reserverEmail,
+  minMinutesSameRoom,
+  minMinutesAnyRoom,
   excludeReservationId
 }: {
   reservationMap: ReservationMap;
@@ -35,42 +36,47 @@ export const findReservationGapViolation = ({
   roomId: string;
   startMinutes: number;
   durationMinutes: number;
-  participantEmails: string[];
-  minMinutesPerRoom: number;
-  minMinutesTotal: number;
+  reserverEmail: string;
+  minMinutesSameRoom: number;
+  minMinutesAnyRoom: number;
   excludeReservationId?: string;
 }): ReservationGapViolation | null => {
-  const roomGap = Math.max(0, Math.round(Number(minMinutesPerRoom) || 0));
-  const totalGap = Math.max(0, Math.round(Number(minMinutesTotal) || 0));
-  if (!roomGap && !totalGap) return null;
+  const sameRoomGap = Math.max(0, Math.round(Number(minMinutesSameRoom) || 0));
+  const anyRoomGap = Math.max(0, Math.round(Number(minMinutesAnyRoom) || 0));
+  const normalizedReserverEmail = normalizeEmail(reserverEmail || "");
+  if ((!sameRoomGap && !anyRoomGap) || !normalizedReserverEmail) return null;
 
-  const activeEmails = normalizeEmailList(participantEmails);
   const start = toAbsoluteMinutes(dateKey, startMinutes);
   const end = start + durationMinutes;
-  const reservations = Object.values(reservationMap).flat();
+  const ownReservations = Object.values(reservationMap)
+    .flat()
+    .filter(
+      (entry) =>
+        entry.id !== excludeReservationId &&
+        !entry.kind &&
+        normalizeEmail(entry.reservedEmail || "") === normalizedReserverEmail
+    );
 
-  if (roomGap) {
-    const conflictingReservation = reservations.find((entry) => {
-      if (entry.id === excludeReservationId || entry.roomId !== roomId) return false;
+  if (sameRoomGap) {
+    const conflictingReservation = ownReservations.find((entry) => {
+      if (entry.roomId !== roomId) return false;
       const otherStart = toAbsoluteMinutes(entry.date, entry.time);
       const otherEnd = otherStart + entry.durationMinutes;
-      return intervalsViolateGap(start, end, otherStart, otherEnd, roomGap);
+      return intervalsViolateGap(start, end, otherStart, otherEnd, sameRoomGap);
     });
     if (conflictingReservation) {
-      return { scope: "room", minMinutes: roomGap, conflictingReservation };
+      return { scope: "same-room", minMinutes: sameRoomGap, conflictingReservation };
     }
   }
 
-  if (totalGap && activeEmails.length) {
-    const conflictingReservation = reservations.find((entry) => {
-      if (entry.id === excludeReservationId || entry.kind) return false;
-      if (!activeEmails.some((email) => getReservationUsageShareForEmail(entry, email) > 0)) return false;
+  if (anyRoomGap) {
+    const conflictingReservation = ownReservations.find((entry) => {
       const otherStart = toAbsoluteMinutes(entry.date, entry.time);
       const otherEnd = otherStart + entry.durationMinutes;
-      return intervalsViolateGap(start, end, otherStart, otherEnd, totalGap);
+      return intervalsViolateGap(start, end, otherStart, otherEnd, anyRoomGap);
     });
     if (conflictingReservation) {
-      return { scope: "total", minMinutes: totalGap, conflictingReservation };
+      return { scope: "any-room", minMinutes: anyRoomGap, conflictingReservation };
     }
   }
 

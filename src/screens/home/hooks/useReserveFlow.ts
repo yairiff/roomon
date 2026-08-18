@@ -583,7 +583,6 @@ export function useReserveFlow({
       roomId: string,
       startMinutes: number,
       durationMinutes: number,
-      participantEmails?: string[],
       excludeReservationId?: string
     ) => {
       const { effectivePolicy, appliedPolicyName } = getPolicyContext(dateKey, roomId, startMinutes);
@@ -593,18 +592,18 @@ export function useReserveFlow({
         roomId,
         startMinutes,
         durationMinutes,
-        participantEmails: getDraftParticipantEmails(participantEmails),
-        minMinutesPerRoom: effectivePolicy.minMinutesBetweenReservationsPerRoom,
-        minMinutesTotal: effectivePolicy.minMinutesBetweenReservationsTotal,
+        reserverEmail: currentUserEmail,
+        minMinutesSameRoom: effectivePolicy.minMinutesBetweenReservationsPerRoom,
+        minMinutesAnyRoom: effectivePolicy.minMinutesBetweenReservationsTotal,
         excludeReservationId
       });
       if (!violation) return null;
       const policySuffix = appliedPolicyName ? ` לפי מדיניות "${appliedPolicyName}"` : "";
-      return violation.scope === "room"
-        ? `נדרש מרווח של לפחות ${violation.minMinutes} דקות בין שריונים באותו חדר${policySuffix}.`
-        : `נדרש מרווח של לפחות ${violation.minMinutes} דקות בין שריונים של המארגן או המשתתפים${policySuffix}.`;
+      return violation.scope === "same-room"
+        ? `נדרש מרווח של לפחות ${violation.minMinutes} דקות בין שריונים שלך באותו חדר${policySuffix}.`
+        : `נדרש מרווח של לפחות ${violation.minMinutes} דקות בין כל שני שריונים שלך${policySuffix}.`;
     },
-    [getDraftParticipantEmails, getPolicyContext, reservationMap]
+    [currentUserEmail, getPolicyContext, reservationMap]
   );
 
   const getCutoffViolationMessage = useCallback(
@@ -779,8 +778,7 @@ export function useReserveFlow({
         request.date,
         request.roomId,
         request.time,
-        requestedDuration,
-        request.participantEmails
+        requestedDuration
       );
       if (gapMessage) {
         showToast(gapMessage);
@@ -943,8 +941,7 @@ export function useReserveFlow({
         date,
         roomId,
         startMinutes,
-        durationMinutes,
-        draft.participantEmails
+        durationMinutes
       );
       if (gapMessage) {
         showToast(gapMessage);
@@ -1306,7 +1303,6 @@ export function useReserveFlow({
         roomId,
         startMinutes,
         durationMinutes,
-        pending.request.participantEmails,
         reservationId
       );
       if (gapMessage) {

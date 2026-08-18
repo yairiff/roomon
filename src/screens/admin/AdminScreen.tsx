@@ -464,11 +464,11 @@ const summarizePolicyRulesParts = (policy: ReservationScopedPolicy) => {
   pushLimit(policy.rules.maxConcurrentReservations, (numeric) => `עד ${numeric} שריונים במקביל`);
   pushLimit(
     policy.rules.minMinutesBetweenReservationsPerRoom,
-    (numeric) => `לפחות ${numeric} דקות בין שריונים בחדר`
+    (numeric) => `לפחות ${numeric} דקות בין שריוני אותו משתמש באותו חדר`
   );
   pushLimit(
     policy.rules.minMinutesBetweenReservationsTotal,
-    (numeric) => `לפחות ${numeric} דקות בין שריוני משתתף`
+    (numeric) => `לפחות ${numeric} דקות בין כל שריוני אותו משתמש`
   );
 
   if ((policy.rules.minLeadHours || 0) > 0) {
@@ -2419,12 +2419,12 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                               }))
                             }
                           />
-                          מרווח מינימלי בין שריונים
+                          מרווח מינימלי בין שריונים של אותו משתמש
                         </label>
                         {policyEditorDraft.useMinimumReservationGap ? (
                           <div className="admin-form-row">
                             <label>
-                              דקות לחדר
+                              באותו חדר (דקות)
                               <input
                                 type="number"
                                 min={0}
@@ -2440,7 +2440,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                               />
                             </label>
                             <label>
-                              דקות סה״כ למשתתף
+                              בכל חדר (דקות)
                               <input
                                 type="number"
                                 min={0}
@@ -2458,7 +2458,7 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                           </div>
                         ) : null}
                         <p className="admin-meta hint">
-                          לחדר חל על כל השריונים בחדר; סה״כ חל על כל שריון של המארגן או המשתתפים.
+                          נבדק רק בין שריונים שביצע אותו משתמש. משתמש אחר יכול לשריין מיד לפני או אחרי.
                         </p>
                       </div>
 

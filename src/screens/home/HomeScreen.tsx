@@ -3240,17 +3240,17 @@ export default function HomeScreen({
         roomId,
         startMinutes,
         durationMinutes,
-        participantEmails: commonQuotaParticipantEmails,
-        minMinutesPerRoom: effectivePolicy.minMinutesBetweenReservationsPerRoom,
-        minMinutesTotal: effectivePolicy.minMinutesBetweenReservationsTotal,
+        reserverEmail: currentEmail,
+        minMinutesSameRoom: effectivePolicy.minMinutesBetweenReservationsPerRoom,
+        minMinutesAnyRoom: effectivePolicy.minMinutesBetweenReservationsTotal,
         excludeReservationId
       });
       if (gapViolation) {
         const policySuffix = firstMatched?.name ? ` לפי מדיניות "${firstMatched.name}"` : "";
         showToast(
-          gapViolation.scope === "room"
-            ? `נדרש מרווח של לפחות ${gapViolation.minMinutes} דקות בין שריונים באותו חדר${policySuffix}.`
-            : `נדרש מרווח של לפחות ${gapViolation.minMinutes} דקות בין שריונים של המארגן או המשתתפים${policySuffix}.`,
+          gapViolation.scope === "same-room"
+            ? `נדרש מרווח של לפחות ${gapViolation.minMinutes} דקות בין שריונים שלך באותו חדר${policySuffix}.`
+            : `נדרש מרווח של לפחות ${gapViolation.minMinutes} דקות בין כל שני שריונים שלך${policySuffix}.`,
           "error"
         );
         return false;
