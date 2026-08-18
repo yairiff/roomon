@@ -2458,7 +2458,8 @@ export default function AdminScreen({ currentUser, onSignOut }: AdminScreenProps
                           </div>
                         ) : null}
                         <p className="admin-meta hint">
-                          נבדק רק בין שריונים שביצע אותו משתמש. משתמש אחר יכול לשריין מיד לפני או אחרי.
+                          נבדק רק בין שריונים שביצע אותו משתמש. משתמש אחר יכול לשריין מיד לפני או אחרי. באותו חדר,
+                          המרווח הגדול מבין שתי המגבלות קובע.
                         </p>
                       </div>
 

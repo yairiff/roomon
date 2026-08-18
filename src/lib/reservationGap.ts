@@ -57,6 +57,8 @@ export const findReservationGapViolation = ({
         normalizeEmail(entry.reservedEmail || "") === normalizedReserverEmail
     );
 
+  const violations: ReservationGapViolation[] = [];
+
   if (sameRoomGap) {
     const conflictingReservation = ownReservations.find((entry) => {
       if (entry.roomId !== roomId) return false;
@@ -65,7 +67,7 @@ export const findReservationGapViolation = ({
       return intervalsViolateGap(start, end, otherStart, otherEnd, sameRoomGap);
     });
     if (conflictingReservation) {
-      return { scope: "same-room", minMinutes: sameRoomGap, conflictingReservation };
+      violations.push({ scope: "same-room", minMinutes: sameRoomGap, conflictingReservation });
     }
   }
 
@@ -76,9 +78,9 @@ export const findReservationGapViolation = ({
       return intervalsViolateGap(start, end, otherStart, otherEnd, anyRoomGap);
     });
     if (conflictingReservation) {
-      return { scope: "any-room", minMinutes: anyRoomGap, conflictingReservation };
+      violations.push({ scope: "any-room", minMinutes: anyRoomGap, conflictingReservation });
     }
   }
 
-  return null;
+  return violations.sort((left, right) => right.minMinutes - left.minMinutes)[0] ?? null;
 };
