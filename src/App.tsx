@@ -78,7 +78,7 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const collaborationEnabled = user?.allowed === true;
-  const groupsEnabled = user?.betaUser === true;
+  const groupsEnabled = collaborationEnabled;
   const { reservationPolicy, reservationPolicies } = useScheduleSettings();
 
   const reservationsCount = useMemo(() => {
